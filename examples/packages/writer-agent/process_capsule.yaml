@@ -1,0 +1,49 @@
+task_name: 'q2c-production-handoff: Turn completed research into a submission-ready
+  draft and hand it to editor review with a word count.
+
+  '
+owner_agent: writer-agent
+workflow_id: q2c-production-handoff
+maturity: draft
+depth_level: 2
+inputs:
+- name: work in state RESEARCH_COMPLETE
+  type: process_capsule
+  required: true
+  source: workflow q2c-production-handoff
+- name: work in state DRAFT_READY
+  type: process_capsule
+  required: true
+  source: workflow q2c-production-handoff
+steps:
+- name: 'advance RESEARCH_COMPLETE -> DRAFT_READY, producing: path to the completed
+    draft file'
+  depth_level: 2
+  deterministic: false
+  reasoning_justification: 'GUIDED transition: needs a consistent frame, not a rigid
+    rule; output is confirmed downstream.'
+- name: 'advance DRAFT_READY -> EDITOR_REVIEW, producing: draft submitted for review
+    with word count'
+  depth_level: 2
+  deterministic: false
+  reasoning_justification: 'GUIDED transition: needs a consistent frame, not a rigid
+    rule; output is confirmed downstream.'
+known_failures:
+- failure: required evidence missing at transition
+  signal: runtime refuses the move with NonConformanceError
+  response: gather the evidence and retry; do not improvise a path
+- failure: no valid transition for the intended move
+  signal: capsule frozen in NON_CONFORMANCE
+  response: Stop work, leave the capsule where it is, and notify the workflow owner
+    (flaveon). Do not improvise a new path; add the missing transition to this brief
+    instead.
+escalation_rules:
+- condition: input is ambiguous, out of scope, or above declared depth
+  target: flaveon
+  requested_checks: confirm intended transition and required evidence
+output_schema:
+  status: done | blocked | escalated
+  evidence: path to the completed draft file; draft submitted for review with word
+    count
+  confidence: low | medium | high, with reason
+  recommended_next_step: the next workflow state, or the escalation target

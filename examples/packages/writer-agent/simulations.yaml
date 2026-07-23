@@ -1,0 +1,40 @@
+- simulation_name: dry-run-research_complete-to-draft_ready
+  agent: writer-agent
+  scenario: 'work sits in RESEARCH_COMPLETE; agent must reach DRAFT_READY with evidence:
+    path to the completed draft file'
+  depth_level: 2
+  run:
+    observation:
+    - (what was directly seen or simulated)
+    inference:
+    - (what the agent concluded)
+    confidence:
+      level: pending
+      reason: ''
+    missing_evidence:
+    - (what was not available)
+    escalation:
+      next_layer: flaveon
+      requested_checks: ''
+  result: pending
+  notes: ''
+- simulation_name: dry-run-draft_ready-to-editor_review
+  agent: writer-agent
+  scenario: 'work sits in DRAFT_READY; agent must reach EDITOR_REVIEW with evidence:
+    draft submitted for review with word count'
+  depth_level: 2
+  run:
+    observation:
+    - (what was directly seen or simulated)
+    inference:
+    - (what the agent concluded)
+    confidence:
+      level: pending
+      reason: ''
+    missing_evidence:
+    - (what was not available)
+    escalation:
+      next_layer: flaveon
+      requested_checks: ''
+  result: pending
+  notes: ''

@@ -1,0 +1,19 @@
+{
+  "agent": "writer-agent",
+  "paths": {
+    "context": "02_context/",
+    "tasks_ready": "05_tasks/ready/",
+    "tasks_blocked": "05_tasks/blocked/",
+    "outputs": "11_outputs/",
+    "logs": "12_logs/",
+    "agent_config": "07_agents/writer-agent/",
+    "archive": "13_archive/"
+  },
+  "allowed_tools": [],
+  "forbidden": [
+    "publishing directly",
+    "approving its own draft"
+  ],
+  "network_access": false,
+  "note": "Paths are relative to the sub-project root. Reading or writing outside these paths requires an explicit CONTRACT.md amendment."
+}

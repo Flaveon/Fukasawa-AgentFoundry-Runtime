@@ -1,0 +1,22 @@
+eval_name: writer-agent-baseline
+agent: writer-agent
+depth_level: 2
+checks:
+  output_schema_conformance:
+    expected_schema: process_capsule.yaml#output_schema
+    result: pending
+    evidence: ''
+  escalation_correctness:
+    triggered: null
+    escalated_to_blocked: null
+    blocked_path: 05_tasks/blocked/
+    result: pending
+    evidence: ''
+  scope_compliance:
+    declared_depth_level: 2
+    reasoning_observed: ''
+    result: pending
+    evidence: ''
+overall: pending
+notes: The three checks above are mandatory and must not be replaced. Additional checks
+  may be appended.

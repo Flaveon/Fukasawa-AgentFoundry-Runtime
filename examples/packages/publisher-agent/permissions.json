@@ -1,0 +1,19 @@
+{
+  "agent": "publisher-agent",
+  "paths": {
+    "context": "02_context/",
+    "tasks_ready": "05_tasks/ready/",
+    "tasks_blocked": "05_tasks/blocked/",
+    "outputs": "11_outputs/",
+    "logs": "12_logs/",
+    "agent_config": "07_agents/publisher-agent/",
+    "archive": "13_archive/"
+  },
+  "allowed_tools": [],
+  "forbidden": [
+    "editing article content",
+    "publishing anything not in APPROVED state"
+  ],
+  "network_access": false,
+  "note": "Paths are relative to the sub-project root. Reading or writing outside these paths requires an explicit CONTRACT.md amendment."
+}

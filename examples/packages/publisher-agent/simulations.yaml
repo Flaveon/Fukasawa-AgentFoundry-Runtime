@@ -1,0 +1,20 @@
+- simulation_name: dry-run-approved-to-published
+  agent: publisher-agent
+  scenario: 'work sits in APPROVED; agent must reach PUBLISHED with evidence: final
+    filename and destination path'
+  depth_level: 0
+  run:
+    observation:
+    - (what was directly seen or simulated)
+    inference:
+    - (what the agent concluded)
+    confidence:
+      level: pending
+      reason: ''
+    missing_evidence:
+    - (what was not available)
+    escalation:
+      next_layer: flaveon
+      requested_checks: ''
+  result: pending
+  notes: ''

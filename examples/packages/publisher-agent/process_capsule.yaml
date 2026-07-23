@@ -1,0 +1,38 @@
+task_name: 'q2c-production-handoff: Publish an approved article to its destination
+  path with its final filename.
+
+  '
+owner_agent: publisher-agent
+workflow_id: q2c-production-handoff
+maturity: draft
+depth_level: 0
+inputs:
+- name: work in state APPROVED
+  type: process_capsule
+  required: true
+  source: workflow q2c-production-handoff
+steps:
+- name: 'advance APPROVED -> PUBLISHED, producing: final filename and destination
+    path'
+  depth_level: 0
+  deterministic: false
+  reasoning_justification: 'GUIDED transition: needs a consistent frame, not a rigid
+    rule; output is confirmed downstream.'
+known_failures:
+- failure: required evidence missing at transition
+  signal: runtime refuses the move with NonConformanceError
+  response: gather the evidence and retry; do not improvise a path
+- failure: no valid transition for the intended move
+  signal: capsule frozen in NON_CONFORMANCE
+  response: Stop work, leave the capsule where it is, and notify the workflow owner
+    (flaveon). Do not improvise a new path; add the missing transition to this brief
+    instead.
+escalation_rules:
+- condition: input is ambiguous, out of scope, or above declared depth
+  target: flaveon
+  requested_checks: confirm intended transition and required evidence
+output_schema:
+  status: done | blocked | escalated
+  evidence: final filename and destination path
+  confidence: low | medium | high, with reason
+  recommended_next_step: the next workflow state, or the escalation target

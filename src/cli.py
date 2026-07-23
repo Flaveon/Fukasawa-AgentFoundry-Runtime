@@ -34,6 +34,8 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
+from src.foundry.generator import BuildRefusedError, generate_packages
+from src.foundry.validator import validate_package
 from src.runtime.handoff import DEFAULT_HANDOFF_DIR, write_handoff
 from src.runtime.ledger import DEFAULT_DB_PATH, RunLedger
 from src.runtime.review_gate import ReviewDecision, open_review_gate
@@ -50,9 +52,11 @@ app = typer.Typer(
 nonconformance_app = typer.Typer(help="Inspect non-conforming capsules and records.")
 validate_app = typer.Typer(help="Validate briefs and capsules with clear errors.")
 runs_app = typer.Typer(help="Inspect and manage tracked runs.")
+package_app = typer.Typer(help="Generate and validate agent packages (Agent Foundry).")
 app.add_typer(nonconformance_app, name="nonconformance")
 app.add_typer(validate_app, name="validate")
 app.add_typer(runs_app, name="runs")
+app.add_typer(package_app, name="package")
 
 console = Console()
 
@@ -596,6 +600,85 @@ def runs_complete(
     capsule = ledger.load_capsule(run_state.capsule_id)
     _emit_handoff(runtime, brief, capsule, run_state, handoff_dir)
     console.print(f"[green]Run {run_id} complete.[/green]")
+
+
+# --------------------------------------------------------------------- package
+
+
+@package_app.command("generate")
+def package_generate(
+    brief_path: str = typer.Argument(..., help="Path to an APPROVED workflow brief YAML."),
+    out: str = typer.Option(
+        "packages", "--out", help="Directory to generate agent packages into."
+    ),
+    workspace: Optional[str] = typer.Option(
+        None,
+        "--workspace",
+        help="Target workspace root. Numbered directories trigger C-Pax path injection.",
+    ),
+    paths_file: Optional[str] = typer.Option(
+        None,
+        "--paths-file",
+        help="YAML file of workspace paths for non-C-Pax targets (context, tasks_ready, ...).",
+    ),
+) -> None:
+    """Generate one agent package per declared agent from an approved brief."""
+    try:
+        brief = WorkflowRuntime.load_brief(brief_path)
+    except ValidationError as exc:
+        _print_validation_error(exc, f"Brief '{brief_path}'")
+        raise typer.Exit(1)
+    explicit_paths = None
+    if paths_file:
+        explicit_paths = yaml.safe_load(Path(paths_file).read_text(encoding="utf-8"))
+    try:
+        package_dirs, report = generate_packages(
+            brief, out, workspace_root=workspace, explicit_paths=explicit_paths
+        )
+    except BuildRefusedError as exc:
+        console.print(Panel(str(exc), title="[red]Build refused[/red]", border_style="red"))
+        raise typer.Exit(1)
+    for pkg in package_dirs:
+        console.print(f"[green]generated[/green] {pkg}")
+    console.print(f"Build report: [cyan]{report}[/cyan]")
+    # Validate what we just generated — the generator does not get to skip
+    # its own gate. Any finding here is a generator bug, surfaced loudly.
+    failed = False
+    for pkg in package_dirs:
+        findings = validate_package(pkg)
+        if findings:
+            failed = True
+            console.print(f"[red]{pkg.name} failed self-validation:[/red]")
+            for finding in findings:
+                console.print(f"  - {finding}")
+    if failed:
+        raise typer.Exit(1)
+    console.print("[green]All generated packages pass validation.[/green]")
+
+
+@package_app.command("validate")
+def package_validate(
+    package_dir: str = typer.Argument(..., help="Path to an agent package directory."),
+) -> None:
+    """Validate an agent package directory against the Agent Foundry standard."""
+    findings = validate_package(package_dir)
+    if not findings:
+        console.print(
+            Panel(
+                f"`{package_dir}` contains every required file, all schemas "
+                f"validate, and depth/maturity declarations agree.",
+                title="[green]Package is valid[/green]",
+                border_style="green",
+            )
+        )
+        return
+    table = Table(title=f"[red]{package_dir} — {len(findings)} finding(s)[/red]")
+    table.add_column("#", justify="right")
+    table.add_column("Finding")
+    for i, finding in enumerate(findings, 1):
+        table.add_row(str(i), escape(finding))
+    console.print(table)
+    raise typer.Exit(1)
 
 
 # ------------------------------------------------------------ nonconformance

@@ -1,0 +1,23 @@
+{
+  "agent_name": "publisher-agent",
+  "workflow_id": "q2c-production-handoff",
+  "generated_at": "2026-07-23T03:07:10.966293Z",
+  "depth_level": 0,
+  "maturity": "draft",
+  "owner": "flaveon",
+  "escalation_target": "flaveon",
+  "deployment_method": "file_package",
+  "workspace_profile": "c-pax",
+  "files": [
+    "SKILL.md",
+    "SOUL.md",
+    "CONTRACT.md",
+    "process_capsule.yaml",
+    "evals.yaml",
+    "simulations.yaml",
+    "learning_log.md",
+    "permissions.json",
+    "README.md",
+    "manifest.json"
+  ]
+}

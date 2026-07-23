@@ -16,6 +16,21 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.schemas.agent_spec import AgentSpec
+
+
+class BriefStatus(str, Enum):
+    """Review status of the brief itself.
+
+    DRAFT    — being written; runnable for exploration, not buildable.
+    REVIEWED — a human has read it; still not buildable.
+    APPROVED — signed off; agent packages may be generated from it.
+    """
+
+    DRAFT = "draft"
+    REVIEWED = "reviewed"
+    APPROVED = "approved"
+
 
 class TaskDepth(str, Enum):
     """How much human judgment a decision requires.
@@ -113,6 +128,21 @@ class WorkflowBrief(BaseModel):
             "escalation instruction shown when work hits a dead end."
         )
     )
+    status: BriefStatus = Field(
+        default=BriefStatus.DRAFT,
+        description=(
+            "Review status of this brief. Agent packages can only be "
+            "generated from an approved brief."
+        ),
+    )
+    agents: list[AgentSpec] = Field(
+        default_factory=list,
+        description=(
+            "The agents this workflow needs, with their depth levels and "
+            "escalation targets. Transition owners not declared here are "
+            "treated as humans. Empty is valid for human-only workflows."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_states_are_consistent(self) -> "WorkflowBrief":
@@ -132,6 +162,41 @@ class WorkflowBrief(BaseModel):
         if len(known) != len(self.states):
             raise ValueError("states list contains duplicates")
         return self
+
+    @model_validator(mode="after")
+    def _check_agents_are_consistent(self) -> "WorkflowBrief":
+        """Enforce agent-related doctrine at validation time.
+
+        * Agent names must be unique.
+        * A CONSCIOUS-depth transition cannot be owned by a declared agent —
+          CONSCIOUS decisions involve taste, ethics, responsibility, or
+          meaning, and a human owns them entirely.
+        * A ROUTINE workflow cannot depend on a Level 5 agent (doctrine:
+          routine execution never needs a strategist).
+        """
+        names = [a.agent_name for a in self.agents]
+        if len(names) != len(set(names)):
+            raise ValueError("agents list contains duplicate agent_name entries")
+        agent_names = set(names)
+        for t in self.transitions:
+            if t.owner in agent_names and self.depth_of(t) is TaskDepth.CONSCIOUS:
+                raise ValueError(
+                    f"transition {t.from_state} -> {t.to_state} is CONSCIOUS-depth "
+                    f"but owned by agent '{t.owner}' — CONSCIOUS decisions must be "
+                    f"owned by a human"
+                )
+        if self.task_depth is TaskDepth.ROUTINE:
+            for a in self.agents:
+                if a.depth_level == 5:
+                    raise ValueError(
+                        f"agent '{a.agent_name}' is Level 5 but the workflow is "
+                        f"ROUTINE — routine execution cannot depend on a strategist"
+                    )
+        return self
+
+    def agent_spec(self, owner: str) -> Optional[AgentSpec]:
+        """Return the AgentSpec for an owner string, or None if the owner is human."""
+        return next((a for a in self.agents if a.agent_name == owner), None)
 
     def transitions_from(self, state: str) -> list[Transition]:
         """Return every transition whose from_state matches the given state."""
