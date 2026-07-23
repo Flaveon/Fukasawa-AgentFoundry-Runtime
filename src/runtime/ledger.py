@@ -18,7 +18,13 @@ from typing import Optional
 
 import sqlite_utils
 
+from src.schemas.non_conformance import (
+    NonConformanceRecord,
+    ResolutionStatus,
+)
+from src.schemas.observation_packet import ObservationPacket
 from src.schemas.process_capsule import CapsuleStatus, ProcessCapsule
+from src.schemas.runtime_state import RuntimeState
 from src.schemas.workflow_brief import WorkflowBrief
 
 #: Default database location: the current working directory.
@@ -70,6 +76,45 @@ class RunLedger:
         if "workflows" not in self.db.table_names():
             self.db["workflows"].create(
                 {"id": str, "title": str, "owner": str, "brief_json": str},
+                pk="id",
+            )
+        if "runs" not in self.db.table_names():
+            self.db["runs"].create(
+                {
+                    "run_id": str,
+                    "workflow_id": str,
+                    "capsule_id": str,
+                    "operator": str,
+                    "status": str,
+                    "updated_at": str,
+                    "state_json": str,  # full RuntimeState, schema-validated on load
+                },
+                pk="run_id",
+            )
+        if "observations" not in self.db.table_names():
+            self.db["observations"].create(
+                {
+                    "id": str,
+                    "run_id": str,
+                    "capsule_id": str,
+                    "observer": str,
+                    "observed_at": str,
+                    "packet_json": str,  # full ObservationPacket
+                },
+                pk="id",
+            )
+        if "non_conformance_records" not in self.db.table_names():
+            self.db["non_conformance_records"].create(
+                {
+                    "id": str,
+                    "workflow_id": str,
+                    "capsule_id": str,
+                    "run_id": str,
+                    "kind": str,
+                    "resolution_status": str,
+                    "occurred_at": str,
+                    "record_json": str,  # full NonConformanceRecord
+                },
                 pk="id",
             )
         if "capsules" not in self.db.table_names():
@@ -202,3 +247,102 @@ class RunLedger:
             "status = ?", [CapsuleStatus.NON_CONFORMANCE.value]
         )
         return [self.load_capsule(row["id"]) for row in rows]
+
+    # -------------------------------------------------------------------- runs
+
+    def save_run(self, state: RuntimeState) -> None:
+        """Store (or refresh) the durable RuntimeState snapshot of a run."""
+        self.db["runs"].upsert(
+            {
+                "run_id": state.run_id,
+                "workflow_id": state.workflow_id,
+                "capsule_id": state.capsule_id,
+                "operator": state.operator,
+                "status": state.status.value,
+                "updated_at": state.updated_at.isoformat(),
+                "state_json": state.model_dump_json(),
+            },
+            pk="run_id",
+        )
+
+    def load_run(self, run_id: str) -> RuntimeState:
+        """Load a run's RuntimeState by id, re-validating the contract rules.
+
+        Raises KeyError if unknown. Validation on load means a hand-edited
+        or corrupted state file fails loudly instead of resuming quietly.
+        """
+        row = self.db["runs"].get(run_id)
+        return RuntimeState.model_validate_json(row["state_json"])
+
+    def list_runs(self, workflow_id: Optional[str] = None) -> list[RuntimeState]:
+        """Return every run, newest first, optionally filtered by workflow."""
+        if workflow_id:
+            rows = self.db["runs"].rows_where(
+                "workflow_id = ?", [workflow_id], order_by="updated_at desc"
+            )
+        else:
+            rows = self.db["runs"].rows_where(order_by="updated_at desc")
+        return [RuntimeState.model_validate_json(r["state_json"]) for r in rows]
+
+    # ------------------------------------------------------------ observations
+
+    def save_observation(self, packet: ObservationPacket) -> None:
+        """Store one observation packet. Observations are never overwritten."""
+        self.db["observations"].insert(
+            {
+                "id": packet.id,
+                "run_id": packet.run_id,
+                "capsule_id": packet.capsule_id,
+                "observer": packet.observer,
+                "observed_at": packet.observed_at.isoformat(),
+                "packet_json": packet.model_dump_json(),
+            }
+        )
+
+    def observations_for(self, run_id: str) -> list[ObservationPacket]:
+        """Return every observation packet recorded during a run, oldest first."""
+        rows = self.db["observations"].rows_where(
+            "run_id = ?", [run_id], order_by="observed_at"
+        )
+        return [ObservationPacket.model_validate_json(r["packet_json"]) for r in rows]
+
+    # --------------------------------------------------- non-conformance records
+
+    def save_non_conformance_record(self, record: NonConformanceRecord) -> None:
+        """Store (or refresh) a structured non-conformance record.
+
+        Upsert is allowed here — unlike ledger events — because a record's
+        resolution_status legitimately changes when a human closes it.
+        The underlying events remain immutable in the ledger.
+        """
+        self.db["non_conformance_records"].upsert(
+            {
+                "id": record.id,
+                "workflow_id": record.workflow_id,
+                "capsule_id": record.capsule_id,
+                "run_id": record.run_id,
+                "kind": record.kind.value,
+                "resolution_status": record.resolution_status.value,
+                "occurred_at": record.occurred_at.isoformat(),
+                "record_json": record.model_dump_json(),
+            },
+            pk="id",
+        )
+
+    def non_conformance_records(
+        self, open_only: bool = False
+    ) -> list[NonConformanceRecord]:
+        """Return non-conformance records, newest first, optionally open ones only."""
+        if open_only:
+            rows = self.db["non_conformance_records"].rows_where(
+                "resolution_status = ?",
+                [ResolutionStatus.OPEN.value],
+                order_by="occurred_at desc",
+            )
+        else:
+            rows = self.db["non_conformance_records"].rows_where(
+                order_by="occurred_at desc"
+            )
+        return [
+            NonConformanceRecord.model_validate_json(r["record_json"]) for r in rows
+        ]
