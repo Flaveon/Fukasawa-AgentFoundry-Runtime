@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# Workflow brief: Q2C content pipeline production handoff.
+# Models the path an article takes from finished research to publication.
+# The editor review is a CONSCIOUS-depth decision: a human always owns it,
+# and the runtime will pause at a review gate before it proceeds.
+
+id: q2c-production-handoff
+title: Q2C Production Handoff
+owner: flaveon
+task_depth: GUIDED
+
+initial_state: RESEARCH_COMPLETE
+states:
+  - RESEARCH_COMPLETE
+  - DRAFT_READY
+  - EDITOR_REVIEW
+  - APPROVED
+  - PUBLISHED
+  - FAILED
+
+transitions:
+  - from_state: RESEARCH_COMPLETE
+    to_state: DRAFT_READY
+    owner: writer-agent
+    evidence_required: "path to the completed draft file"
+
+  - from_state: DRAFT_READY
+    to_state: EDITOR_REVIEW
+    owner: writer-agent
+    evidence_required: "draft submitted for review with word count"
+
+  # The editor review is always owned by a human and always CONSCIOUS:
+  # taste and responsibility live here, so the runtime pauses at a gate.
+  - from_state: EDITOR_REVIEW
+    to_state: APPROVED
+    owner: flaveon
+    depth: CONSCIOUS
+    evidence_required: "editor sign-off note"
+
+  - from_state: EDITOR_REVIEW
+    to_state: FAILED
+    owner: flaveon
+    depth: CONSCIOUS
+    evidence_required: ""
+
+  - from_state: APPROVED
+    to_state: PUBLISHED
+    owner: publisher-agent
+    evidence_required: "final filename and destination path"
+
+completion_criteria: >
+  The article is published to the destination path with its final filename,
+  and the full handoff history is recorded in the run ledger.
+
+exception_path: >
+  Stop work, leave the capsule where it is, and notify the workflow owner
+  (flaveon). Do not improvise a new path; add the missing transition to this
+  brief instead.

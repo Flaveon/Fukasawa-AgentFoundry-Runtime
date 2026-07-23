@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fukasawa-agentfoundry-runtime"
+version = "0.1.0"
+description = "Local-first workflow governance layer for human-agent collaboration under ConcordiaPax."
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2",
+    "pyyaml",
+    "typer",
+    "sqlite-utils",
+    "rich",
+]
+
+[project.scripts]
+fukasawa = "src.cli:app"
+
+[tool.setuptools]
+packages = ["src", "src.schemas", "src.runtime"]
