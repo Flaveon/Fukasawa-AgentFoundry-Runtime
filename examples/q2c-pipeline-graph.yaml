@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# Pilot workflow graph: the Q2C production handoff, orchestrated.
+# Deterministic nodes verify and move files; agent nodes do bounded work
+# through adapters; the editor decision stays a human gate — the kernel
+# pauses there and cannot approve it itself.
+#
+# Run variables (pass with --var):
+#   workdir  — directory containing research.md, where draft.md is produced
+#   destdir  — publication destination directory
+
+graph_id: q2c-pipeline-graph
+workflow: q2c-production-handoff
+description: >
+  Orchestrates research -> draft -> editor review -> publish. The editor
+  gate is CONSCIOUS-depth work and always pauses for a human.
+
+nodes:
+  # Precondition: research must exist before anything runs.
+  - node_id: check-research
+    kind: deterministic
+    adapter: filesystem
+    params:
+      op: exists
+      path: "{workdir}/research.md"
+    next: produce-draft
+
+  # writer-agent's work, bounded to producing the draft file.
+  - node_id: produce-draft
+    kind: agent
+    adapter: shell
+    params:
+      command: "cp '{workdir}/research.md' '{workdir}/draft.md' && wc -w < '{workdir}/draft.md'"
+      cwd: "{workdir}"
+    produces_transition:
+      to_state: DRAFT_READY
+      evidence_template: "draft at {workdir}/draft.md"
+    retry:
+      max_attempts: 2
+    next: submit-review
+
+  - node_id: submit-review
+    kind: agent
+    adapter: shell
+    params:
+      command: "wc -w < '{workdir}/draft.md'"
+      cwd: "{workdir}"
+    produces_transition:
+      to_state: EDITOR_REVIEW
+      evidence_template: "submitted for review, word count: {stdout}"
+    next: editor-gate
+
+  # The CONSCIOUS decision. The kernel pauses; a human decides.
+  - node_id: editor-gate
+    kind: human_gate
+    gate_reason: >
+      Editor approval is a CONSCIOUS-depth decision: taste and
+      responsibility. The runtime cannot approve its own work.
+    produces_transition:
+      to_state: APPROVED
+    next: publish
+
+  # publisher-agent's rule task: move the approved file, report the path.
+  - node_id: publish
+    kind: agent
+    adapter: shell
+    params:
+      command: "mkdir -p '{destdir}' && cp '{workdir}/draft.md' '{destdir}/article-final.md' && echo '{destdir}/article-final.md'"
+    produces_transition:
+      to_state: PUBLISHED
+      evidence_template: "final filename and destination: {stdout}"
+    retry:
+      max_attempts: 2
+    next: null

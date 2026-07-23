@@ -25,7 +25,7 @@ dev = ["pytest>=8"]
 fukasawa = "src.cli:app"
 
 [tool.setuptools]
-packages = ["src", "src.schemas", "src.runtime", "src.foundry", "src.governance"]
+packages = ["src", "src.schemas", "src.runtime", "src.foundry", "src.governance", "src.kernel"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

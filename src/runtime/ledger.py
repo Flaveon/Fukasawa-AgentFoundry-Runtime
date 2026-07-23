@@ -19,6 +19,7 @@ from typing import Optional
 import sqlite_utils
 
 from src.schemas.eval_case import EvalResult
+from src.schemas.graph import GraphRunState
 from src.schemas.non_conformance import (
     NonConformanceRecord,
     ResolutionStatus,
@@ -127,6 +128,20 @@ class RunLedger:
                     "record_json": str,  # full NonConformanceRecord
                 },
                 pk="id",
+            )
+        if "graph_runs" not in self.db.table_names():
+            self.db["graph_runs"].create(
+                {
+                    "graph_run_id": str,
+                    "graph_id": str,
+                    "workflow_id": str,
+                    "run_id": str,
+                    "status": str,
+                    "current_node": str,
+                    "updated_at": str,
+                    "state_json": str,  # full GraphRunState checkpoint
+                },
+                pk="graph_run_id",
             )
         if "eval_results" not in self.db.table_names():
             self.db["eval_results"].create(
@@ -350,6 +365,34 @@ class RunLedger:
             "run_id = ?", [run_id], order_by="observed_at"
         )
         return [ObservationPacket.model_validate_json(r["packet_json"]) for r in rows]
+
+    # -------------------------------------------------------------- graph runs
+
+    def save_graph_run(self, state: GraphRunState) -> None:
+        """Checkpoint a graph run. Called after every node execution."""
+        self.db["graph_runs"].upsert(
+            {
+                "graph_run_id": state.graph_run_id,
+                "graph_id": state.graph_id,
+                "workflow_id": state.workflow_id,
+                "run_id": state.run_id,
+                "status": state.status.value,
+                "current_node": state.current_node,
+                "updated_at": state.updated_at.isoformat(),
+                "state_json": state.model_dump_json(),
+            },
+            pk="graph_run_id",
+        )
+
+    def load_graph_run(self, graph_run_id: str) -> GraphRunState:
+        """Load a graph run checkpoint. Raises KeyError if unknown."""
+        row = self.db["graph_runs"].get(graph_run_id)
+        return GraphRunState.model_validate_json(row["state_json"])
+
+    def list_graph_runs(self) -> list[GraphRunState]:
+        """Return every graph run, newest first."""
+        rows = self.db["graph_runs"].rows_where(order_by="updated_at desc")
+        return [GraphRunState.model_validate_json(r["state_json"]) for r in rows]
 
     # ------------------------------------------------------------ eval results
 

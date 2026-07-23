@@ -38,6 +38,8 @@ from src.foundry.generator import BuildRefusedError, generate_packages
 from src.foundry.validator import validate_package
 from src.governance.evals import load_eval_case, run_eval_case
 from src.governance.maturity import PromotionRefusedError, assess, promote
+from src.kernel.kernel import GraphRunner, GraphSpecError, load_graph
+from src.schemas.graph import GraphRunStatus
 from src.runtime.handoff import DEFAULT_HANDOFF_DIR, write_handoff
 from src.runtime.ledger import DEFAULT_DB_PATH, RunLedger
 from src.runtime.review_gate import ReviewDecision, open_review_gate
@@ -57,12 +59,14 @@ runs_app = typer.Typer(help="Inspect and manage tracked runs.")
 package_app = typer.Typer(help="Generate and validate agent packages (Agent Foundry).")
 eval_app = typer.Typer(help="Run eval cases against recorded runs.")
 maturity_app = typer.Typer(help="Evidence-based maturity assessment and promotion.")
+graph_app = typer.Typer(help="Run workflow graphs through the orchestration kernel.")
 app.add_typer(nonconformance_app, name="nonconformance")
 app.add_typer(validate_app, name="validate")
 app.add_typer(runs_app, name="runs")
 app.add_typer(package_app, name="package")
 app.add_typer(eval_app, name="eval")
 app.add_typer(maturity_app, name="maturity")
+app.add_typer(graph_app, name="graph")
 
 console = Console()
 
@@ -701,6 +705,164 @@ def package_validate(
         table.add_row(str(i), escape(finding))
     console.print(table)
     raise typer.Exit(1)
+
+
+# ----------------------------------------------------------------------- graph
+
+
+def _drive_graph(runner: GraphRunner, graph, state) -> None:
+    """Advance a graph run, opening interactive review gates as they arrive."""
+    from src.runtime.review_gate import open_review_gate
+
+    while True:
+        state = runner.run(graph, state)
+        if state.status is not GraphRunStatus.PAUSED_HUMAN:
+            break
+        node = graph.node(state.current_node)
+        brief = runner.ledger.load_workflow(state.workflow_id)
+        capsule = runner.ledger.load_capsule(state.capsule_id)
+        transition = None
+        if node.produces_transition is not None:
+            transition = next(
+                (
+                    t
+                    for t in brief.transitions_from(capsule.state)
+                    if t.to_state == node.produces_transition.to_state
+                ),
+                None,
+            )
+        if transition is None:
+            console.print(f"[red]Gate '{node.node_id}' has no valid transition.[/red]")
+            raise typer.Exit(1)
+        evidence = ""
+        if transition.evidence_required:
+            evidence = Prompt.ask(
+                f"Evidence ({transition.evidence_required})", console=console, default=""
+            )
+        decision = open_review_gate(brief, capsule, transition, evidence, console)
+        note = ""
+        if decision.value in ("REJECT", "FLAG"):
+            note = Prompt.ask("Note", console=console, default=decision.value)
+        state = runner.decide(graph, state, decision, evidence=evidence, note=note)
+
+    color = {
+        "complete": "green", "blocked": "yellow", "failed": "red",
+    }.get(state.status.value, "cyan")
+    console.print(
+        f"Graph run [cyan]{state.graph_run_id}[/cyan] finished: "
+        f"[{color}]{state.status.value}[/{color}] "
+        f"({len(state.history)} node execution(s))"
+    )
+    if state.status is GraphRunStatus.BLOCKED:
+        console.print(f"Resume with: fukasawa graph resume {state.graph_run_id}")
+
+
+@graph_app.command("run")
+def graph_run(
+    graph_path: str = typer.Argument(..., help="Path to a workflow graph YAML."),
+    brief_path: str = typer.Option(..., "--brief", help="Path to the workflow brief YAML."),
+    var: list[str] = typer.Option(
+        [], "--var", help="Run variable as name=value; substituted into node params."
+    ),
+    db: str = _DB_OPTION,
+    handoff_dir: str = _HANDOFF_OPTION,
+) -> None:
+    """Start a graph run and drive it until it completes, blocks, or fails."""
+    runner = GraphRunner(RunLedger(db), handoff_dir=handoff_dir)
+    try:
+        graph = load_graph(graph_path)
+        brief = runner.runtime.load_brief(brief_path)
+    except ValidationError as exc:
+        _print_validation_error(exc, f"'{graph_path}'")
+        raise typer.Exit(1)
+    variables = dict(v.split("=", 1) for v in var)
+    try:
+        state = runner.start(graph, brief, variables=variables, brief_path=brief_path)
+    except GraphSpecError as exc:
+        console.print(Panel(escape(str(exc)), title="[red]Graph refused[/red]", border_style="red"))
+        raise typer.Exit(1)
+    console.print(
+        f"[bold]{graph.graph_id}[/bold] started as [cyan]{state.graph_run_id}[/cyan] "
+        f"(workflow run {state.run_id})\n"
+    )
+    _drive_graph(runner, graph, state)
+
+
+@graph_app.command("resume")
+def graph_resume(
+    graph_run_id: str = typer.Argument(..., help="Graph run id to resume."),
+    graph_path: str = typer.Option(..., "--graph", help="Path to the graph YAML."),
+    db: str = _DB_OPTION,
+    handoff_dir: str = _HANDOFF_OPTION,
+) -> None:
+    """Resume a blocked or paused graph run from its checkpoint."""
+    runner = GraphRunner(RunLedger(db), handoff_dir=handoff_dir)
+    graph = load_graph(graph_path)
+    try:
+        state = runner.resume(graph, graph_run_id)
+    except KeyError:
+        console.print(f"[red]Unknown graph run:[/red] {graph_run_id}")
+        raise typer.Exit(1)
+    _drive_graph(runner, graph, state)
+
+
+@graph_app.command("show")
+def graph_show(
+    graph_run_id: str = typer.Argument(..., help="Graph run id to inspect."),
+    db: str = _DB_OPTION,
+) -> None:
+    """Show a graph run's full trace — plain data, no framework UI."""
+    try:
+        state = RunLedger(db).load_graph_run(graph_run_id)
+    except Exception:
+        console.print(f"[red]Unknown graph run:[/red] {graph_run_id}")
+        raise typer.Exit(1)
+    console.print(
+        f"[bold]{state.graph_id}[/bold] — {state.status.value}, "
+        f"cursor at [yellow]{state.current_node}[/yellow], "
+        f"workflow run {state.run_id}"
+    )
+    table = Table(title=f"Node trace — {state.graph_run_id}")
+    for col in ("#", "Node", "Attempt", "OK", "Evidence", "Note"):
+        table.add_column(col)
+    for i, ex in enumerate(state.history, 1):
+        table.add_row(
+            str(i),
+            ex.node_id,
+            str(ex.attempt),
+            "[green]yes[/green]" if ex.ok else "[red]NO[/red]",
+            escape(ex.evidence[:60]) or "-",
+            escape(ex.note[:60]) or "-",
+        )
+    console.print(table)
+
+
+@graph_app.command("validate")
+def graph_validate(
+    graph_path: str = typer.Argument(..., help="Path to a workflow graph YAML."),
+    brief_path: str = typer.Option(..., "--brief", help="Path to the workflow brief YAML."),
+) -> None:
+    """Validate a graph file and its fit against a brief."""
+    try:
+        graph = load_graph(graph_path)
+        brief = WorkflowRuntime.load_brief(brief_path)
+    except ValidationError as exc:
+        _print_validation_error(exc, f"'{graph_path}'")
+        raise typer.Exit(1)
+    findings = graph.validate_against_brief(brief)
+    if findings:
+        for f in findings:
+            console.print(f"[red]-[/red] {escape(f)}")
+        raise typer.Exit(1)
+    gates = sum(1 for n in graph.nodes if n.kind.value == "human_gate")
+    console.print(
+        Panel(
+            f"[bold]{graph.graph_id}[/bold] fits brief `{brief.id}`\n"
+            f"{len(graph.nodes)} node(s), {gates} human gate(s)",
+            title="[green]Graph is valid[/green]",
+            border_style="green",
+        )
+    )
 
 
 # ------------------------------------------------------------------------ eval
