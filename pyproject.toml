@@ -16,6 +16,7 @@ dependencies = [
     "typer",
     "sqlite-utils",
     "rich",
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]
@@ -25,7 +26,7 @@ dev = ["pytest>=8"]
 fukasawa = "src.cli:app"
 
 [tool.setuptools]
-packages = ["src", "src.schemas", "src.runtime", "src.foundry", "src.governance", "src.kernel"]
+packages = ["src", "src.schemas", "src.runtime", "src.foundry", "src.governance", "src.kernel", "src.security"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -234,6 +234,14 @@ class GraphRunState(BaseModel):
         description="The underlying workflow run (RuntimeState) this graph drives."
     )
     capsule_id: str = Field(description="The capsule being advanced.")
+    graph_hash: str = Field(
+        default="",
+        description=(
+            "SHA-256 of the graph spec at run start. Pinned so a resume "
+            "cannot silently continue under a different graph than the one "
+            "the run began with."
+        ),
+    )
     status: GraphRunStatus = Field(default=GraphRunStatus.RUNNING)
     current_node: str = Field(
         description="The node to execute next (or the gate currently pausing the run)."

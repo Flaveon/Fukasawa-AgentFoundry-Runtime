@@ -53,16 +53,38 @@ class FilesystemAdapter:
         path: target path (exists/read/write)
         src, dest: for copy
         content: for write
+
+    Optional ``workspace_root`` confines every path to a jail directory —
+    defense-in-depth so even a trusted-but-careless graph cannot read or
+    write outside the workspace (e.g. ``~/.ssh``). Without a root, paths are
+    unconfined (single-operator local behavior).
     """
 
     name = "filesystem"
+
+    def __init__(self, workspace_root: str | Path | None = None) -> None:
+        """Optionally confine all operations under ``workspace_root``."""
+        self.workspace_root = (
+            Path(workspace_root).resolve() if workspace_root else None
+        )
+
+    def _resolve(self, raw: str) -> Path:
+        """Resolve a path, refusing any that escapes the workspace jail."""
+        path = Path(raw).resolve()
+        if self.workspace_root is not None:
+            if not path.is_relative_to(self.workspace_root):
+                raise PermissionError(
+                    f"path '{raw}' resolves outside the workspace jail "
+                    f"'{self.workspace_root}'"
+                )
+        return path
 
     def execute(self, params: dict) -> AdapterResult:
         """Perform one file operation and report evidence (paths, sizes)."""
         op = params.get("op", "")
         try:
             if op == "exists":
-                path = Path(params["path"])
+                path = self._resolve(params["path"])
                 if path.exists():
                     return AdapterResult(
                         ok=True,
@@ -71,7 +93,7 @@ class FilesystemAdapter:
                     )
                 return AdapterResult(ok=False, note=f"{path} does not exist")
             if op == "read":
-                path = Path(params["path"])
+                path = self._resolve(params["path"])
                 content = path.read_text(encoding="utf-8")
                 return AdapterResult(
                     ok=True,
@@ -79,7 +101,7 @@ class FilesystemAdapter:
                     outputs={"path": str(path), "content": content},
                 )
             if op == "write":
-                path = Path(params["path"])
+                path = self._resolve(params["path"])
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(params.get("content", ""), encoding="utf-8")
                 return AdapterResult(
@@ -88,7 +110,7 @@ class FilesystemAdapter:
                     outputs={"path": str(path)},
                 )
             if op == "copy":
-                src, dest = Path(params["src"]), Path(params["dest"])
+                src, dest = self._resolve(params["src"]), self._resolve(params["dest"])
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dest)
                 return AdapterResult(
@@ -97,7 +119,7 @@ class FilesystemAdapter:
                     outputs={"src": str(src), "dest": str(dest)},
                 )
             return AdapterResult(ok=False, note=f"unknown filesystem op '{op}'")
-        except (OSError, KeyError) as exc:
+        except (OSError, KeyError, PermissionError) as exc:
             return AdapterResult(ok=False, note=f"filesystem {op} failed: {exc}")
 
 
@@ -151,10 +173,14 @@ class ShellAdapter:
 class AdapterRegistry:
     """Where the kernel finds adapters by name. Extensible by registration."""
 
-    def __init__(self) -> None:
-        """Start with the built-in local-first adapters."""
+    def __init__(self, workspace_root: str | Path | None = None) -> None:
+        """Start with the built-in local-first adapters.
+
+        ``workspace_root`` jails the filesystem adapter to a directory —
+        pass the run's workspace to confine file operations for shared graphs.
+        """
         self._adapters: dict[str, Adapter] = {}
-        for adapter in (FilesystemAdapter(), ShellAdapter()):
+        for adapter in (FilesystemAdapter(workspace_root), ShellAdapter()):
             self.register(adapter)
 
     def register(self, adapter: Adapter) -> None:

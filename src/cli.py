@@ -38,8 +38,15 @@ from src.foundry.generator import BuildRefusedError, generate_packages
 from src.foundry.validator import validate_package
 from src.governance.evals import load_eval_case, run_eval_case
 from src.governance.maturity import PromotionRefusedError, assess, promote
-from src.kernel.kernel import GraphRunner, GraphSpecError, load_graph
+from src.kernel.kernel import (
+    GraphRunner,
+    GraphSpecError,
+    UntrustedGraphError,
+    graph_fingerprint,
+    load_graph,
+)
 from src.schemas.graph import GraphRunStatus
+from src.security.trust import TrustStore
 from src.runtime.handoff import DEFAULT_HANDOFF_DIR, write_handoff
 from src.runtime.ledger import DEFAULT_DB_PATH, RunLedger
 from src.runtime.review_gate import ReviewDecision, open_review_gate
@@ -60,6 +67,7 @@ package_app = typer.Typer(help="Generate and validate agent packages (Agent Foun
 eval_app = typer.Typer(help="Run eval cases against recorded runs.")
 maturity_app = typer.Typer(help="Evidence-based maturity assessment and promotion.")
 graph_app = typer.Typer(help="Run workflow graphs through the orchestration kernel.")
+trust_app = typer.Typer(help="Manage signing identity and trusted keys.")
 app.add_typer(nonconformance_app, name="nonconformance")
 app.add_typer(validate_app, name="validate")
 app.add_typer(runs_app, name="runs")
@@ -67,6 +75,7 @@ app.add_typer(package_app, name="package")
 app.add_typer(eval_app, name="eval")
 app.add_typer(maturity_app, name="maturity")
 app.add_typer(graph_app, name="graph")
+app.add_typer(trust_app, name="trust")
 
 console = Console()
 
@@ -757,6 +766,18 @@ def _drive_graph(runner: GraphRunner, graph, state) -> None:
         console.print(f"Resume with: fukasawa graph resume {state.graph_run_id}")
 
 
+def _sidecar_signature(graph_path: str) -> Optional[str]:
+    """Read the detached signature next to a graph file (<graph>.sig), if any."""
+    sig = Path(graph_path + ".sig")
+    return sig.read_text(encoding="utf-8").strip() if sig.exists() else None
+
+
+def _make_runner(db: str, handoff_dir: str, require_signed: bool) -> GraphRunner:
+    """Build a runner, turning on trust enforcement when --require-signed is set."""
+    trust = TrustStore() if require_signed else None
+    return GraphRunner(RunLedger(db), handoff_dir=handoff_dir, trust_store=trust)
+
+
 @graph_app.command("run")
 def graph_run(
     graph_path: str = typer.Argument(..., help="Path to a workflow graph YAML."),
@@ -764,11 +785,16 @@ def graph_run(
     var: list[str] = typer.Option(
         [], "--var", help="Run variable as name=value; substituted into node params."
     ),
+    require_signed: bool = typer.Option(
+        False,
+        "--require-signed",
+        help="Refuse to run unless the graph is signed by a trusted key.",
+    ),
     db: str = _DB_OPTION,
     handoff_dir: str = _HANDOFF_OPTION,
 ) -> None:
     """Start a graph run and drive it until it completes, blocks, or fails."""
-    runner = GraphRunner(RunLedger(db), handoff_dir=handoff_dir)
+    runner = _make_runner(db, handoff_dir, require_signed)
     try:
         graph = load_graph(graph_path)
         brief = runner.runtime.load_brief(brief_path)
@@ -777,7 +803,16 @@ def graph_run(
         raise typer.Exit(1)
     variables = dict(v.split("=", 1) for v in var)
     try:
-        state = runner.start(graph, brief, variables=variables, brief_path=brief_path)
+        state = runner.start(
+            graph,
+            brief,
+            variables=variables,
+            brief_path=brief_path,
+            signature=_sidecar_signature(graph_path),
+        )
+    except UntrustedGraphError as exc:
+        console.print(Panel(escape(str(exc)), title="[red]Untrusted graph[/red]", border_style="red"))
+        raise typer.Exit(1)
     except GraphSpecError as exc:
         console.print(Panel(escape(str(exc)), title="[red]Graph refused[/red]", border_style="red"))
         raise typer.Exit(1)
@@ -792,18 +827,45 @@ def graph_run(
 def graph_resume(
     graph_run_id: str = typer.Argument(..., help="Graph run id to resume."),
     graph_path: str = typer.Option(..., "--graph", help="Path to the graph YAML."),
+    require_signed: bool = typer.Option(
+        False, "--require-signed", help="Refuse to resume unless the graph is trusted-signed."
+    ),
     db: str = _DB_OPTION,
     handoff_dir: str = _HANDOFF_OPTION,
 ) -> None:
     """Resume a blocked or paused graph run from its checkpoint."""
-    runner = GraphRunner(RunLedger(db), handoff_dir=handoff_dir)
+    runner = _make_runner(db, handoff_dir, require_signed)
     graph = load_graph(graph_path)
     try:
-        state = runner.resume(graph, graph_run_id)
+        state = runner.resume(
+            graph, graph_run_id, signature=_sidecar_signature(graph_path)
+        )
     except KeyError:
         console.print(f"[red]Unknown graph run:[/red] {graph_run_id}")
         raise typer.Exit(1)
+    except (UntrustedGraphError, GraphSpecError) as exc:
+        console.print(Panel(escape(str(exc)), title="[red]Resume refused[/red]", border_style="red"))
+        raise typer.Exit(1)
     _drive_graph(runner, graph, state)
+
+
+@graph_app.command("sign")
+def graph_sign(
+    graph_path: str = typer.Argument(..., help="Path to a workflow graph YAML to sign."),
+) -> None:
+    """Sign a graph with the local identity, writing a <graph>.sig sidecar."""
+    graph = load_graph(graph_path)
+    store = TrustStore()
+    signature, public_pem = store.sign_with_identity(graph.model_dump(mode="json"))
+    Path(graph_path + ".sig").write_text(signature, encoding="utf-8")
+    from src.security.signing import public_key_id
+
+    console.print(
+        f"[green]Signed[/green] {graph.graph_id} "
+        f"(hash {graph_fingerprint(graph)[:16]}…) with key "
+        f"[cyan]{public_key_id(public_pem)}[/cyan]"
+    )
+    console.print(f"Signature written: [cyan]{graph_path}.sig[/cyan]")
 
 
 @graph_app.command("show")
@@ -863,6 +925,72 @@ def graph_validate(
             border_style="green",
         )
     )
+
+
+# ----------------------------------------------------------------------- trust
+
+
+@trust_app.command("keygen")
+def trust_keygen(
+    name: str = typer.Option("", "--name", help="Label for this signing identity."),
+) -> None:
+    """Create (or show) this operator's local signing identity."""
+    from src.security.signing import public_key_id
+
+    store = TrustStore()
+    keypair = store.ensure_identity(name=name)
+    console.print(
+        Panel(
+            f"identity key id: [cyan]{public_key_id(keypair.public_pem)}[/cyan]\n"
+            f"store: {store.root}\n"
+            f"Share your public key so others can trust your graphs:\n"
+            f"  {store.identity_dir / 'public.pem'}",
+            title="[green]Local signing identity[/green]",
+            border_style="green",
+        )
+    )
+
+
+@trust_app.command("add")
+def trust_add(
+    public_key_path: str = typer.Argument(..., help="Path to a public key PEM to trust."),
+    name: str = typer.Option("", "--name", help="Human label for this key's owner."),
+) -> None:
+    """Trust an author's public key. Only do this if you vouch for them."""
+    pem = Path(public_key_path).read_text(encoding="utf-8")
+    key = TrustStore().trust(pem, name=name)
+    console.print(
+        f"[green]Trusted[/green] key [cyan]{key.key_id}[/cyan]"
+        + (f" ({name})" if name else "")
+        + " — graphs signed by it will now run under --require-signed."
+    )
+
+
+@trust_app.command("list")
+def trust_list() -> None:
+    """List every trusted key."""
+    keys = TrustStore().trusted_keys()
+    if not keys:
+        console.print("No trusted keys. Run 'fukasawa trust keygen' to start.")
+        return
+    table = Table(title="Trusted keys")
+    table.add_column("Key id")
+    table.add_column("Name")
+    for k in keys:
+        table.add_row(k.key_id, k.name or "-")
+    console.print(table)
+
+
+@trust_app.command("revoke")
+def trust_revoke(
+    key_id: str = typer.Argument(..., help="Key id to stop trusting."),
+) -> None:
+    """Remove a key from the trusted set."""
+    if TrustStore().revoke(key_id):
+        console.print(f"[yellow]Revoked[/yellow] {key_id}.")
+    else:
+        console.print(f"[red]No such trusted key:[/red] {key_id}")
+        raise typer.Exit(1)
 
 
 # ------------------------------------------------------------------------ eval

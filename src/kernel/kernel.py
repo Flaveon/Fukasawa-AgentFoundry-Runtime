@@ -39,10 +39,25 @@ from src.schemas.graph import (
 )
 from src.schemas.process_capsule import CapsuleStatus
 from src.schemas.workflow_brief import WorkflowBrief
+from src.security.signing import content_hash
+from src.security.trust import TrustStore
 
 
 class GraphSpecError(Exception):
     """Raised when a graph cannot be run against its brief."""
+
+
+class UntrustedGraphError(Exception):
+    """Raised when signature enforcement is on and a graph is not trusted."""
+
+
+def graph_fingerprint(graph: GraphSpec) -> str:
+    """Stable content hash of a graph, used for pinning and signing.
+
+    Hashes the validated, normalized model dump rather than raw file bytes,
+    so equivalent graphs that differ only in YAML formatting share a hash.
+    """
+    return content_hash(graph.model_dump(mode="json"))
 
 
 def load_graph(path: str | Path) -> GraphSpec:
@@ -75,14 +90,45 @@ class GraphRunner:
         ledger: RunLedger,
         registry: Optional[AdapterRegistry] = None,
         handoff_dir: str | Path = DEFAULT_HANDOFF_DIR,
+        trust_store: Optional[TrustStore] = None,
     ) -> None:
-        """Bind the runner to a ledger, an adapter registry, and a handoff dir."""
+        """Bind the runner to a ledger, an adapter registry, and a handoff dir.
+
+        Passing a ``trust_store`` turns on signature enforcement: a graph
+        will only run if it carries a signature from a key the store trusts.
+        Without one, the runner behaves as before (local, unenforced) — safe
+        for a single operator, and the CLI opts into enforcement explicitly.
+        """
         self.ledger = ledger
         self.runtime = WorkflowRuntime(ledger)
         self.registry = registry or AdapterRegistry()
         self.handoff_dir = Path(handoff_dir)
+        self.trust_store = trust_store
 
     # ------------------------------------------------------------------- start
+
+    def _require_trusted(self, graph: GraphSpec, signature: Optional[str]) -> None:
+        """Enforce that a graph is signed by a trusted key, if enforcement is on.
+
+        Signing is the gate that makes a shared graph safe to run: the runner
+        executes it only when a human has vouched for the signer. A missing
+        or invalid signature is refused, not warned about.
+        """
+        if self.trust_store is None:
+            return
+        payload = graph.model_dump(mode="json")
+        if not signature:
+            raise UntrustedGraphError(
+                f"graph '{graph.graph_id}' is unsigned but signature "
+                f"enforcement is on. Sign it (fukasawa graph sign) or add the "
+                f"author's key to your trust store."
+            )
+        if not self.trust_store.is_trusted_signature(payload, signature):
+            raise UntrustedGraphError(
+                f"graph '{graph.graph_id}' is not signed by any trusted key. "
+                f"Refusing to run it. Add the author's key with "
+                f"'fukasawa trust add' only if you vouch for them."
+            )
 
     def start(
         self,
@@ -91,8 +137,14 @@ class GraphRunner:
         variables: Optional[dict[str, str]] = None,
         operator: Optional[str] = None,
         brief_path: str | Path | None = None,
+        signature: Optional[str] = None,
     ) -> GraphRunState:
-        """Validate the graph against the brief and open a checkpointed run."""
+        """Validate the graph against the brief and open a checkpointed run.
+
+        When the runner has a trust store, ``signature`` must be a valid
+        signature over the graph by a trusted key or the run is refused.
+        """
+        self._require_trusted(graph, signature)
         findings = graph.validate_against_brief(brief)
         if findings:
             raise GraphSpecError(
@@ -107,6 +159,7 @@ class GraphRunner:
             workflow_id=brief.id,
             run_id=run.run_id,
             capsule_id=capsule.id,
+            graph_hash=graph_fingerprint(graph),
             current_node=graph.entry_node.node_id,
             variables=variables or {},
         )
@@ -276,13 +329,27 @@ class GraphRunner:
             state = self.step(graph, state)
         return state
 
-    def resume(self, graph: GraphSpec, graph_run_id: str) -> GraphRunState:
+    def resume(
+        self, graph: GraphSpec, graph_run_id: str, signature: Optional[str] = None
+    ) -> GraphRunState:
         """Reload a checkpoint and continue. Blocked runs re-enter RUNNING.
 
         Paused-at-gate runs stay paused — resuming does not decide for the
         human; the caller must collect a decision and call decide().
+
+        Two integrity checks before anything runs:
+        * the supplied graph must hash-match the graph the run started with
+          (a resume cannot swap in a different graph), and
+        * if trust enforcement is on, the graph must still be trusted-signed.
         """
         state = self.ledger.load_graph_run(graph_run_id)
+        if state.graph_hash and graph_fingerprint(graph) != state.graph_hash:
+            raise GraphSpecError(
+                f"graph does not match the one this run started with "
+                f"(hash mismatch). Refusing to resume '{graph_run_id}' under a "
+                f"different graph."
+            )
+        self._require_trusted(graph, signature)
         if state.status is GraphRunStatus.BLOCKED:
             run = self.ledger.load_run(state.run_id)
             # Taking the next action: unblock the workflow run and retry the
