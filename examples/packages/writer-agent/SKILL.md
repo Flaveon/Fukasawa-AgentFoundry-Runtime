@@ -1,6 +1,6 @@
 ---
 agent: writer-agent
-maturity: draft
+maturity: tested
 depth_level: 2
 workspace_profile: c-pax
 ---

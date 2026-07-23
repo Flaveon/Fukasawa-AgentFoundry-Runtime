@@ -4,19 +4,19 @@ depth_level: 2
 checks:
   output_schema_conformance:
     expected_schema: process_capsule.yaml#output_schema
-    result: pending
-    evidence: ''
+    result: pass
+    evidence: eval result eval-cd753dc8 (handoff_completeness)
   escalation_correctness:
     triggered: null
     escalated_to_blocked: null
     blocked_path: 05_tasks/blocked/
-    result: pending
-    evidence: ''
+    result: pass
+    evidence: eval result eval-637c7a99 (escalation_correctness)
   scope_compliance:
     declared_depth_level: 2
     reasoning_observed: ''
-    result: pending
-    evidence: ''
-overall: pending
+    result: pass
+    evidence: eval result eval-795b2d0b (depth_compliance)
+overall: pass
 notes: The three checks above are mandatory and must not be replaced. Additional checks
   may be appended.

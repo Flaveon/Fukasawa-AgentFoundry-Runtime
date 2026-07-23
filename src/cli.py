@@ -36,6 +36,8 @@ from rich.table import Table
 
 from src.foundry.generator import BuildRefusedError, generate_packages
 from src.foundry.validator import validate_package
+from src.governance.evals import load_eval_case, run_eval_case
+from src.governance.maturity import PromotionRefusedError, assess, promote
 from src.runtime.handoff import DEFAULT_HANDOFF_DIR, write_handoff
 from src.runtime.ledger import DEFAULT_DB_PATH, RunLedger
 from src.runtime.review_gate import ReviewDecision, open_review_gate
@@ -53,10 +55,14 @@ nonconformance_app = typer.Typer(help="Inspect non-conforming capsules and recor
 validate_app = typer.Typer(help="Validate briefs and capsules with clear errors.")
 runs_app = typer.Typer(help="Inspect and manage tracked runs.")
 package_app = typer.Typer(help="Generate and validate agent packages (Agent Foundry).")
+eval_app = typer.Typer(help="Run eval cases against recorded runs.")
+maturity_app = typer.Typer(help="Evidence-based maturity assessment and promotion.")
 app.add_typer(nonconformance_app, name="nonconformance")
 app.add_typer(validate_app, name="validate")
 app.add_typer(runs_app, name="runs")
 app.add_typer(package_app, name="package")
+app.add_typer(eval_app, name="eval")
+app.add_typer(maturity_app, name="maturity")
 
 console = Console()
 
@@ -198,9 +204,25 @@ def _interactive_loop(
         )
         evidence = Prompt.ask(prompt_text, console=console, default="")
         try:
+            from_state = capsule.state
             capsule = _attempt_transition(
                 runtime, brief, capsule, transition, evidence, run
             )
+            if capsule.state != from_state:
+                # Every completed transition is a direct observation: what
+                # moved, and on what evidence. Recorded automatically so the
+                # observation-discipline eval has something real to inspect.
+                runtime.record_observation(
+                    run,
+                    capsule,
+                    observer=transition.owner,
+                    observation=(
+                        f"transition {from_state} -> {capsule.state} completed"
+                        + (f"; evidence: {evidence}" if evidence else "")
+                    ),
+                    confidence="high",
+                    missing_evidence="none" if evidence else "no evidence was required",
+                )
             artifact = Prompt.ask(
                 "Output artifact path (Enter to skip)", console=console, default=""
             )
@@ -681,7 +703,212 @@ def package_validate(
     raise typer.Exit(1)
 
 
+# ------------------------------------------------------------------------ eval
+
+
+@eval_app.command("run")
+def eval_run(
+    case_path: str = typer.Argument(..., help="Path to an eval case YAML file."),
+    run_id: str = typer.Option(..., "--run-id", help="The recorded run to evaluate."),
+    package: Optional[str] = typer.Option(
+        None, "--package", help="Agent package dir for depth/escalation checks."
+    ),
+    db: str = _DB_OPTION,
+    handoff_dir: str = _HANDOFF_OPTION,
+) -> None:
+    """Run one eval case against a run's recorded artifacts."""
+    try:
+        case = load_eval_case(case_path)
+    except ValidationError as exc:
+        _print_validation_error(exc, f"Eval case '{case_path}'")
+        raise typer.Exit(1)
+    result = run_eval_case(
+        case, RunLedger(db), run_id, package_dir=package, handoff_dir=handoff_dir
+    )
+    table = Table(title=f"{case.case_id} — {case.name}")
+    table.add_column("Check")
+    table.add_column("Outcome")
+    table.add_column("Evidence")
+    for check in result.checks:
+        color = {"pass": "green", "fail": "red", "skipped": "yellow"}[check.outcome.value]
+        table.add_row(
+            check.category.value,
+            f"[{color}]{check.outcome.value}[/{color}]",
+            escape(check.evidence),
+        )
+    console.print(table)
+    overall_color = "green" if result.overall.value == "pass" else "red"
+    console.print(
+        f"Overall: [{overall_color}]{result.overall.value}[/{overall_color}] "
+        f"(recorded as {result.result_id})"
+    )
+    if result.overall.value != "pass":
+        raise typer.Exit(1)
+
+
+# -------------------------------------------------------------------- maturity
+
+
+def _print_maturity_report(report) -> None:
+    """Render a maturity report as a criteria table."""
+    title = (
+        f"{report.agent}: {report.current.value}"
+        + (f" -> {report.target.value}?" if report.target else " (terminal)")
+    )
+    table = Table(title=title)
+    table.add_column("Criterion")
+    table.add_column("Met")
+    table.add_column("Evidence")
+    for c in report.criteria:
+        table.add_row(
+            c.name,
+            "[green]yes[/green]" if c.met else "[red]NO[/red]",
+            escape(c.detail),
+        )
+    console.print(table)
+    if report.target:
+        verdict = (
+            "[green]criteria met — promotion available (human reviewer required)[/green]"
+            if report.allowed
+            else "[red]promotion blocked on the evidence above[/red]"
+        )
+        console.print(verdict)
+
+
+@maturity_app.command("report")
+def maturity_report(
+    package_dir: str = typer.Argument(..., help="Agent package directory."),
+    db: str = _DB_OPTION,
+) -> None:
+    """Show the evidence picture for the package's next maturity step."""
+    _print_maturity_report(assess(package_dir, RunLedger(db)))
+
+
+@maturity_app.command("promote")
+def maturity_promote(
+    package_dir: str = typer.Argument(..., help="Agent package directory."),
+    reviewed_by: str = typer.Option(
+        ..., "--reviewed-by", help="Human reviewer attesting to the promotion."
+    ),
+    rationale: str = typer.Option(
+        "",
+        "--rationale",
+        help="Required for tested->validated: lower-depth consideration rationale.",
+    ),
+    db: str = _DB_OPTION,
+) -> None:
+    """Promote a package one maturity step if — and only if — evidence allows."""
+    try:
+        report = promote(
+            package_dir, RunLedger(db), reviewed_by=reviewed_by, rationale=rationale
+        )
+    except PromotionRefusedError as exc:
+        console.print(
+            Panel(escape(str(exc)), title="[red]Promotion refused[/red]", border_style="red")
+        )
+        raise typer.Exit(1)
+    console.print(
+        f"[green]Promoted.[/green] {report.agent} is now [bold]{report.current.value}[/bold]."
+    )
+
+
 # ------------------------------------------------------------ nonconformance
+
+
+@nonconformance_app.command("capture")
+def nonconformance_capture(
+    workflow_id: str = typer.Option(..., "--workflow", help="Workflow the breach belongs to."),
+    capsule_id: str = typer.Option("", "--capsule", help="Capsule involved, if any."),
+    kind: str = typer.Option(
+        "other",
+        "--kind",
+        help="no_valid_path | missing_evidence | review_rejected | other",
+    ),
+    from_state: str = typer.Option("", "--from-state", help="State when the breach occurred."),
+    note: str = typer.Option(..., "--note", help="What happened. Never empty."),
+    db: str = _DB_OPTION,
+) -> None:
+    """Manually capture a non-conformance the runtime could not see itself."""
+    import uuid as _uuid
+
+    from src.schemas.non_conformance import NonConformanceKind, NonConformanceRecord
+
+    record = NonConformanceRecord(
+        id=f"ncr-{_uuid.uuid4().hex[:8]}",
+        workflow_id=workflow_id,
+        capsule_id=capsule_id,
+        kind=NonConformanceKind(kind),
+        from_state=from_state,
+        note=note,
+    )
+    RunLedger(db).save_non_conformance_record(record)
+    console.print(f"Captured [cyan]{record.id}[/cyan] ({record.kind.value}).")
+
+
+@nonconformance_app.command("resolve")
+def nonconformance_resolve(
+    record_id: str = typer.Argument(..., help="Non-conformance record id."),
+    note: str = typer.Option(
+        ...,
+        "--note",
+        help=(
+            "The concrete process change that closes this record (e.g. 'removed "
+            "redundant review step', 'added missing transition to brief')."
+        ),
+    ),
+    db: str = _DB_OPTION,
+) -> None:
+    """Resolve a non-conformance record with the process change it produced.
+
+    Doctrine: corrective action considers removing or simplifying steps
+    before adding controls — the note should say which happened.
+    """
+    from src.schemas.non_conformance import ResolutionStatus
+
+    ledger = RunLedger(db)
+    record = next(
+        (r for r in ledger.non_conformance_records() if r.id == record_id), None
+    )
+    if record is None:
+        console.print(f"[red]Unknown record:[/red] {record_id}")
+        raise typer.Exit(1)
+    record.resolution_status = ResolutionStatus.RESOLVED
+    record.resolution_note = note
+    ledger.save_non_conformance_record(record)
+    console.print(f"[green]Resolved {record_id}.[/green] Process change: {note}")
+
+
+@nonconformance_app.command("patterns")
+def nonconformance_patterns(db: str = _DB_OPTION) -> None:
+    """Group non-conformance records by workflow and kind — repeats are the signal.
+
+    Repeated failures must trigger non-conformance review, and the first
+    corrective question is always: can a step be removed or simplified?
+    """
+    records = RunLedger(db).non_conformance_records()
+    if not records:
+        console.print("[green]No non-conformance records.[/green]")
+        return
+    groups: dict[tuple, list] = {}
+    for r in records:
+        groups.setdefault((r.workflow_id, r.kind.value), []).append(r)
+    table = Table(title="Non-conformance patterns")
+    for col in ("Workflow", "Kind", "Count", "Open", "Signal"):
+        table.add_column(col)
+    for (workflow_id, kind), group in sorted(
+        groups.items(), key=lambda kv: -len(kv[1])
+    ):
+        open_count = sum(1 for r in group if r.resolution_status.value == "open")
+        repeated = len(group) >= 2
+        signal = (
+            "[red]REPEAT — review process: remove or simplify before adding controls[/red]"
+            if repeated and open_count
+            else "[yellow]repeat, resolved[/yellow]"
+            if repeated
+            else "-"
+        )
+        table.add_row(workflow_id, kind, str(len(group)), str(open_count), signal)
+    console.print(table)
 
 
 @nonconformance_app.command("list")

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+# Reviewed example: can the next session pick up the writer's work cold?
+case_id: q2c-writer-handoff
+name: Writer handoff is consumable without reconstruction
+workflow: q2c-production-handoff
+agent: writer-agent
+input_artifacts:
+  - examples/q2c-production-handoff.yaml
+expected_outputs:
+  required_fields:
+    - draft
+    - evidence
+  forbidden_claims:
+    - editor approved     # the writer cannot claim the editor's decision
+    - self-approved       # nor its own sign-off
+    - ready to publish    # publication readiness is the editor's call
+  expected_escalation: flaveon
+  expected_depth: 2
+scoring:
+  handoff_completeness: true
+  observation_discipline: true
+  depth_compliance: false
+  escalation_correctness: false
+  complexity_reduction: false
+reviewed: true
+notes: >
+  The unsupported-claims list is the teeth: a writer handoff claiming
+  "editor approved" or "ready to publish" asserts decisions the writer
+  does not own. Bare state names (APPROVED, PUBLISHED) are NOT forbidden —
+  when they appear in a handoff they are backed by ledger evidence.

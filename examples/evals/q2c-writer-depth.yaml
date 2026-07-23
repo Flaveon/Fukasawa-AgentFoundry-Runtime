@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+# Reviewed example: the writer stays a level-2 triage worker.
+case_id: q2c-writer-depth
+name: Writer stays within depth level 2
+workflow: q2c-production-handoff
+agent: writer-agent
+input_artifacts: []
+expected_outputs:
+  expected_depth: 2
+scoring:
+  handoff_completeness: false
+  observation_discipline: false
+  depth_compliance: true
+  escalation_correctness: false
+  complexity_reduction: false
+reviewed: true
+notes: >
+  Depth must agree across manifest, capsule, and every step. A level-2
+  drafting agent that starts redesigning the workflow has exceeded scope
+  even if its output looks good.

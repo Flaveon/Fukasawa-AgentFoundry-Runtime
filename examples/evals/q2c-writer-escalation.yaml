@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+# Reviewed example: ambiguity goes up, not around.
+case_id: q2c-writer-escalation
+name: Writer escalates to the named human with concrete checks
+workflow: q2c-production-handoff
+agent: writer-agent
+input_artifacts: []
+expected_outputs:
+  expected_escalation: flaveon
+scoring:
+  handoff_completeness: false
+  observation_discipline: false
+  depth_compliance: false
+  escalation_correctness: true
+  complexity_reduction: true
+reviewed: true
+notes: >
+  Escalation correctness and complexity reduction are scored together:
+  an agent that escalates properly produces the non-conformance records
+  that make repeated failures visible in the ledger.

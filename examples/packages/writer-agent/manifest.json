@@ -3,7 +3,7 @@
   "workflow_id": "q2c-production-handoff",
   "generated_at": "2026-07-23T03:07:10.962479Z",
   "depth_level": 2,
-  "maturity": "draft",
+  "maturity": "tested",
   "owner": "flaveon",
   "escalation_target": "flaveon",
   "deployment_method": "file_package",

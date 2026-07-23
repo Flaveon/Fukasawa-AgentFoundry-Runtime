@@ -4,7 +4,7 @@ task_name: 'q2c-production-handoff: Turn completed research into a submission-re
   '
 owner_agent: writer-agent
 workflow_id: q2c-production-handoff
-maturity: draft
+maturity: tested
 depth_level: 2
 inputs:
 - name: work in state RESEARCH_COMPLETE

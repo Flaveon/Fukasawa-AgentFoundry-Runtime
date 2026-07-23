@@ -18,6 +18,7 @@ from typing import Optional
 
 import sqlite_utils
 
+from src.schemas.eval_case import EvalResult
 from src.schemas.non_conformance import (
     NonConformanceRecord,
     ResolutionStatus,
@@ -40,6 +41,18 @@ _APPEND_ONLY_TRIGGERS = [
     CREATE TRIGGER IF NOT EXISTS ledger_no_delete
     BEFORE DELETE ON ledger
     BEGIN SELECT RAISE(ABORT, 'ledger is append-only: deletes are forbidden'); END;
+    """,
+    # Governance decisions are history too: a promotion, once made, is never
+    # rewritten — a wrong promotion is corrected by a demotion event on top.
+    """
+    CREATE TRIGGER IF NOT EXISTS promotions_no_update
+    BEFORE UPDATE ON promotions
+    BEGIN SELECT RAISE(ABORT, 'promotions are append-only: updates are forbidden'); END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS promotions_no_delete
+    BEFORE DELETE ON promotions
+    BEGIN SELECT RAISE(ABORT, 'promotions are append-only: deletes are forbidden'); END;
     """,
 ]
 
@@ -71,8 +84,6 @@ class RunLedger:
                 },
                 pk="event_id",
             )
-        for trigger_sql in _APPEND_ONLY_TRIGGERS:
-            self.db.execute(trigger_sql)
         if "workflows" not in self.db.table_names():
             self.db["workflows"].create(
                 {"id": str, "title": str, "owner": str, "brief_json": str},
@@ -117,6 +128,37 @@ class RunLedger:
                 },
                 pk="id",
             )
+        if "eval_results" not in self.db.table_names():
+            self.db["eval_results"].create(
+                {
+                    "result_id": str,
+                    "case_id": str,
+                    "workflow_id": str,
+                    "agent": str,
+                    "run_id": str,
+                    "overall": str,
+                    "evaluated_at": str,
+                    "result_json": str,  # full EvalResult
+                },
+                pk="result_id",
+            )
+        if "promotions" not in self.db.table_names():
+            # Created BEFORE the trigger loop above runs, so the append-only
+            # triggers attach on first startup.
+            self.db["promotions"].create(
+                {
+                    "promotion_id": int,
+                    "agent": str,
+                    "workflow_id": str,
+                    "from_maturity": str,
+                    "to_maturity": str,
+                    "reviewed_by": str,
+                    "rationale": str,
+                    "evidence": str,
+                    "promoted_at": str,
+                },
+                pk="promotion_id",
+            )
         if "capsules" not in self.db.table_names():
             self.db["capsules"].create(
                 {
@@ -134,6 +176,9 @@ class RunLedger:
                 },
                 pk="id",
             )
+        # Triggers attach last, after every table they reference exists.
+        for trigger_sql in _APPEND_ONLY_TRIGGERS:
+            self.db.execute(trigger_sql)
 
     # ------------------------------------------------------------------ ledger
 
@@ -305,6 +350,75 @@ class RunLedger:
             "run_id = ?", [run_id], order_by="observed_at"
         )
         return [ObservationPacket.model_validate_json(r["packet_json"]) for r in rows]
+
+    # ------------------------------------------------------------ eval results
+
+    def save_eval_result(self, result: EvalResult) -> None:
+        """Store one eval execution. Results are inserted, never revised —
+        a re-run is a new result, and history shows the trend."""
+        self.db["eval_results"].insert(
+            {
+                "result_id": result.result_id,
+                "case_id": result.case_id,
+                "workflow_id": result.workflow_id,
+                "agent": result.agent,
+                "run_id": result.run_id,
+                "overall": result.overall.value,
+                "evaluated_at": result.evaluated_at.isoformat(),
+                "result_json": result.model_dump_json(),
+            }
+        )
+
+    def eval_results_for(
+        self, agent: str = "", workflow_id: str = ""
+    ) -> list[EvalResult]:
+        """Return eval results filtered by agent and/or workflow, newest first."""
+        clauses, params = [], []
+        if agent:
+            clauses.append("agent = ?")
+            params.append(agent)
+        if workflow_id:
+            clauses.append("workflow_id = ?")
+            params.append(workflow_id)
+        where = " and ".join(clauses) if clauses else "1=1"
+        rows = self.db["eval_results"].rows_where(
+            where, params, order_by="evaluated_at desc"
+        )
+        return [EvalResult.model_validate_json(r["result_json"]) for r in rows]
+
+    # -------------------------------------------------------------- promotions
+
+    def record_promotion(
+        self,
+        agent: str,
+        workflow_id: str,
+        from_maturity: str,
+        to_maturity: str,
+        reviewed_by: str,
+        rationale: str,
+        evidence: str,
+    ) -> None:
+        """Append one governance decision to the immutable promotion history."""
+        self.db["promotions"].insert(
+            {
+                "agent": agent,
+                "workflow_id": workflow_id,
+                "from_maturity": from_maturity,
+                "to_maturity": to_maturity,
+                "reviewed_by": reviewed_by,
+                "rationale": rationale,
+                "evidence": evidence,
+                "promoted_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+
+    def promotions_for(self, agent: str) -> list[dict]:
+        """Return the promotion history for an agent, oldest first."""
+        return list(
+            self.db["promotions"].rows_where(
+                "agent = ?", [agent], order_by="promotion_id"
+            )
+        )
 
     # --------------------------------------------------- non-conformance records
 

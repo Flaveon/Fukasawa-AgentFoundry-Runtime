@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# Prompt/Module Registry — DRAFT (Phase 3 deliverable)
+#
+# Candidate LLM modules that may one day be optimized (DSPy or similar)
+# against the governance metrics. Doctrine: do not optimize until the
+# baseline prompt and manual review examples exist. Every module starts
+# as a manual baseline; optimization is an experiment run against these
+# metrics, and the fallback baseline always remains available.
+
+schema_version: "0.1"
+status: draft
+
+modules:
+  - module_id: handoff-summarizer
+    purpose: Compress a run ledger + handoff file into a next-session brief.
+    baseline: manual (write_handoff template in src/runtime/handoff.py)
+    maturity: draft
+    metrics: [handoff_completeness]
+    reviewed_examples: 0
+    optimize_when: 20+ reviewed examples and a stable metric baseline
+
+  - module_id: non-conformance-classifier
+    purpose: Classify a failure note into NonConformanceKind.
+    baseline: manual (operator picks kind in `fukasawa nonconformance capture`)
+    maturity: draft
+    metrics: [complexity_reduction]
+    reviewed_examples: 0
+    optimize_when: 20+ classified records with human-confirmed kinds
+
+  - module_id: task-depth-classifier
+    purpose: Suggest ROUTINE/GUIDED/CONSCIOUS and numeric depth for new transitions.
+    baseline: manual (human answers the Complexity Gate in the brief)
+    maturity: draft
+    metrics: [depth_compliance]
+    reviewed_examples: 0
+    optimize_when: 20+ transitions with human-assigned depths
+
+  - module_id: process-capsule-drafter
+    purpose: Draft an AgentCapsuleContract from a brief's transitions.
+    baseline: deterministic (_build_capsule in src/foundry/generator.py)
+    maturity: tested   # deterministic code with test coverage, not a prompt yet
+    metrics: [depth_compliance, escalation_correctness]
+    reviewed_examples: 2   # writer-agent, publisher-agent sample packages
+    optimize_when: capsule quality becomes the bottleneck, not before
+
+  - module_id: workflow-brief-reviewer
+    purpose: Pre-review a brief for missing evidence requirements and depth mismatches.
+    baseline: manual (schema validation + human review)
+    maturity: draft
+    metrics: [handoff_completeness, depth_compliance]
+    reviewed_examples: 1   # q2c-production-handoff
+    optimize_when: 10+ approved briefs exist to learn from
