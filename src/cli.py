@@ -68,6 +68,7 @@ eval_app = typer.Typer(help="Run eval cases against recorded runs.")
 maturity_app = typer.Typer(help="Evidence-based maturity assessment and promotion.")
 graph_app = typer.Typer(help="Run workflow graphs through the orchestration kernel.")
 trust_app = typer.Typer(help="Manage signing identity and trusted keys.")
+model_app = typer.Typer(help="Inspect and test configured model endpoints.")
 app.add_typer(nonconformance_app, name="nonconformance")
 app.add_typer(validate_app, name="validate")
 app.add_typer(runs_app, name="runs")
@@ -76,6 +77,7 @@ app.add_typer(eval_app, name="eval")
 app.add_typer(maturity_app, name="maturity")
 app.add_typer(graph_app, name="graph")
 app.add_typer(trust_app, name="trust")
+app.add_typer(model_app, name="model")
 
 console = Console()
 
@@ -772,10 +774,35 @@ def _sidecar_signature(graph_path: str) -> Optional[str]:
     return sig.read_text(encoding="utf-8").strip() if sig.exists() else None
 
 
-def _make_runner(db: str, handoff_dir: str, require_signed: bool) -> GraphRunner:
-    """Build a runner, turning on trust enforcement when --require-signed is set."""
+def _model_endpoints() -> "ModelEndpointRegistry":
+    """Load model endpoints from the trust-home config, falling back to defaults."""
+    from src.kernel.models import ModelEndpointRegistry
+    from src.security.trust import DEFAULT_TRUST_ROOT
+
+    return ModelEndpointRegistry.from_config(
+        DEFAULT_TRUST_ROOT / "model_endpoints.yaml"
+    )
+
+
+def _make_runner(
+    db: str, handoff_dir: str, require_signed: bool, workspace: Optional[str] = None
+) -> GraphRunner:
+    """Build a runner with a model adapter and optional trust enforcement.
+
+    ``--require-signed`` turns on signature enforcement; ``workspace`` jails
+    the filesystem adapter for shared-graph safety.
+    """
+    from src.kernel.adapters import AdapterRegistry
+    from src.kernel.models import ModelAdapter
+
+    registry = AdapterRegistry(
+        workspace_root=workspace,
+        model_adapter=ModelAdapter(_model_endpoints()),
+    )
     trust = TrustStore() if require_signed else None
-    return GraphRunner(RunLedger(db), handoff_dir=handoff_dir, trust_store=trust)
+    return GraphRunner(
+        RunLedger(db), registry=registry, handoff_dir=handoff_dir, trust_store=trust
+    )
 
 
 @graph_app.command("run")
@@ -790,11 +817,16 @@ def graph_run(
         "--require-signed",
         help="Refuse to run unless the graph is signed by a trusted key.",
     ),
+    workspace: Optional[str] = typer.Option(
+        None,
+        "--workspace",
+        help="Jail the filesystem adapter to this directory (shared-graph safety).",
+    ),
     db: str = _DB_OPTION,
     handoff_dir: str = _HANDOFF_OPTION,
 ) -> None:
     """Start a graph run and drive it until it completes, blocks, or fails."""
-    runner = _make_runner(db, handoff_dir, require_signed)
+    runner = _make_runner(db, handoff_dir, require_signed, workspace=workspace)
     try:
         graph = load_graph(graph_path)
         brief = runner.runtime.load_brief(brief_path)
@@ -990,6 +1022,52 @@ def trust_revoke(
         console.print(f"[yellow]Revoked[/yellow] {key_id}.")
     else:
         console.print(f"[red]No such trusted key:[/red] {key_id}")
+        raise typer.Exit(1)
+
+
+# ----------------------------------------------------------------------- model
+
+
+@model_app.command("list")
+def model_list() -> None:
+    """List configured model endpoints (defaults + config file)."""
+    registry = _model_endpoints()
+    table = Table(title="Model endpoints")
+    table.add_column("Name")
+    table.add_column("Kind")
+    table.add_column("URL")
+    for name in registry.names():
+        ep = registry.get(name)
+        table.add_row(ep.name, ep.kind, ep.url)
+    console.print(table)
+    console.print(
+        "Reference these by name in a graph's model node: "
+        "[cyan]endpoint: pink[/cyan]"
+    )
+
+
+@model_app.command("test")
+def model_test(
+    endpoint: str = typer.Argument(..., help="Endpoint name to probe."),
+    model: str = typer.Option(..., "--model", help="Model identifier to load."),
+    prompt: str = typer.Option("Say 'ready' and nothing else.", "--prompt"),
+    timeout: float = typer.Option(30.0, "--timeout"),
+) -> None:
+    """Send one prompt to a model endpoint and print the reply (or the failure)."""
+    from src.kernel.models import ModelAdapter
+
+    adapter = ModelAdapter(_model_endpoints())
+    result = adapter.execute(
+        {"endpoint": endpoint, "model": model, "prompt": prompt, "timeout": timeout}
+    )
+    if result.ok:
+        console.print(
+            Panel(escape(result.evidence), title=f"[green]{endpoint} replied[/green]")
+        )
+    else:
+        console.print(
+            Panel(escape(result.note), title=f"[red]{endpoint} failed[/red]", border_style="red")
+        )
         raise typer.Exit(1)
 
 

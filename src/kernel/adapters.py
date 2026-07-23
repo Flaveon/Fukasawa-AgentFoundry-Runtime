@@ -22,7 +22,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Optional, Protocol
 
 
 @dataclass
@@ -173,15 +173,23 @@ class ShellAdapter:
 class AdapterRegistry:
     """Where the kernel finds adapters by name. Extensible by registration."""
 
-    def __init__(self, workspace_root: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        workspace_root: str | Path | None = None,
+        model_adapter: Optional["Adapter"] = None,
+    ) -> None:
         """Start with the built-in local-first adapters.
 
         ``workspace_root`` jails the filesystem adapter to a directory —
         pass the run's workspace to confine file operations for shared graphs.
+        ``model_adapter`` registers a model backend under the name 'model';
+        omitted here to avoid importing model config unless it is needed.
         """
         self._adapters: dict[str, Adapter] = {}
         for adapter in (FilesystemAdapter(workspace_root), ShellAdapter()):
             self.register(adapter)
+        if model_adapter is not None:
+            self.register(model_adapter)
 
     def register(self, adapter: Adapter) -> None:
         """Add or replace an adapter. Later phases plug model adapters in here."""

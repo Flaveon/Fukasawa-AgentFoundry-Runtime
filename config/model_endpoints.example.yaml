@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# Model endpoint configuration. Copy to $FUKASAWA_HOME/model_endpoints.yaml
+# (default ~/.fukasawa/model_endpoints.yaml) and edit for your network.
+#
+# Graphs reference these by NAME, never by IP or model id — so a shared
+# graph says `endpoint: pink` and each operator's config decides what that
+# resolves to. Entries here merge over the built-in defaults.
+#
+# kind: ollama    -> POST {url}/api/chat            (Ollama nodes)
+# kind: llamacpp  -> POST {url}/v1/chat/completions (llama.cpp, OpenAI-compatible)
+
+endpoints:
+  # The local llama.cpp server (default extra args, Qwen 27B).
+  local-llama:
+    kind: llamacpp
+    url: http://localhost:8081
+
+  # Ollama nodes on the LAN.
+  pink:
+    kind: ollama
+    url: http://192.168.50.110:11434
+
+  coderat:
+    kind: ollama
+    url: http://192.168.50.165:11434
+
+  # Seneca / ml350 — 2x Tesla P100, host-direct Ollama.
+  seneca:
+    kind: ollama
+    url: http://192.168.50.10:11434
