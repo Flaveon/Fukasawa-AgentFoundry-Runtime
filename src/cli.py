@@ -267,6 +267,20 @@ def _interactive_loop(
 
 
 @app.command()
+def gui() -> None:
+    """Launch the desktop app (validate a brief, build a workflow)."""
+    try:
+        from src.gui.app import main as gui_main
+    except ImportError:
+        console.print(
+            "[red]The GUI needs customtkinter.[/red] Install it with: "
+            "pip install 'fukasawa-agentfoundry-runtime[gui]'"
+        )
+        raise typer.Exit(1)
+    gui_main()
+
+
+@app.command()
 def run(
     brief_path: str = typer.Argument(..., help="Path to a workflow brief YAML file."),
     assigned_to: Optional[str] = typer.Option(

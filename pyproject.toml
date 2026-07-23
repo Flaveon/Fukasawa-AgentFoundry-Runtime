@@ -21,12 +21,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+gui = ["customtkinter>=6"]
 
 [project.scripts]
 fukasawa = "src.cli:app"
+fukasawa-gui = "src.gui.app:main"
 
 [tool.setuptools]
-packages = ["src", "src.schemas", "src.runtime", "src.foundry", "src.governance", "src.kernel", "src.security"]
+packages = ["src", "src.schemas", "src.runtime", "src.foundry", "src.governance", "src.kernel", "src.security", "src.gui"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
