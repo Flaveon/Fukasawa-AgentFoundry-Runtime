@@ -36,9 +36,24 @@ xvfb-run -a .venv/bin/python -m pytest tests/test_gui.py -q # to run the 4 GUI t
   0600 atomically + identity dir 0700 (`5234a9a`, landed AFTER v0.1.0 — so
   it ships in the next tag, not v0.1.0).
 
+## Just landed (this session)
+
+- **Phase 5C — signed export/import bundle format** is DONE. A workflow can
+  now be shared as one signed `.fkz` archive (`src/schemas/bundle.py`,
+  `src/runtime/bundle.py`, `fukasawa bundle export|inspect|import`), reusing
+  the 5A trust layer: import refuses untrusted signers and tampered files
+  before writing anything to disk. Tests in `tests/test_bundle.py`
+  (roundtrip, tamper→refused, untrusted→refused, trusted→accepted, plus
+  export-side validation and zip-slip guards). Suite is now
+  **113 passed, 4 skipped**. This closes the roadmap's Phase 3/5
+  "export/import format" deliverable.
+
 ## Tomorrow's work
 
-### 1. gitleaks across ALL repos (cross-repo, do first — it's quick)
+### 1. gitleaks across ALL repos (cross-repo — still pending)
+NOTE: this is cross-repo and was out of scope for the session that landed
+5C (that session was scoped to this repo only). Do it from a session with
+multi-repo access.
 Goal: make "no secrets in git" machine-enforced everywhere, so the LAN-IP
 leak that happened here can't recur.
 - Add a **gitleaks GitHub Action** to each repo (scans on push/PR).
@@ -51,26 +66,21 @@ leak that happened here can't recur.
   scope. A shared reusable workflow or an org-level ruleset avoids copying
   the same YAML into every repo by hand.
 
-### 2. Phase 5C — signed export/import bundle format
-The last Phase 5 piece: let people share whole WORKFLOWS (not just the app),
-safely, using the 5A trust layer.
+### 2. Phase 5C — signed export/import bundle format — DONE (see "Just landed")
+Built to the sketch that was here: a `.fkz` archive (a ZIP, no new deps)
+carrying the brief, graph(s), agent packages, and eval cases, plus a signed
+`BundleManifest` (`manifest.json` + detached `manifest.sig`, Ed25519).
+Import mirrors the `UntrustedGraphError` refusal (`UntrustedBundleError` /
+`BundleTamperError`) and verifies signature + every file hash in memory
+before writing anything. Two small additions beyond the sketch worth
+knowing: export refuses to bundle an agent package that fails Foundry
+validation or a graph/eval that names a different workflow than the brief;
+import guards against zip-slip paths and smuggled (unlisted) files.
 
-Design sketch (confirm before building):
-- A **bundle** = an archive containing the workflow brief, its graph(s), the
-  generated agent packages, and eval cases, plus a **manifest** listing
-  every file with its SHA-256, plus a **detached signature** over the
-  manifest (Ed25519, via `src/security/signing.py`).
-- **Export**: `fukasawa bundle export <brief> --graph <g> --out x.fkz` —
-  collect artifacts, hash each into a `BundleManifest`
-  (`src/schemas/bundle.py`), sign the manifest with the local identity.
-- **Import**: `fukasawa bundle import x.fkz` — verify the signature against
-  the trust store (reuse the `TrustStore.is_trusted_signature` gate, same as
-  graph running), verify each file's hash matches the manifest, THEN unpack.
-  Refuse untrusted or tampered bundles — mirror the `UntrustedGraphError`
-  pattern in `src/kernel/kernel.py`.
-- Tests to write: roundtrip export→import; tamper a file → import refused;
-  untrusted signer → refused; trusted signer → accepted.
-- This closes the roadmap's Phase 3/5 "export/import format" deliverable.
+Follow-ups a future session could pick up (none blocking):
+- a GUI surface for bundle export/import (5E is CustomTkinter);
+- teach `fukasawa graph run` to consume an imported bundle directory
+  directly (today you point `--brief`/`--graph` at the unpacked files).
 
 ## Key context / conventions
 

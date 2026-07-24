@@ -16,6 +16,9 @@ Commands:
     fukasawa runs complete <run_id>     complete a run with a verification check
     fukasawa nonconformance list        show capsules in NON_CONFORMANCE
     fukasawa nonconformance records     show structured non-conformance records
+    fukasawa bundle export <brief>      pack a signed, shareable workflow bundle
+    fukasawa bundle inspect <bundle>    verify a bundle's signature and hashes
+    fukasawa bundle import <bundle>     verify and unpack a trusted bundle
 
 All state lives in a local SQLite file (default: ./fukasawa.db). Run handoff
 files are written to ./run_handoffs/. No network calls happen anywhere in
@@ -69,6 +72,7 @@ maturity_app = typer.Typer(help="Evidence-based maturity assessment and promotio
 graph_app = typer.Typer(help="Run workflow graphs through the orchestration kernel.")
 trust_app = typer.Typer(help="Manage signing identity and trusted keys.")
 model_app = typer.Typer(help="Inspect and test configured model endpoints.")
+bundle_app = typer.Typer(help="Export and import signed, shareable workflow bundles.")
 app.add_typer(nonconformance_app, name="nonconformance")
 app.add_typer(validate_app, name="validate")
 app.add_typer(runs_app, name="runs")
@@ -78,6 +82,7 @@ app.add_typer(maturity_app, name="maturity")
 app.add_typer(graph_app, name="graph")
 app.add_typer(trust_app, name="trust")
 app.add_typer(model_app, name="model")
+app.add_typer(bundle_app, name="bundle")
 
 console = Console()
 
@@ -1037,6 +1042,167 @@ def trust_revoke(
     else:
         console.print(f"[red]No such trusted key:[/red] {key_id}")
         raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------- bundle
+
+
+@bundle_app.command("export")
+def bundle_export(
+    brief_path: str = typer.Argument(..., help="Path to the workflow brief YAML."),
+    out: str = typer.Option(..., "--out", help="Path to write the .fkz bundle to."),
+    graph: list[str] = typer.Option(
+        [], "--graph", help="Graph YAML to include (repeatable)."
+    ),
+    package: list[str] = typer.Option(
+        [], "--package", help="Agent package directory to include (repeatable)."
+    ),
+    eval_case: list[str] = typer.Option(
+        [], "--eval", help="Eval case YAML to include (repeatable)."
+    ),
+    description: str = typer.Option(
+        "", "--description", help="Plain-language summary for the receiving operator."
+    ),
+) -> None:
+    """Export a workflow into a signed, shareable bundle.
+
+    Every artifact is validated before it is packed — graphs and evals must
+    name the brief's workflow, and each agent package must pass its Foundry
+    validation — so a written bundle is always one that will survive import.
+    """
+    from src.runtime.bundle import BundleError, export_bundle
+
+    try:
+        manifest = export_bundle(
+            brief_path=brief_path,
+            out_path=out,
+            graph_paths=graph,
+            package_dirs=package,
+            eval_paths=eval_case,
+            description=description,
+        )
+    except ValidationError as exc:
+        _print_validation_error(exc, "Bundle artifact")
+        raise typer.Exit(1)
+    except BundleError as exc:
+        console.print(
+            Panel(escape(str(exc)), title="[red]Export refused[/red]", border_style="red")
+        )
+        raise typer.Exit(1)
+    counts = {role: 0 for role in ("brief", "graph", "package", "eval")}
+    for entry in manifest.entries:
+        counts[entry.role.value] += 1
+    console.print(
+        Panel(
+            f"[bold]{manifest.bundle_id}[/bold] — workflow `{manifest.workflow_id}`\n"
+            f"{counts['graph']} graph(s), {counts['package']} package file(s), "
+            f"{counts['eval']} eval(s)\n"
+            f"signed by key [cyan]{manifest.signer_key_id}[/cyan]",
+            title="[green]Bundle exported[/green]",
+            border_style="green",
+        )
+    )
+    console.print(f"Written: [cyan]{out}[/cyan]")
+
+
+@bundle_app.command("inspect")
+def bundle_inspect(
+    bundle_path: str = typer.Argument(..., help="Path to a .fkz bundle."),
+) -> None:
+    """Verify a bundle's signature and file hashes without extracting it."""
+    from src.runtime.bundle import BundleError, inspect_bundle
+
+    try:
+        result = inspect_bundle(bundle_path)
+    except BundleError as exc:
+        console.print(
+            Panel(escape(str(exc)), title="[red]Bundle rejected[/red]", border_style="red")
+        )
+        raise typer.Exit(1)
+    m = result.manifest
+    trust_line = (
+        "[green]trusted signer[/green]"
+        if result.signer_trusted
+        else "[yellow]signer NOT in your trust store[/yellow]"
+    )
+    table = Table(title=f"{m.bundle_id} — {m.description}")
+    for col in ("Path", "Role", "SHA-256"):
+        table.add_column(col)
+    for entry in m.entries:
+        table.add_row(entry.path, entry.role.value, entry.sha256[:16] + "…")
+    console.print(
+        Panel(
+            f"workflow `{m.workflow_id}` — {len(m.entries)} file(s)\n"
+            f"signer key [cyan]{m.signer_key_id}[/cyan] — {trust_line}\n"
+            f"hashes: [green]all match[/green]",
+            title="[green]Bundle is intact[/green]",
+            border_style="green" if result.signer_trusted else "yellow",
+        )
+    )
+    console.print(table)
+    if not result.signer_trusted:
+        console.print(
+            "To import this bundle, trust the signer's key first: "
+            "'fukasawa trust add <public.pem>'."
+        )
+
+
+@bundle_app.command("import")
+def bundle_import(
+    bundle_path: str = typer.Argument(..., help="Path to a .fkz bundle."),
+    dest: str = typer.Option(..., "--dest", help="Directory to unpack the bundle into."),
+    allow_untrusted: bool = typer.Option(
+        False,
+        "--allow-untrusted",
+        help="Skip the trust gate (hash checks still run). Only for your own exports.",
+    ),
+) -> None:
+    """Verify and unpack a bundle — refusing untrusted or tampered archives.
+
+    Signature and hashes are checked while the bundle is still bytes in memory;
+    nothing is written to --dest unless both pass.
+    """
+    from src.runtime.bundle import (
+        BundleError,
+        BundleTamperError,
+        UntrustedBundleError,
+        import_bundle,
+    )
+
+    try:
+        result = import_bundle(
+            bundle_path, dest, require_trusted=not allow_untrusted
+        )
+    except UntrustedBundleError as exc:
+        console.print(
+            Panel(escape(str(exc)), title="[red]Untrusted bundle[/red]", border_style="red")
+        )
+        raise typer.Exit(1)
+    except BundleTamperError as exc:
+        console.print(
+            Panel(escape(str(exc)), title="[red]Bundle tampered[/red]", border_style="red")
+        )
+        raise typer.Exit(1)
+    except BundleError as exc:
+        console.print(
+            Panel(escape(str(exc)), title="[red]Bundle rejected[/red]", border_style="red")
+        )
+        raise typer.Exit(1)
+    trust_note = (
+        "trusted signer"
+        if result.signer_trusted
+        else "[yellow]untrusted signer — imported under --allow-untrusted[/yellow]"
+    )
+    console.print(
+        Panel(
+            f"[bold]{result.manifest.bundle_id}[/bold] — workflow "
+            f"`{result.manifest.workflow_id}`\n"
+            f"{len(result.extracted)} file(s) unpacked to [cyan]{result.dest}[/cyan]\n"
+            f"signer key [cyan]{result.signer_key_id}[/cyan] — {trust_note}",
+            title="[green]Bundle imported[/green]",
+            border_style="green",
+        )
+    )
 
 
 # ----------------------------------------------------------------------- model
