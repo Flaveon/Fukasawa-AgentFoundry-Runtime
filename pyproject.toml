@@ -22,6 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 gui = ["customtkinter>=6"]
+build = ["pyinstaller>=6", "customtkinter>=6"]
 
 [project.scripts]
 fukasawa = "src.cli:app"

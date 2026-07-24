@@ -3,3 +3,9 @@ __pycache__/
 *.egg-info/
 fukasawa.db
 *.db
+
+# PyInstaller build artifacts (large binaries — built, not committed)
+build/
+dist/
+*.sig
+run_handoffs/
