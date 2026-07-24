@@ -1,5 +1,7 @@
 # Fukasawa-AgentFoundry Runtime
 
+[![build](https://github.com/Flaveon/Fukasawa-AgentFoundry-Runtime/actions/workflows/build.yml/badge.svg)](https://github.com/Flaveon/Fukasawa-AgentFoundry-Runtime/actions/workflows/build.yml)
+
 ## Purpose
 
 This project defines the path from FukasawaGPT and Agent Foundry as GPT knowledge packs into a standalone ConcordiaPax workflow scaffolding and governance runtime.
