@@ -52,16 +52,20 @@ class TrustStore:
         self.root = Path(root)
         self.identity_dir = self.root / "identity"
         self.trusted_dir = self.root / "trusted"
+        # The identity dir holds the private key, so keep it owner-only (0700).
+        # Trusted keys are public, so their dir needs no special restriction.
         self.identity_dir.mkdir(parents=True, exist_ok=True)
         self.trusted_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.identity_dir, 0o700)
 
     # ---------------------------------------------------------------- identity
 
     def ensure_identity(self, name: str = "") -> KeyPair:
         """Return the local signing identity, creating one on first use.
 
-        The private key is written 0600 — a signing key readable by other
-        users is not an identity, it is an impersonation waiting to happen.
+        The private key is created with 0600 from the very first byte — a
+        signing key that is briefly readable by other users is not an
+        identity, it is an impersonation waiting to happen.
         """
         priv_path = self.identity_dir / "private.pem"
         pub_path = self.identity_dir / "public.pem"
@@ -71,12 +75,27 @@ class TrustStore:
                 public_pem=pub_path.read_text(encoding="utf-8"),
             )
         keypair = generate_keypair()
-        priv_path.write_text(keypair.private_pem, encoding="utf-8")
-        os.chmod(priv_path, 0o600)
+        self._write_private(priv_path, keypair.private_pem)
         pub_path.write_text(keypair.public_pem, encoding="utf-8")
         # Trust yourself, and label the key if a name was given.
         self.trust(keypair.public_pem, name=name or "local-identity")
         return keypair
+
+    @staticmethod
+    def _write_private(path: Path, contents: str) -> None:
+        """Write a secret file that is never, even briefly, group/world-readable.
+
+        os.open with mode 0o600 creates the file restricted from the start,
+        closing the window a write-then-chmod leaves open. The trailing chmod
+        enforces 0o600 even if the file already existed with looser perms
+        (O_TRUNC keeps an existing file's mode).
+        """
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(contents)
+        finally:
+            os.chmod(path, 0o600)
 
     def sign_with_identity(self, payload) -> tuple[str, str]:
         """Sign a payload with the local identity; return (signature, public_pem)."""

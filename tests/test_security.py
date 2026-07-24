@@ -65,9 +65,11 @@ class TestTrustStore:
     def test_identity_is_created_and_auto_trusted(self, tmp_path):
         store = TrustStore(tmp_path / "store")
         kp = store.ensure_identity(name="alice")
-        # The private key is not world-readable.
-        mode = (store.identity_dir / "private.pem").stat().st_mode & 0o077
-        assert mode == 0
+        # The private key carries no group/other permission bits at all.
+        priv = store.identity_dir / "private.pem"
+        assert priv.stat().st_mode & 0o077 == 0
+        # And the directory holding it is owner-only.
+        assert store.identity_dir.stat().st_mode & 0o077 == 0
         # You trust yourself.
         sig = sign({"v": 1}, kp.private_pem)
         assert store.is_trusted_signature({"v": 1}, sig)
