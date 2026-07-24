@@ -1056,7 +1056,7 @@ def model_list() -> None:
     console.print(table)
     console.print(
         "Reference these by name in a graph's model node: "
-        "[cyan]endpoint: pink[/cyan]"
+        "[cyan]endpoint: local-ollama[/cyan]"
     )
 
 

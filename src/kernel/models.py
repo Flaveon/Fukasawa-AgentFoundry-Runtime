@@ -15,7 +15,7 @@ Doctrine boundaries this respects:
   not cloud dependencies. Cloud backends can register later without kernel
   changes; that decision (and its API-key handling) stays the operator's.
 * **No hardcoded model identifiers.** Endpoints are named in config and
-  referenced by name from graph YAML, so a graph says ``endpoint: pink``,
+  referenced by name from graph YAML, so a graph says ``endpoint: gpu-node``,
   not an IP. The runtime resolves the name.
 * **Adapters report failure, never raise.** An unreachable model makes the
   node fail, and the kernel's retry/block policy takes over — a model outage
@@ -33,13 +33,12 @@ import yaml
 
 from src.kernel.adapters import AdapterResult
 
-#: Built-in local endpoints (from the workspace's documented nodes). A config
-#: file at $FUKASAWA_HOME/model_endpoints.yaml overrides or extends these.
+#: Built-in defaults — localhost only, so nothing here reveals a private
+#: network. Add your own LAN or remote hosts in
+#: $FUKASAWA_HOME/model_endpoints.yaml (see config/model_endpoints.example.yaml).
 DEFAULT_ENDPOINTS: dict[str, dict] = {
     "local-llama": {"kind": "llamacpp", "url": "http://localhost:8081"},
-    "pink": {"kind": "ollama", "url": "http://192.168.50.110:11434"},
-    "coderat": {"kind": "ollama", "url": "http://192.168.50.165:11434"},
-    "seneca": {"kind": "ollama", "url": "http://192.168.50.10:11434"},
+    "local-ollama": {"kind": "ollama", "url": "http://localhost:11434"},
 }
 
 #: A poster takes (url, payload, timeout) and returns the decoded JSON dict.
@@ -117,7 +116,7 @@ class ModelAdapter:
     """Adapter that delegates an agent node to a configured model endpoint.
 
     params:
-        endpoint:    name of a configured endpoint (e.g. 'pink', 'local-llama')
+        endpoint:    name of a configured endpoint (e.g. 'local-ollama', 'local-llama')
         model:       model identifier the endpoint should load
         prompt:      the user prompt (already variable-substituted by the kernel)
         system:      optional system prompt

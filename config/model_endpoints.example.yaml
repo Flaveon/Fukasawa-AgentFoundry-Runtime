@@ -1,32 +1,32 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 ConcordiaPax LLC
 #
-# Model endpoint configuration. Copy to $FUKASAWA_HOME/model_endpoints.yaml
-# (default ~/.fukasawa/model_endpoints.yaml) and edit for your network.
+# Model endpoint configuration EXAMPLE. Copy to
+# $FUKASAWA_HOME/model_endpoints.yaml (default ~/.fukasawa/model_endpoints.yaml)
+# and replace the placeholder hosts below with your own.
+#
+# The values here are placeholders, not real hosts — put your actual
+# addresses only in your local config, which is never committed.
 #
 # Graphs reference these by NAME, never by IP or model id — so a shared
-# graph says `endpoint: pink` and each operator's config decides what that
-# resolves to. Entries here merge over the built-in defaults.
+# graph says `endpoint: gpu-node` and each operator's config decides what
+# that resolves to. Entries here merge over the built-in localhost defaults.
 #
-# kind: ollama    -> POST {url}/api/chat            (Ollama nodes)
+# kind: ollama    -> POST {url}/api/chat            (Ollama servers)
 # kind: llamacpp  -> POST {url}/v1/chat/completions (llama.cpp, OpenAI-compatible)
 
 endpoints:
-  # The local llama.cpp server (default extra args, Qwen 27B).
+  # A local llama.cpp server on this machine.
   local-llama:
     kind: llamacpp
     url: http://localhost:8081
 
-  # Ollama nodes on the LAN.
-  pink:
+  # A local Ollama server on this machine.
+  local-ollama:
     kind: ollama
-    url: http://192.168.50.110:11434
+    url: http://localhost:11434
 
-  coderat:
+  # An Ollama server elsewhere on your network. Replace the host with yours.
+  gpu-node:
     kind: ollama
-    url: http://192.168.50.165:11434
-
-  # Seneca / ml350 — 2x Tesla P100, host-direct Ollama.
-  seneca:
-    kind: ollama
-    url: http://192.168.50.10:11434
+    url: http://YOUR-OLLAMA-HOST:11434

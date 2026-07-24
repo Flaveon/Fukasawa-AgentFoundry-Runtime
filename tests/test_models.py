@@ -45,15 +45,15 @@ class TestModelAdapter:
     def test_ollama_shape_and_endpoint_resolution(self):
         recorder = []
         adapter = ModelAdapter(
-            ModelEndpointRegistry({"pink": {"kind": "ollama", "url": "http://x:11434"}}),
+            ModelEndpointRegistry({"gpu-node": {"kind": "ollama", "url": "http://x:11434"}}),
             poster=_ollama_poster(recorder),
         )
         result = adapter.execute(
-            {"endpoint": "pink", "model": "qwen", "prompt": "write a draft"}
+            {"endpoint": "gpu-node", "model": "qwen", "prompt": "write a draft"}
         )
         assert result.ok
         assert "drafted from" in result.evidence
-        assert result.outputs["endpoint"] == "pink"
+        assert result.outputs["endpoint"] == "gpu-node"
         url, payload = recorder[0]
         assert url == "http://x:11434/api/chat"
         assert payload["model"] == "qwen"
@@ -105,7 +105,9 @@ class TestEndpointConfig:
     def test_defaults_present(self):
         registry = ModelEndpointRegistry()
         assert "local-llama" in registry.names()
-        assert registry.get("pink").kind == "ollama"
+        assert registry.get("local-ollama").kind == "ollama"
+        # Defaults are localhost only — no private hosts leak into the repo.
+        assert all("localhost" in registry.get(n).url for n in registry.names())
 
     def test_config_file_merges_over_defaults(self, tmp_path):
         cfg = tmp_path / "model_endpoints.yaml"
@@ -118,7 +120,7 @@ class TestEndpointConfig:
 
     def test_missing_config_falls_back(self, tmp_path):
         registry = ModelEndpointRegistry.from_config(tmp_path / "nope.yaml")
-        assert "pink" in registry.names()
+        assert "local-ollama" in registry.names()
 
 
 class TestModelNodeInKernel:
