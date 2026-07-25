@@ -92,8 +92,11 @@ Branch state: this audit lives on **`feature/human-cooperative-workflow-runtime`
 of PR #1, which landed Phase 5C signed bundles. Phase branches (`phase/contracts`
 first) branch from here. Baseline: 113 passed, 4 skipped.
 
-Note for whoever plans the release: two example-workflow commits (Oldowan
-cataloging brief + its pipeline graph) remain **unmerged** on
-`claude/resume-from-handoff-gx3at8` and are absent from `main`. They are not
-audit deliverables and nothing in this plan depends on them, but the pilot
-work (phase 8) may want them — decide whether to merge or drop them.
+Also on this branch (not audit deliverables, but available to build on): a
+second worked example pair, `examples/oldowan-cataloging-review.yaml` (brief)
+and `examples/oldowan-pipeline-graph.yaml` (graph orchestrating it). Both are
+validated and were driven end to end through the runtime — five transitions,
+one CONSCIOUS human gate, and a retryable missing-evidence non-conformance.
+Phase 8's Substack pilot can use them as a structural reference; nothing in
+this plan depends on them. Neither is in `main` yet — they arrive with this
+branch.
