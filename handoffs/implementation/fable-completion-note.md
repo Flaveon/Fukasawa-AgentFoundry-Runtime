@@ -85,7 +85,15 @@ needs to start phase/contracts exists once R8 is ruled on.
 
 Read, in order: this note → `architecture-audit.md` →
 `adr-proposals/adr-002` (sharpest constraint) → `risk-register.md` (R8) →
-`release-plan.md` → `file-change-map.md`. Branch state: audit committed on
-`claude/resume-from-handoff-gx3at8`; implementation branch
-`feature/human-cooperative-workflow-runtime` not yet created. Baseline:
-113 passed, 4 skipped.
+`release-plan.md` → `file-change-map.md`.
+
+Branch state: this audit lives on **`feature/human-cooperative-workflow-runtime`**
+(the master handoff §13 target), branched from `main` @ `9273374` — the merge
+of PR #1, which landed Phase 5C signed bundles. Phase branches (`phase/contracts`
+first) branch from here. Baseline: 113 passed, 4 skipped.
+
+Note for whoever plans the release: two example-workflow commits (Oldowan
+cataloging brief + its pipeline graph) remain **unmerged** on
+`claude/resume-from-handoff-gx3at8` and are absent from `main`. They are not
+audit deliverables and nothing in this plan depends on them, but the pilot
+work (phase 8) may want them — decide whether to merge or drop them.

@@ -1,6 +1,13 @@
 # Architecture Audit — Fukasawa-AgentFoundry Runtime
 
-**Phase Handoff 01 deliverable. Audit date: 2026-07-25. Audited at commit `679ce00` on branch `claude/resume-from-handoff-gx3at8` (v0.1.0 released + Phase 5C bundles + Oldowan examples).**
+**Phase Handoff 01 deliverable. Audit date: 2026-07-25.**
+
+Repository inspected at commit `679ce00` (v0.1.0 released + Phase 5C signed
+bundles + Oldowan examples). This audit now lives on
+`feature/human-cooperative-workflow-runtime`, branched from `main` @ `9273374`
+(the PR #1 merge that landed Phase 5C). Every `src/` path and line number
+cited below is identical in both — `679ce00` differs from `9273374` only by
+two example YAML files under `examples/`, which no citation here depends on.
 
 Scope ruling recorded up front (operator-confirmed, 2026-07-25, then amended
 the same day when the operator supplied the **Agent Development Master
