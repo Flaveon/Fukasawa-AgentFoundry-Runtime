@@ -95,6 +95,14 @@ class TestModelAdapter:
         result = adapter.execute({"endpoint": "n", "model": "m", "prompt": "x"})
         assert not result.ok and "empty" in result.note
 
+    def test_ollama_missing_message_key(self):
+        adapter = ModelAdapter(
+            ModelEndpointRegistry({"n": {"kind": "ollama", "url": "http://x"}}),
+            poster=lambda u, p, t: {"something_else": "val"},
+        )
+        result = adapter.execute({"endpoint": "n", "model": "m", "prompt": "x"})
+        assert not result.ok and "empty" in result.note
+
     def test_missing_prompt_or_model(self):
         adapter = ModelAdapter(ModelEndpointRegistry({"n": {"kind": "ollama", "url": "u"}}))
         assert not adapter.execute({"endpoint": "n", "model": "m"}).ok
