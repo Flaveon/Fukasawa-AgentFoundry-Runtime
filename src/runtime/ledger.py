@@ -275,9 +275,8 @@ class RunLedger:
             pk="id",
         )
 
-    def load_capsule(self, capsule_id: str) -> ProcessCapsule:
-        """Load a capsule snapshot by id. Raises KeyError if unknown."""
-        row = self.db["capsules"].get(capsule_id)
+    def _row_to_capsule(self, row: dict) -> ProcessCapsule:
+        """Convert a database row into a ProcessCapsule instance."""
         return ProcessCapsule(
             id=row["id"],
             workflow_id=row["workflow_id"],
@@ -296,17 +295,22 @@ class RunLedger:
             non_conformance_note=row["non_conformance_note"] or None,
         )
 
+    def load_capsule(self, capsule_id: str) -> ProcessCapsule:
+        """Load a capsule snapshot by id. Raises KeyError if unknown."""
+        row = self.db["capsules"].get(capsule_id)
+        return self._row_to_capsule(row)
+
     def capsules_for(self, workflow_id: str) -> list[ProcessCapsule]:
         """Return every capsule snapshot belonging to a workflow."""
         rows = self.db["capsules"].rows_where("workflow_id = ?", [workflow_id])
-        return [self.load_capsule(row["id"]) for row in rows]
+        return [self._row_to_capsule(row) for row in rows]
 
     def non_conforming_capsules(self) -> list[ProcessCapsule]:
         """Return every capsule currently in NON_CONFORMANCE, across all workflows."""
         rows = self.db["capsules"].rows_where(
             "status = ?", [CapsuleStatus.NON_CONFORMANCE.value]
         )
-        return [self.load_capsule(row["id"]) for row in rows]
+        return [self._row_to_capsule(row) for row in rows]
 
     # -------------------------------------------------------------------- runs
 
