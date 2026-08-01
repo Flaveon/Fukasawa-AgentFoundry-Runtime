@@ -87,6 +87,19 @@ class TestModelAdapter:
         result = adapter.execute({"endpoint": "n", "model": "m", "prompt": "x"})
         assert not result.ok and "failed" in result.note
 
+
+    def test_json_decode_error_fails_not_raises(self):
+        import json
+        def boom_json(url, payload, timeout):
+            raise json.JSONDecodeError("msg", "doc", 0)
+
+        adapter = ModelAdapter(
+            ModelEndpointRegistry({"n": {"kind": "ollama", "url": "http://x"}}),
+            poster=boom_json,
+        )
+        result = adapter.execute({"endpoint": "n", "model": "m", "prompt": "x"})
+        assert not result.ok and "failed" in result.note
+
     def test_empty_response_is_a_failure(self):
         adapter = ModelAdapter(
             ModelEndpointRegistry({"n": {"kind": "ollama", "url": "http://x"}}),
