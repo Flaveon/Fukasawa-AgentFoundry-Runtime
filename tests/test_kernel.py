@@ -206,7 +206,7 @@ class TestFailureHandling:
         state = runner.start(graph, brief, variables=_vars(empty, tmp_path))
         state = runner.run(graph, state)
         assert state.status is GraphRunStatus.BLOCKED
-        # Fix the cause, then resume from the checkpoint.
+        # Resolve the cause, then resume from the checkpoint.
         (empty / "research.md").write_text("# Research\nfixed")
         state = runner.resume(graph, state.graph_run_id)
         assert state.status is GraphRunStatus.PAUSED_HUMAN  # made it to the gate
