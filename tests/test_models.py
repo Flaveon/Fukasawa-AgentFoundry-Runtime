@@ -10,6 +10,8 @@ model node drives a real capsule transition through the kernel.
 from pathlib import Path
 
 import pytest
+import urllib.error
+from unittest.mock import patch, MagicMock
 
 from src.kernel.adapters import AdapterRegistry
 from src.kernel.kernel import GraphRunner
@@ -187,3 +189,56 @@ class TestModelNodeInKernel:
         assert capsule.state == "DRAFT_READY"
         # The model's output became the transition evidence in the ledger.
         assert "draft by qwen" in capsule.evidence
+
+class TestHttpPostJson:
+    @patch('urllib.request.urlopen')
+    def test_http_post_json_success(self, mock_urlopen):
+        from src.kernel.models import http_post_json
+
+        # Setup mock response
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'{"success": true, "message": "hello"}'
+
+        # We need to simulate a context manager because urlopen is used in a `with` statement
+        mock_context_manager = MagicMock()
+        mock_context_manager.__enter__.return_value = mock_response
+        mock_urlopen.return_value = mock_context_manager
+
+        # Call the function
+        url = "http://example.com/api"
+        payload = {"data": "test"}
+        timeout = 5.0
+
+        result = http_post_json(url, payload, timeout)
+
+        # Verify the result
+        assert result == {"success": True, "message": "hello"}
+
+        # Verify urlopen was called correctly
+        mock_urlopen.assert_called_once()
+        args, kwargs = mock_urlopen.call_args
+
+        request = args[0]
+        assert request.full_url == url
+        assert request.method == "POST"
+        assert request.data == b'{"data": "test"}'
+        assert request.headers.get("Content-type") == "application/json"
+
+        assert kwargs["timeout"] == timeout
+
+    @patch('urllib.request.urlopen')
+    def test_http_post_json_timeout(self, mock_urlopen):
+        from src.kernel.models import http_post_json
+
+        # Configure mock to raise URLError (which encompasses timeout failures in urllib)
+        mock_urlopen.side_effect = urllib.error.URLError("Connection timed out")
+
+        # Call the function and expect exception
+        url = "http://example.com/api"
+        payload = {"data": "test"}
+        timeout = 5.0
+
+        with pytest.raises(urllib.error.URLError):
+            http_post_json(url, payload, timeout)
+
+        mock_urlopen.assert_called_once()
