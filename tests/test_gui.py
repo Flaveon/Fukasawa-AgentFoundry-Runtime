@@ -15,6 +15,8 @@ Two layers, matching the design:
 from pathlib import Path
 
 import pytest
+from unittest.mock import patch
+from src.gui.services import BuildRefusedError
 import yaml
 
 from src.gui.services import build_workflow, validate_brief_file
@@ -107,6 +109,15 @@ class TestBuildService:
         assert not outcome.ok
         assert "approved" in outcome.refusal.lower()
 
+
+
+    @patch("src.gui.services.generate_packages")
+    def test_build_refuses_with_doctrine_error(self, mock_generate, tmp_path):
+        mock_generate.side_effect = BuildRefusedError("Simulated doctrine refusal")
+        outcome = build_workflow(EXAMPLE_BRIEF, tmp_path / "out")
+        assert not outcome.ok
+        assert outcome.summary == "Build refused by doctrine."
+        assert outcome.refusal == "Simulated doctrine refusal"
 
 # --------------------------------------------------------------- view layer
 
