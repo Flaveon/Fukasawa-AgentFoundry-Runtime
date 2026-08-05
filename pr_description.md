@@ -1,14 +1,13 @@
-🧪 [Testing improvement for review_gate]
+🎯 **What:** The code health issue addressed
+Refactored the `promote` function in `src/governance/maturity.py` by extracting logic into helper functions to resolve the "Function is too long" issue.
+Extracted logic to `_rewrite_maturity_declarations`, `_fill_mandatory_eval_checks`, and `_record_audit_trail`.
 
-## Description
+💡 **Why:** How this improves maintainability
+Breaking down large functions improves readability and testability. It makes the `promote` function easier to understand and maintain by separating the file rewriting logic, eval checks filling logic, and audit trail recording logic into their respective helper functions.
 
-🎯 **What:** The testing gap addressed
-This PR addresses the lack of test coverage for `src/runtime/review_gate.py`. The primary function, `open_review_gate`, requires user interaction through `rich.prompt.Prompt.ask`, which meant it was currently untested. This PR implements unit tests that mock the prompt function, allowing deterministic verification of the review gate behavior.
+✅ **Verification:** How you confirmed the change is safe
+Ran `python3 -m py_compile src/governance/maturity.py` to check for syntax errors.
+Ran the full test suite `python3 -m pytest tests/` which passed successfully, showing no regressions.
 
-📊 **Coverage:** What scenarios are now tested
-- Validates the return of `ReviewDecision.APPROVE`, `REJECT`, and `FLAG` by mocking human input using parametrized tests.
-- Checks correct behavior when a custom `rich.console.Console` is provided, ensuring output functions rely on the passed parameter.
-- Covers edge cases when fields such as `evidence` or `evidence_required` are empty strings, guaranteeing stability without exceptions.
-
-✨ **Result:** The improvement in test coverage
-The previously untested review logic is now fully verified. The mock-driven tests are completely deterministic and run in milliseconds, solidifying confidence in the gate decision parsing without regressions.
+✨ **Result:** The improvement achieved
+The `promote` function is now much shorter and easier to read. The helper functions are focused on single responsibilities, improving code modularity and maintainability without changing any behavior.
