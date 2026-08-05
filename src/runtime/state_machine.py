@@ -177,58 +177,88 @@ class WorkflowRuntime:
         )
 
         if transition is None:
-            # No valid path: the work has left the governed workflow.
-            note = (
-                f"no valid transition from '{capsule.state}' to '{to_state}'. "
-                f"Exception path: {brief.exception_path}"
-            )
-            capsule.status = CapsuleStatus.NON_CONFORMANCE
-            capsule.non_conformance_note = note
-            self.ledger.save_capsule(capsule)
-            self.ledger.record_event(
-                capsule_id=capsule.id,
-                workflow_id=brief.id,
-                from_state=capsule.state,
-                to_state=to_state,
-                owner=capsule.assigned_to,
-                evidence=evidence,
-                conforming=False,
-                note=note,
-            )
-            self._record_non_conformance(
-                brief, capsule, run, NonConformanceKind.NO_VALID_PATH,
-                from_state=capsule.state, attempted_state=to_state, note=note,
-            )
-            if run is not None:
-                run.status = RunStatus.FAILED
-                run.touch()
-                self.ledger.save_run(run)
-            raise NonConformanceError(note)
+            self._handle_invalid_transition(brief, capsule, to_state, evidence, run)
 
         if transition.evidence_required and not evidence.strip():
-            # Valid path, missing evidence: refuse the move but leave the
-            # capsule where it is so the operator can supply evidence and retry.
-            note = (
-                f"transition '{capsule.state}' -> '{to_state}' refused: "
-                f"required evidence missing ({transition.evidence_required})"
-            )
-            self.ledger.record_event(
-                capsule_id=capsule.id,
-                workflow_id=brief.id,
-                from_state=capsule.state,
-                to_state=to_state,
-                owner=transition.owner,
-                evidence="",
-                conforming=False,
-                note=note,
-            )
-            self._record_non_conformance(
-                brief, capsule, run, NonConformanceKind.MISSING_EVIDENCE,
-                from_state=capsule.state, attempted_state=to_state, note=note,
-            )
-            raise NonConformanceError(note)
+            self._handle_missing_evidence(brief, capsule, to_state, transition, run)
 
-        # Conforming move: record it, then update the snapshots.
+        return self._perform_transition(brief, capsule, to_state, evidence, transition, run)
+
+    def _handle_invalid_transition(
+        self,
+        brief: WorkflowBrief,
+        capsule: ProcessCapsule,
+        to_state: str,
+        evidence: str,
+        run: Optional[RuntimeState],
+    ) -> None:
+        """Handle an attempted transition to an invalid state."""
+        note = (
+            f"no valid transition from '{capsule.state}' to '{to_state}'. "
+            f"Exception path: {brief.exception_path}"
+        )
+        capsule.status = CapsuleStatus.NON_CONFORMANCE
+        capsule.non_conformance_note = note
+        self.ledger.save_capsule(capsule)
+        self.ledger.record_event(
+            capsule_id=capsule.id,
+            workflow_id=brief.id,
+            from_state=capsule.state,
+            to_state=to_state,
+            owner=capsule.assigned_to,
+            evidence=evidence,
+            conforming=False,
+            note=note,
+        )
+        self._record_non_conformance(
+            brief, capsule, run, NonConformanceKind.NO_VALID_PATH,
+            from_state=capsule.state, attempted_state=to_state, note=note,
+        )
+        if run is not None:
+            run.status = RunStatus.FAILED
+            run.touch()
+            self.ledger.save_run(run)
+        raise NonConformanceError(note)
+
+    def _handle_missing_evidence(
+        self,
+        brief: WorkflowBrief,
+        capsule: ProcessCapsule,
+        to_state: str,
+        transition: Transition,
+        run: Optional[RuntimeState],
+    ) -> None:
+        """Handle a transition missing required evidence."""
+        note = (
+            f"transition '{capsule.state}' -> '{to_state}' refused: "
+            f"required evidence missing ({transition.evidence_required})"
+        )
+        self.ledger.record_event(
+            capsule_id=capsule.id,
+            workflow_id=brief.id,
+            from_state=capsule.state,
+            to_state=to_state,
+            owner=transition.owner,
+            evidence="",
+            conforming=False,
+            note=note,
+        )
+        self._record_non_conformance(
+            brief, capsule, run, NonConformanceKind.MISSING_EVIDENCE,
+            from_state=capsule.state, attempted_state=to_state, note=note,
+        )
+        raise NonConformanceError(note)
+
+    def _perform_transition(
+        self,
+        brief: WorkflowBrief,
+        capsule: ProcessCapsule,
+        to_state: str,
+        evidence: str,
+        transition: Transition,
+        run: Optional[RuntimeState],
+    ) -> ProcessCapsule:
+        """Perform a conforming transition to a new state."""
         from_state = capsule.state
         capsule.state = to_state
         capsule.evidence = evidence
