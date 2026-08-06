@@ -2,6 +2,10 @@
 
 **Status:** Proposed (post-release; does not affect the current release boundary)
 **Raised:** 2026-08-06, operator-directed.
+**Implementation design:** `../outcome-evaluation-integration.md` — the
+contract pipeline (compile → execute → normalize → govern), merged from the
+operator's integration handoff. This ADR holds the *why* and the binding
+constraints; that document holds the *how*.
 
 ## Context
 
