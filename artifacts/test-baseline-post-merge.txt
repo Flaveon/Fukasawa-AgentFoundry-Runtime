@@ -1,0 +1,28 @@
+# Test baseline — AFTER merging origin/main into the release feature branch
+# Supersedes the phase-1 figure (113 passed, 4 skipped). Recorded per master handoff §15.1.
+
+Date:            2026-08-06T13:09:57Z
+Branch:          feature/human-cooperative-workflow-runtime
+Merge commit:    8eb3d6b11f3dd609b0517d386cd5ec237df28603
+Merged in:       origin/main @ d9ed8db (30 commits: 15 merged PRs of tests/refactors)
+Python:          Python 3.11.15
+Install:         uv pip install -e '.[dev,gui]'
+
+Command:         .venv/bin/python -m pytest -q
+--- output ---
+........................................................................ [ 53%]
+........................................................................ [ 79%]
+.......................................................                  [100%]
+266 passed, 5 skipped in 3.30s
+--- end output ---
+
+Composition: 113 (pre-existing at branch point)
+           +  56 (phase 1 contracts)
+           +  80 (phase 2 validator)
+           +  17 (arrived from main: app_entry, review_gate, models, gui, kernel)
+           = 266 passed, 5 skipped
+
+Skips: 4 GUI view tests (no display) + 1 app_entry GUI-dispatch test.
+This container has no tkinter (a system package, not pip), so the GUI stack
+cannot import here. CI installs the gui extra and runs under xvfb, where all
+five execute. Verified main is green in CI at d9ed8db.
