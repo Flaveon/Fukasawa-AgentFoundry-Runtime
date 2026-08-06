@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# Proof-of-concept evaluation case for the optional smevals execution backend.
+#
+# The question: when a workflow run blocks, does it produce a handoff someone
+# else could actually pick up? This is the governance failure the runtime exists
+# to prevent — "handoffs omit artifact paths or next actions" is named in
+# brief/project-brief.md as a recurring failure.
+#
+# The artifact under evaluation is a real one: src/runtime/handoff.py writes it
+# whenever a run pauses, blocks, completes, or fails. Nothing here needs a
+# model — every check is a deterministic assertion about text, which is why the
+# proof of concept runs entirely offline.
+#
+# required_fields are matched case-insensitively as substrings of the handoff,
+# so they are written as the section headers and labels write_handoff() emits.
+
+case_id: blocked-handoff-completeness
+name: A blocked run must hand off work someone else can pick up
+workflow: q2c-production-handoff
+agent: ""
+
+input_artifacts:
+  - run handoff produced by src/runtime/handoff.py for a blocked run
+
+expected_outputs:
+  required_fields:
+    # Objective — what "done" means for this work.
+    - "## Completion Criteria"
+    # Current state — where the work actually stands.
+    - "**Current state**"
+    - "**Run status**"
+    # Blocker status, stated rather than implied.
+    - "## Blocked Reason"
+    # Next action — the one executable thing whoever resumes must do.
+    - "## Next Action"
+    - "fukasawa resume"
+    # Evidence and artifact references.
+    - "## Artifact Paths"
+    - "**Trace**"
+    # Review gate position, so authority is visible.
+    - "## Review Gate Status"
+
+  forbidden_claims:
+    # Unsupported completion claims. A blocked handoff asserting the work is
+    # finished is the exact drift the evaluation strategy calls out.
+    - "all checks passed"
+    - "nothing further is required"
+    - "work is complete"
+    - "no action needed"
+    - "TODO"
+    - "TBD"
+
+  # Escalation target must be named in the handoff, not left implied.
+  expected_escalation: flaveon
+
+  # Declared task depth the work was permitted to operate at. GUIDED = 2 in the
+  # depth framework; the runner records what was declared and the check
+  # compares. Full depth-compliance analysis stays with the in-process
+  # governance checks — this only verifies the declaration travelled.
+  expected_depth: 2
+
+# Which of the five process dimensions this case belongs to. These are NOT
+# compiled into smevals checks — they are computed from ledger artifacts by
+# src/governance/checks.py. The adapter compiles expected_outputs only.
+scoring:
+  handoff_completeness: true
+  observation_discipline: false
+  depth_compliance: true
+  escalation_correctness: true
+  complexity_reduction: false
+
+reviewed: false
+
+notes: >
+  Evaluate the run handoff for a blocked run. It must state the objective, the
+  current state, an explicit blocker, a named escalation target, an executable
+  next action, and references to the artifacts and trace — without claiming
+  work that was not done.

@@ -61,10 +61,19 @@ def world(tmp_path):
 
 
 def _run_all_cases(ledger, run, writer, handoff_dir):
-    """Run the three reviewed example cases; return results."""
+    """Run the reviewed example cases against a real run; return results.
+
+    Filters on ``case.reviewed``, which is what this helper always claimed to
+    do and what the schema means by the flag — "only reviewed cases count
+    toward promotion". Unreviewed cases in examples/ are drafts or fixtures for
+    other machinery (e.g. the optional execution backend) and are not evidence
+    about this runner.
+    """
     results = []
     for case_file in sorted(EVAL_DIR.glob("*.yaml")):
         case = load_eval_case(case_file)
+        if not case.reviewed:
+            continue
         results.append(
             run_eval_case(
                 case, ledger, run.run_id, package_dir=writer, handoff_dir=handoff_dir
