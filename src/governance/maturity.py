@@ -190,6 +190,88 @@ def assess(package_dir: str | Path, ledger: RunLedger) -> MaturityReport:
     return MaturityReport(agent, workflow_id, current, target, criteria)
 
 
+def _rewrite_maturity_declarations(pkg: Path, old: str, new: str) -> None:
+    """Rewrite maturity declarations across all manifest files."""
+    for name in ("SKILL.md", "process_capsule.yaml"):
+        path = pkg / name
+        path.write_text(
+            re.sub(
+                rf"^maturity: {old}$",
+                f"maturity: {new}",
+                path.read_text(encoding="utf-8"),
+                count=1,
+                flags=re.MULTILINE,
+            ),
+            encoding="utf-8",
+        )
+    manifest = _read_manifest(pkg)
+    manifest["maturity"] = new
+    (pkg / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
+def _fill_mandatory_eval_checks(pkg: Path, coverage: dict[CheckCategory, str]) -> None:
+    """Fill mandatory eval checks from recorded evidence."""
+    evals_path = pkg / "evals.yaml"
+    evals = yaml.safe_load(evals_path.read_text(encoding="utf-8"))
+    for check_name, category in _MANDATORY_CHECK_SOURCES.items():
+        if check_name in evals.get("checks", {}) and category in coverage:
+            evals["checks"][check_name]["result"] = "pass"
+            evals["checks"][check_name]["evidence"] = (
+                f"eval result {coverage[category]} ({category.value})"
+            )
+    evals["overall"] = "pass"
+    evals_path.write_text(yaml.safe_dump(evals, sort_keys=False), encoding="utf-8")
+
+
+def _record_audit_trail(
+    pkg: Path,
+    ledger: RunLedger,
+    agent: str,
+    workflow_id: str,
+    old: str,
+    new: str,
+    reviewed_by: str,
+    rationale: str,
+    coverage: dict[CheckCategory, str],
+) -> None:
+    """Append promotion to learning log and record in ledger."""
+    evidence = ", ".join(
+        f"{category.value}={rid}" for category, rid in sorted(
+            coverage.items(), key=lambda kv: kv[0].value
+        )
+    )
+    today = datetime.now(timezone.utc).date().isoformat()
+    log = pkg / "learning_log.md"
+    log.write_text(
+        log.read_text(encoding="utf-8")
+        + "\n".join(
+            [
+                "",
+                f"## {today} — correction",
+                "",
+                f"**What happened:** Promoted {old} -> {new}, reviewed by "
+                f"{reviewed_by}.",
+                "",
+                f"**Evidence:** {evidence or 'see promotions ledger'}",
+                ""
+                + (f"\n**Lower-depth rationale:** {rationale}\n" if rationale else ""),
+                "**Status:** resolved",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    ledger.record_promotion(
+        agent=agent,
+        workflow_id=workflow_id,
+        from_maturity=old,
+        to_maturity=new,
+        reviewed_by=reviewed_by,
+        rationale=rationale,
+        evidence=evidence,
+    )
+
+
 def promote(
     package_dir: str | Path,
     ledger: RunLedger,
@@ -231,71 +313,13 @@ def promote(
             + "; ".join(f"{c.name} ({c.detail})" for c in unmet)
         )
 
-    # --- rewrite maturity declarations (all three must stay in agreement) --
     old, new = report.current.value, report.target.value
-    for name in ("SKILL.md", "process_capsule.yaml"):
-        path = pkg / name
-        path.write_text(
-            re.sub(
-                rf"^maturity: {old}$",
-                f"maturity: {new}",
-                path.read_text(encoding="utf-8"),
-                count=1,
-                flags=re.MULTILINE,
-            ),
-            encoding="utf-8",
-        )
-    manifest = _read_manifest(pkg)
-    manifest["maturity"] = new
-    (pkg / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    _rewrite_maturity_declarations(pkg, old, new)
 
-    # --- fill the mandatory eval checks from recorded evidence -------------
     coverage = _passing_by_category(ledger, report.agent)
-    evals_path = pkg / "evals.yaml"
-    evals = yaml.safe_load(evals_path.read_text(encoding="utf-8"))
-    for check_name, category in _MANDATORY_CHECK_SOURCES.items():
-        if check_name in evals.get("checks", {}) and category in coverage:
-            evals["checks"][check_name]["result"] = "pass"
-            evals["checks"][check_name]["evidence"] = (
-                f"eval result {coverage[category]} ({category.value})"
-            )
-    evals["overall"] = "pass"
-    evals_path.write_text(yaml.safe_dump(evals, sort_keys=False), encoding="utf-8")
+    _fill_mandatory_eval_checks(pkg, coverage)
 
-    # --- audit trail -------------------------------------------------------
-    evidence = ", ".join(
-        f"{category.value}={rid}" for category, rid in sorted(
-            coverage.items(), key=lambda kv: kv[0].value
-        )
-    )
-    today = datetime.now(timezone.utc).date().isoformat()
-    log = pkg / "learning_log.md"
-    log.write_text(
-        log.read_text(encoding="utf-8")
-        + "\n".join(
-            [
-                "",
-                f"## {today} — correction",
-                "",
-                f"**What happened:** Promoted {old} -> {new}, reviewed by "
-                f"{reviewed_by}.",
-                "",
-                f"**Evidence:** {evidence or 'see promotions ledger'}",
-                ""
-                + (f"\n**Lower-depth rationale:** {rationale}\n" if rationale else ""),
-                "**Status:** resolved",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    ledger.record_promotion(
-        agent=report.agent,
-        workflow_id=report.workflow_id,
-        from_maturity=old,
-        to_maturity=new,
-        reviewed_by=reviewed_by,
-        rationale=rationale,
-        evidence=evidence,
+    _record_audit_trail(
+        pkg, ledger, report.agent, report.workflow_id, old, new, reviewed_by, rationale, coverage
     )
     return assess(pkg, ledger)
