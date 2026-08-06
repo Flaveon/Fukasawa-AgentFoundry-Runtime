@@ -27,7 +27,13 @@ Tables added for the human & cooperative workflow lifecycle:
 | `validation_reports` | the report a decision was made on | append-only |
 | `risk_acceptances` | consciously accepted findings, with actor and rationale | append-only |
 | `workflow_promotions` | every transition attempt, granted or refused | append-only |
-| `accountable_workflows` | promoted artifacts, keyed by workflow and version | append-only |
+| `accountable_workflows` | promoted artifacts, keyed by workflow, version **and maturity** | append-only |
+
+`accountable_workflows` is keyed by maturity as well as version because a
+workflow climbs several steps at the same draft version, and each step is its
+own artifact that must stay readable. An earlier build of this branch keyed it
+on version alone, which made the second promotion look like a duplicate of the
+first; that build was never released, so no migration is required.
 
 `workflow_drafts` is deliberately mutable: a draft is a working document people
 edit as they learn more. Everything *derived* from a draft is immutable, because

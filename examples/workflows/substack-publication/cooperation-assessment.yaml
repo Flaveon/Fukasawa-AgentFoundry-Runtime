@@ -1,0 +1,183 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# PILOT - stage 4: cooperation assessment, one entry per step.
+#
+# Produced by the published decision table in
+# docs/cooperation-classification-guide.md. No model was involved: the same
+# workflow always yields these recommendations, floors and rationales.
+#
+# Read safety_floor first. A floor is a ceiling on autonomy imposed by a fact
+# about the work - the effect cannot be undone, the data is sensitive, nobody
+# owns the decision. A floored step can be overridden toward human control but
+# never toward more autonomy, and that rule is enforced in code.
+#
+# Note publish-post: an agent may PREPARE the publication, but a human
+# authorizes it, because sending to subscribers cannot be unsent. And
+# review-and-approve stays HUMAN_ONLY - approving your own publication is not
+# something to delegate.
+#
+# request-artwork carries a recorded human override, with the reason.
+
+workflow_id: substack-publication
+source_version: '1'
+assessments:
+- schema_version: '1'
+  assessment_id: ca-aa01b488
+  workflow_id: substack-publication
+  step_id: capture-idea
+  recommended_executor: HUMAN_LED_AI_ASSISTED
+  rationale: the step needs real judgment, so a person leads and AI assists
+  assessed_factors:
+    judgment_load: MODERATE
+    repeatability: ROUTINE
+    determinism: JUDGMENT_BASED
+    risk: LOW
+    reversibility: REVERSIBLE
+    data_sensitivity: INTERNAL
+  safety_floor: NONE
+  required_tools: []
+  supervision_mode: EVERY_OUTPUT_REVIEWED
+  automation_readiness: PILOT
+  override: null
+  assessed_at: '2026-08-06T22:52:59.992587Z'
+- schema_version: '1'
+  assessment_id: ca-fc8ff153
+  workflow_id: substack-publication
+  step_id: scope-check
+  recommended_executor: HUMAN_ONLY
+  rationale: the step demands high human judgment, which is not delegable
+  assessed_factors:
+    judgment_load: HIGH
+    repeatability: ROUTINE
+    determinism: JUDGMENT_BASED
+    risk: MODERATE
+    reversibility: REVERSIBLE
+    data_sensitivity: INTERNAL
+  safety_floor: NONE
+  required_tools: []
+  supervision_mode: NONE
+  automation_readiness: NOT_READY
+  override: null
+  assessed_at: '2026-08-06T22:52:59.992637Z'
+- schema_version: '1'
+  assessment_id: ca-f878a65b
+  workflow_id: substack-publication
+  step_id: deep-research
+  recommended_executor: HUMAN_LED_AI_ASSISTED
+  rationale: the step needs real judgment, so a person leads and AI assists
+  assessed_factors:
+    judgment_load: MODERATE
+    repeatability: OCCASIONAL
+    determinism: MOSTLY_DETERMINISTIC
+    risk: MODERATE
+    reversibility: REVERSIBLE
+    data_sensitivity: PUBLIC
+  safety_floor: NONE
+  required_tools: []
+  supervision_mode: EVERY_OUTPUT_REVIEWED
+  automation_readiness: PILOT
+  override: null
+  assessed_at: '2026-08-06T22:52:59.992697Z'
+- schema_version: '1'
+  assessment_id: ca-9c92ceee
+  workflow_id: substack-publication
+  step_id: draft-article
+  recommended_executor: HUMAN_ONLY
+  rationale: the step demands high human judgment, which is not delegable
+  assessed_factors:
+    judgment_load: HIGH
+    repeatability: ROUTINE
+    determinism: JUDGMENT_BASED
+    risk: LOW
+    reversibility: REVERSIBLE
+    data_sensitivity: INTERNAL
+  safety_floor: NONE
+  required_tools: []
+  supervision_mode: NONE
+  automation_readiness: NOT_READY
+  override: null
+  assessed_at: '2026-08-06T22:52:59.992750Z'
+- schema_version: '1'
+  assessment_id: ca-e023a805
+  workflow_id: substack-publication
+  step_id: request-artwork
+  recommended_executor: AGENT_EXECUTED_HUMAN_SUPERVISED
+  rationale: the step is mostly deterministic, so an agent runs it while a human watches the output
+  assessed_factors:
+    judgment_load: LOW
+    repeatability: ROUTINE
+    determinism: MOSTLY_DETERMINISTIC
+    risk: LOW
+    reversibility: REVERSIBLE
+    data_sensitivity: PUBLIC
+  safety_floor: NONE
+  required_tools: []
+  supervision_mode: EVERY_OUTPUT_REVIEWED
+  automation_readiness: READY
+  override:
+    overridden_to: HUMAN_LED_AI_ASSISTED
+    rationale: Artwork briefs set the tone of the piece; the operator writes them and lets AI draft alternatives.
+    actor: flaveon
+    at: '2026-08-06T22:52:59.993021Z'
+  assessed_at: '2026-08-06T22:52:59.992804Z'
+- schema_version: '1'
+  assessment_id: ca-66807119
+  workflow_id: substack-publication
+  step_id: review-and-approve
+  recommended_executor: HUMAN_ONLY
+  rationale: the step demands high human judgment, which is not delegable; the IRREVERSIBLE safety floor
+    also applies
+  assessed_factors:
+    judgment_load: HIGH
+    repeatability: ROUTINE
+    determinism: JUDGMENT_BASED
+    risk: HIGH
+    reversibility: IRREVERSIBLE
+    data_sensitivity: INTERNAL
+  safety_floor: IRREVERSIBLE
+  required_tools: []
+  supervision_mode: NONE
+  automation_readiness: NOT_READY
+  override: null
+  assessed_at: '2026-08-06T22:52:59.992847Z'
+- schema_version: '1'
+  assessment_id: ca-9d91adc8
+  workflow_id: substack-publication
+  step_id: publish-post
+  recommended_executor: AGENT_PREPARED_HUMAN_APPROVED
+  rationale: the step is mostly deterministic, so an agent runs it while a human watches the output; capped
+    by the IRREVERSIBLE safety floor
+  assessed_factors:
+    judgment_load: LOW
+    repeatability: ROUTINE
+    determinism: MOSTLY_DETERMINISTIC
+    risk: HIGH
+    reversibility: IRREVERSIBLE
+    data_sensitivity: PUBLIC
+  safety_floor: IRREVERSIBLE
+  required_tools: []
+  supervision_mode: APPROVAL_REQUIRED
+  automation_readiness: PILOT
+  override: null
+  assessed_at: '2026-08-06T22:52:59.992887Z'
+- schema_version: '1'
+  assessment_id: ca-a5fc9450
+  workflow_id: substack-publication
+  step_id: archive-notes
+  recommended_executor: DETERMINISTIC_AUTOMATION
+  rationale: the step is routine and always produces the same result from the same inputs, so it is a
+    rule, not a judgment
+  assessed_factors:
+    judgment_load: NONE
+    repeatability: ROUTINE
+    determinism: DETERMINISTIC
+    risk: LOW
+    reversibility: REVERSIBLE
+    data_sensitivity: INTERNAL
+  safety_floor: NONE
+  required_tools: []
+  supervision_mode: SPOT_CHECK
+  automation_readiness: READY
+  override: null
+  assessed_at: '2026-08-06T22:52:59.992942Z'

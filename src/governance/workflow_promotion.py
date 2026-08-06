@@ -32,9 +32,10 @@ non-goals.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Sequence
 
 from src.runtime.ledger import RunLedger
+from src.schemas.cooperation import CooperationAssessment
 from src.schemas.eval_case import CheckOutcome
 from src.schemas.findings import RULE_SET_VERSION, RiskAcceptance, ValidationReport
 from src.schemas.human_workflow import (
@@ -173,6 +174,7 @@ def _criteria_for(
     target: WorkflowMaturity,
     draft: HumanWorkflowDraft,
     report: Optional[ValidationReport],
+    assessments: Sequence["CooperationAssessment"] = (),
 ) -> list[Criterion]:
     """What the next step requires, and whether the evidence supports it."""
     if target is WorkflowMaturity.MAPPED:
@@ -233,12 +235,39 @@ def _criteria_for(
     # the ladder is complete and a premature promotion is refused with a reason
     # rather than silently allowed.
     if target is WorkflowMaturity.COOPERATION_READY:
+        if not assessments:
+            return [
+                Criterion(
+                    "cooperation assessment for every step",
+                    False,
+                    "no assessments supplied; run assess_workflow() first",
+                )
+            ]
+        assessed = {a.step_id for a in assessments}
+        missing = [s.step_id for s in draft.steps if s.step_id not in assessed]
+        # A step left NOT_READY_FOR_AUTOMATION is not a failure — a workflow may
+        # legitimately keep work with people. But it must be a seen decision,
+        # so it is surfaced here rather than discovered at export.
+        not_ready = [
+            a.step_id
+            for a in assessments
+            if a.effective_executor.value == "NOT_READY_FOR_AUTOMATION"
+        ]
         return [
             Criterion(
-                "cooperation assessment for every step",
-                False,
-                "cooperation assessment is not implemented yet (phase 4)",
-            )
+                "every step assessed",
+                not missing,
+                "all steps have an assessment"
+                if not missing
+                else "unassessed: " + ", ".join(missing),
+            ),
+            Criterion(
+                "no step left unclassifiable",
+                not not_ready,
+                "every step has a workable executor"
+                if not not_ready
+                else "still NOT_READY_FOR_AUTOMATION: " + ", ".join(not_ready),
+            ),
         ]
     if target is WorkflowMaturity.COOPERATIVE_DESIGN_APPROVED:
         return [
@@ -270,7 +299,9 @@ def _criteria_for(
 
 
 def assess(
-    draft: HumanWorkflowDraft, report: Optional[ValidationReport] = None
+    draft: HumanWorkflowDraft,
+    report: Optional[ValidationReport] = None,
+    assessments: Sequence["CooperationAssessment"] = (),
 ) -> PromotionAssessment:
     """Show the evidence picture for this workflow's next step.
 
@@ -287,7 +318,7 @@ def assess(
         workflow_id=draft.workflow_id,
         current=draft.maturity,
         target=target,
-        criteria=_criteria_for(target, draft, report),
+        criteria=_criteria_for(target, draft, report, assessments),
         enforced=enforced,
     )
 
@@ -323,6 +354,7 @@ def promote(
     *,
     owners: Optional[list[str]] = None,
     exception_policy: str = "",
+    assessments: Sequence["CooperationAssessment"] = (),
 ) -> PromotionOutcome:
     """Promote a workflow one step, if — and only if — the evidence allows.
 
@@ -347,7 +379,7 @@ def promote(
             "here, but it is never optional"
         )
 
-    assessment = assess(draft, report)
+    assessment = assess(draft, report, assessments)
     target = assessment.target
     report_id = ledger.save_validation_report(report)
 
@@ -423,10 +455,12 @@ def promote(
     # stored for it. That is a normal mistake, not an exceptional one, so it
     # refuses with instructions instead of surfacing a database error — and
     # refusing protects the first artifact, which an audit may already cite.
-    if draft.version in ledger.accountable_workflow_versions(draft.workflow_id):
+    if ledger.has_accountable_artifact(
+        draft.workflow_id, draft.version, target.value
+    ):
         raise refuse(
             f"version '{draft.version}' of '{draft.workflow_id}' has already "
-            f"been promoted to ACCOUNTABLE. Promotion never overwrites an "
+            f"been promoted to {target.value}. Promotion never overwrites an "
             f"existing artifact — bump the draft version to promote revised work."
         )
 

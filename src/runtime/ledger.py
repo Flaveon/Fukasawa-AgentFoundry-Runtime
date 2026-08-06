@@ -242,8 +242,13 @@ _TABLE_SCHEMAS = {
         },
         "promotion_id",
     ),
-    # The promoted artifact itself. Promotion produces a new row; earlier
-    # versions stay readable, because an audit needs what was approved then.
+    # The promoted artifact itself. Every promotion produces a row, and earlier
+    # ones stay readable because an audit needs what was approved at the time.
+    #
+    # Keyed by maturity as well as version: a workflow climbs several steps at
+    # the same draft version, and each step is its own artifact. Keying on
+    # version alone would make the second promotion look like a duplicate of
+    # the first.
     "accountable_workflows": (
         {
             "workflow_id": str,
@@ -253,7 +258,7 @@ _TABLE_SCHEMAS = {
             "promoted_at": str,
             "artifact_json": str,  # full AccountableWorkflow
         },
-        ("workflow_id", "version"),
+        ("workflow_id", "version", "maturity"),
     ),
 }
 
@@ -765,20 +770,44 @@ class RunLedger:
         )
 
     def load_accountable_workflow(
-        self, workflow_id: str, version: str = ""
+        self, workflow_id: str, version: str = "", maturity: str = ""
     ) -> AccountableWorkflow:
-        """Load a promoted artifact. Without a version, returns the newest."""
+        """Load a promoted artifact, newest first when unqualified.
+
+        A workflow usually has several artifacts at one draft version — one per
+        maturity step it climbed — so both filters are optional and narrow
+        independently.
+        """
+        where, params = ["workflow_id = ?"], [workflow_id]
         if version:
-            row = self.db["accountable_workflows"].get((workflow_id, version))
-            return AccountableWorkflow.model_validate_json(row["artifact_json"])
+            where.append("version = ?")
+            params.append(version)
+        if maturity:
+            where.append("maturity = ?")
+            params.append(maturity)
         rows = list(
             self.db["accountable_workflows"].rows_where(
-                "workflow_id = ?", [workflow_id], order_by="promoted_at desc"
+                " and ".join(where), params, order_by="promoted_at desc"
             )
         )
         if not rows:
-            raise KeyError(f"no accountable workflow stored for '{workflow_id}'")
+            raise KeyError(
+                f"no accountable workflow stored for '{workflow_id}'"
+                + (f" version '{version}'" if version else "")
+                + (f" at {maturity}" if maturity else "")
+            )
         return AccountableWorkflow.model_validate_json(rows[0]["artifact_json"])
+
+    def has_accountable_artifact(
+        self, workflow_id: str, version: str, maturity: str
+    ) -> bool:
+        """Whether this exact version has already been promoted to this maturity."""
+        return any(
+            self.db["accountable_workflows"].rows_where(
+                "workflow_id = ? and version = ? and maturity = ?",
+                [workflow_id, version, maturity],
+            )
+        )
 
     def accountable_workflow_versions(self, workflow_id: str) -> list[str]:
         """Every stored version of a promoted workflow, newest first."""
