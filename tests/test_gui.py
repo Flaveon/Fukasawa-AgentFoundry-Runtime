@@ -15,6 +15,8 @@ Two layers, matching the design:
 from pathlib import Path
 
 import pytest
+from unittest.mock import patch
+from src.gui.services import BuildRefusedError
 import yaml
 
 from src.gui.services import build_workflow, validate_brief_file
@@ -41,10 +43,31 @@ class TestValidateService:
         assert result.agent_count == 2
         assert result.review_gates == 2
 
+
+    def test_directory_path(self, tmp_path):
+        result = validate_brief_file(tmp_path)
+        assert not result.ok
+        assert "No such file" in result.summary
+
     def test_missing_file(self):
         result = validate_brief_file("/no/such/brief.yaml")
         assert not result.ok
         assert "No such file" in result.summary
+
+
+    def test_empty_yaml(self, tmp_path):
+        empty = tmp_path / "empty.yaml"
+        empty.write_text("")
+        result = validate_brief_file(empty)
+        assert not result.ok
+        assert result.problems
+
+    def test_schema_violation_wrong_type(self, tmp_path):
+        bad = tmp_path / "bad.yaml"
+        bad.write_text("id: 123\ntitle: 456\n")
+        result = validate_brief_file(bad)
+        assert not result.ok
+        assert result.problems
 
     def test_invalid_brief_lists_problems(self, tmp_path):
         bad = tmp_path / "bad.yaml"
@@ -86,6 +109,15 @@ class TestBuildService:
         assert not outcome.ok
         assert "approved" in outcome.refusal.lower()
 
+
+
+    @patch("src.gui.services.generate_packages")
+    def test_build_refuses_with_doctrine_error(self, mock_generate, tmp_path):
+        mock_generate.side_effect = BuildRefusedError("Simulated doctrine refusal")
+        outcome = build_workflow(EXAMPLE_BRIEF, tmp_path / "out")
+        assert not outcome.ok
+        assert outcome.summary == "Build refused by doctrine."
+        assert outcome.refusal == "Simulated doctrine refusal"
 
 # --------------------------------------------------------------- view layer
 

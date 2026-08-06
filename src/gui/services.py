@@ -50,7 +50,7 @@ def validate_brief_file(path: str | Path) -> BriefValidation:
     schema violations) — the GUI shows them as findings, not crashes.
     """
     file = Path(path)
-    if not file.exists():
+    if not file.is_file():
         return BriefValidation(ok=False, summary=f"No such file: {path}")
     try:
         raw = yaml.safe_load(file.read_text(encoding="utf-8"))

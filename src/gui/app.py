@@ -13,7 +13,6 @@ driven headlessly in a test (set the fields, call the handler, read the
 output) without a human at a mouse.
 """
 
-from pathlib import Path
 from tkinter import filedialog
 
 import customtkinter as ctk

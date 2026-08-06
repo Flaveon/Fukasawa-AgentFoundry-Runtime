@@ -106,6 +106,23 @@ class TestGraphSpec:
         findings = bad.validate_against_brief(brief)
         assert findings and "only allows" in findings[0]
 
+    def test_load_graph_invalid_yaml(self, tmp_path):
+        from yaml.error import YAMLError
+        bad_file = tmp_path / "bad.yaml"
+        bad_file.write_text("invalid: [")
+        with pytest.raises(YAMLError):
+            load_graph(bad_file)
+
+    def test_load_graph_invalid_schema(self, tmp_path):
+        bad_file = tmp_path / "bad.yaml"
+        bad_file.write_text("nodes: []\n")
+        with pytest.raises(ValidationError):
+            load_graph(bad_file)
+
+    def test_render_missing_variable(self):
+        from src.kernel.kernel import _render
+        with pytest.raises(GraphSpecError, match="references unknown variable"):
+            _render("hello {missing}", {})
 
 class TestEndToEnd:
     """Exit criterion: pilot workflow end-to-end through persisted states."""
@@ -189,7 +206,7 @@ class TestFailureHandling:
         state = runner.start(graph, brief, variables=_vars(empty, tmp_path))
         state = runner.run(graph, state)
         assert state.status is GraphRunStatus.BLOCKED
-        # Fix the cause, then resume from the checkpoint.
+        # Resolve the cause, then resume from the checkpoint.
         (empty / "research.md").write_text("# Research\nfixed")
         state = runner.resume(graph, state.graph_run_id)
         assert state.status is GraphRunStatus.PAUSED_HUMAN  # made it to the gate

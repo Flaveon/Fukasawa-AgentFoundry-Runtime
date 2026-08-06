@@ -57,6 +57,120 @@ _APPEND_ONLY_TRIGGERS = [
     """,
 ]
 
+_TABLE_SCHEMAS = {
+    "ledger": (
+        {
+            "event_id": int,
+            "capsule_id": str,
+            "workflow_id": str,
+            "from_state": str,
+            "to_state": str,
+            "owner": str,
+            "evidence": str,
+            "timestamp": str,
+            "conforming": int,  # 1 = conforming event, 0 = non-conformance
+            "note": str,
+        },
+        "event_id",
+    ),
+    "workflows": (
+        {"id": str, "title": str, "owner": str, "brief_json": str},
+        "id",
+    ),
+    "runs": (
+        {
+            "run_id": str,
+            "workflow_id": str,
+            "capsule_id": str,
+            "operator": str,
+            "status": str,
+            "updated_at": str,
+            "state_json": str,  # full RuntimeState, schema-validated on load
+        },
+        "run_id",
+    ),
+    "observations": (
+        {
+            "id": str,
+            "run_id": str,
+            "capsule_id": str,
+            "observer": str,
+            "observed_at": str,
+            "packet_json": str,  # full ObservationPacket
+        },
+        "id",
+    ),
+    "non_conformance_records": (
+        {
+            "id": str,
+            "workflow_id": str,
+            "capsule_id": str,
+            "run_id": str,
+            "kind": str,
+            "resolution_status": str,
+            "occurred_at": str,
+            "record_json": str,  # full NonConformanceRecord
+        },
+        "id",
+    ),
+    "graph_runs": (
+        {
+            "graph_run_id": str,
+            "graph_id": str,
+            "workflow_id": str,
+            "run_id": str,
+            "status": str,
+            "current_node": str,
+            "updated_at": str,
+            "state_json": str,  # full GraphRunState checkpoint
+        },
+        "graph_run_id",
+    ),
+    "eval_results": (
+        {
+            "result_id": str,
+            "case_id": str,
+            "workflow_id": str,
+            "agent": str,
+            "run_id": str,
+            "overall": str,
+            "evaluated_at": str,
+            "result_json": str,  # full EvalResult
+        },
+        "result_id",
+    ),
+    "promotions": (
+        {
+            "promotion_id": int,
+            "agent": str,
+            "workflow_id": str,
+            "from_maturity": str,
+            "to_maturity": str,
+            "reviewed_by": str,
+            "rationale": str,
+            "evidence": str,
+            "promoted_at": str,
+        },
+        "promotion_id",
+    ),
+    "capsules": (
+        {
+            "id": str,
+            "workflow_id": str,
+            "state": str,
+            "assigned_to": str,
+            "inputs": str,
+            "outputs": str,
+            "evidence": str,
+            "status": str,
+            "created_at": str,
+            "completed_at": str,
+            "non_conformance_note": str,
+        },
+        "id",
+    ),
+}
+
 
 class RunLedger:
     """Durable run history and state store backed by a local SQLite file."""
@@ -69,128 +183,11 @@ class RunLedger:
 
     def _ensure_schema(self) -> None:
         """Create tables and append-only triggers if they do not exist yet."""
-        if "ledger" not in self.db.table_names():
-            self.db["ledger"].create(
-                {
-                    "event_id": int,
-                    "capsule_id": str,
-                    "workflow_id": str,
-                    "from_state": str,
-                    "to_state": str,
-                    "owner": str,
-                    "evidence": str,
-                    "timestamp": str,
-                    "conforming": int,  # 1 = conforming event, 0 = non-conformance
-                    "note": str,
-                },
-                pk="event_id",
-            )
-        if "workflows" not in self.db.table_names():
-            self.db["workflows"].create(
-                {"id": str, "title": str, "owner": str, "brief_json": str},
-                pk="id",
-            )
-        if "runs" not in self.db.table_names():
-            self.db["runs"].create(
-                {
-                    "run_id": str,
-                    "workflow_id": str,
-                    "capsule_id": str,
-                    "operator": str,
-                    "status": str,
-                    "updated_at": str,
-                    "state_json": str,  # full RuntimeState, schema-validated on load
-                },
-                pk="run_id",
-            )
-        if "observations" not in self.db.table_names():
-            self.db["observations"].create(
-                {
-                    "id": str,
-                    "run_id": str,
-                    "capsule_id": str,
-                    "observer": str,
-                    "observed_at": str,
-                    "packet_json": str,  # full ObservationPacket
-                },
-                pk="id",
-            )
-        if "non_conformance_records" not in self.db.table_names():
-            self.db["non_conformance_records"].create(
-                {
-                    "id": str,
-                    "workflow_id": str,
-                    "capsule_id": str,
-                    "run_id": str,
-                    "kind": str,
-                    "resolution_status": str,
-                    "occurred_at": str,
-                    "record_json": str,  # full NonConformanceRecord
-                },
-                pk="id",
-            )
-        if "graph_runs" not in self.db.table_names():
-            self.db["graph_runs"].create(
-                {
-                    "graph_run_id": str,
-                    "graph_id": str,
-                    "workflow_id": str,
-                    "run_id": str,
-                    "status": str,
-                    "current_node": str,
-                    "updated_at": str,
-                    "state_json": str,  # full GraphRunState checkpoint
-                },
-                pk="graph_run_id",
-            )
-        if "eval_results" not in self.db.table_names():
-            self.db["eval_results"].create(
-                {
-                    "result_id": str,
-                    "case_id": str,
-                    "workflow_id": str,
-                    "agent": str,
-                    "run_id": str,
-                    "overall": str,
-                    "evaluated_at": str,
-                    "result_json": str,  # full EvalResult
-                },
-                pk="result_id",
-            )
-        if "promotions" not in self.db.table_names():
-            # Created BEFORE the trigger loop above runs, so the append-only
-            # triggers attach on first startup.
-            self.db["promotions"].create(
-                {
-                    "promotion_id": int,
-                    "agent": str,
-                    "workflow_id": str,
-                    "from_maturity": str,
-                    "to_maturity": str,
-                    "reviewed_by": str,
-                    "rationale": str,
-                    "evidence": str,
-                    "promoted_at": str,
-                },
-                pk="promotion_id",
-            )
-        if "capsules" not in self.db.table_names():
-            self.db["capsules"].create(
-                {
-                    "id": str,
-                    "workflow_id": str,
-                    "state": str,
-                    "assigned_to": str,
-                    "inputs": str,
-                    "outputs": str,
-                    "evidence": str,
-                    "status": str,
-                    "created_at": str,
-                    "completed_at": str,
-                    "non_conformance_note": str,
-                },
-                pk="id",
-            )
+        existing = self.db.table_names()
+        for table_name, (columns, pk) in _TABLE_SCHEMAS.items():
+            if table_name not in existing:
+                self.db[table_name].create(columns, pk=pk)
+
         # Triggers attach last, after every table they reference exists.
         for trigger_sql in _APPEND_ONLY_TRIGGERS:
             self.db.execute(trigger_sql)
@@ -275,9 +272,8 @@ class RunLedger:
             pk="id",
         )
 
-    def load_capsule(self, capsule_id: str) -> ProcessCapsule:
-        """Load a capsule snapshot by id. Raises KeyError if unknown."""
-        row = self.db["capsules"].get(capsule_id)
+    def _row_to_capsule(self, row: dict) -> ProcessCapsule:
+        """Convert a database row into a ProcessCapsule instance."""
         return ProcessCapsule(
             id=row["id"],
             workflow_id=row["workflow_id"],
@@ -296,17 +292,22 @@ class RunLedger:
             non_conformance_note=row["non_conformance_note"] or None,
         )
 
+    def load_capsule(self, capsule_id: str) -> ProcessCapsule:
+        """Load a capsule snapshot by id. Raises KeyError if unknown."""
+        row = self.db["capsules"].get(capsule_id)
+        return self._row_to_capsule(row)
+
     def capsules_for(self, workflow_id: str) -> list[ProcessCapsule]:
         """Return every capsule snapshot belonging to a workflow."""
         rows = self.db["capsules"].rows_where("workflow_id = ?", [workflow_id])
-        return [self.load_capsule(row["id"]) for row in rows]
+        return [self._row_to_capsule(row) for row in rows]
 
     def non_conforming_capsules(self) -> list[ProcessCapsule]:
         """Return every capsule currently in NON_CONFORMANCE, across all workflows."""
         rows = self.db["capsules"].rows_where(
             "status = ?", [CapsuleStatus.NON_CONFORMANCE.value]
         )
-        return [self.load_capsule(row["id"]) for row in rows]
+        return [self._row_to_capsule(row) for row in rows]
 
     # -------------------------------------------------------------------- runs
 
