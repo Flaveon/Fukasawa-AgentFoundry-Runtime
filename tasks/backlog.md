@@ -55,3 +55,25 @@
 - [ ] Prototype DSPy only after reviewed prompt/module eval examples exist.
 - [ ] Compare SQLite and DuckDB for run ledger plus analytics.
 - [ ] Evaluate whether existing C-Pax directory standards need a runtime-specific profile.
+
+## Outcome Evaluation (post-release — see ADR-008)
+
+The governance checks measure whether a workflow *behaved* correctly. Nothing
+yet measures whether the optimized workflow *produced better work*. Both halves
+are needed before "the optimization worked" is a claim rather than a hope.
+
+- [ ] Adopt `smevals` (MIT, external peer tool — no import, no vendoring) as the
+      outcome-measurement harness.
+- [ ] Build the first A/B experiment: identical model and tasks, baseline vs
+      Fukasawa-optimized workflow configuration, one grader. Model held constant
+      as the control; the workflow configuration is the variable under test.
+- [ ] Use the Substack pilot as the first subject — it already has a captured
+      observed workflow and will have an optimized export.
+- [ ] Update `docs/evaluation-strategy.md` to name the two halves and say which
+      tool covers which.
+- [ ] Disambiguate vocabulary in docs: "workflow run" vs "smevals run",
+      "governance eval" vs "outcome eval".
+- [ ] Only after outcome metrics exist: revisit whether outcome evidence should
+      inform agent maturity promotion (separate ADR; deterministic checkers
+      only — never an LLM judge in an authoritative path).
+- [ ] Never use outcome grades to select a model. That is not what they measure.
