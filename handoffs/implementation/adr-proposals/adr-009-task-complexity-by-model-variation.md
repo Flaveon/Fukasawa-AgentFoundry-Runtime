@@ -7,6 +7,17 @@ current release boundary)
 `../outcome-evaluation-integration.md`. This reuses that harness unchanged and
 adds a second axis to it.
 
+**Provenance — this restates founding doctrine, it does not invent it.** The
+source input `FukasawaGPT/# FukasawaGPT.md` §"Complexity Budget System"
+(dated May 2026, listed in `README.md` under Source Inputs) already takes
+**available hardware**, **RAM/VRAM limitations**, and **desired autonomy
+level** as *inputs*, and emits **recommended workflow depth**, **automation
+recommendations**, and **escalation path** as *outputs*. Model capability as a
+constraint on workflow depth is original Fukasawa doctrine. It was never
+carried into this repository, because the repo was commissioned to package an
+existing generator and the philosophy behind that generator was never
+transcribed. This ADR is recovery, not invention.
+
 ## Context
 
 ADR-008 holds the model **constant** and varies the workflow configuration, so

@@ -5,6 +5,16 @@
 **Depends on:** `adr-003-validator-rule-registry.md`. This adds fields to the
 registry and the finding contract it defines; it changes no rule logic.
 
+**Provenance — recovery, not invention.** The source input
+`FukasawaGPT/# Non-Conformance Improvement Opportunit.md` (May 2026, listed in
+`README.md` under Source Inputs) already specifies this in more detail than
+this repository carries. Its §4 states the rule as **"Assume excess complexity
+is the root cause until disproven"** — materially stronger than principle 9's
+"first ask whether the workflow is too complex" — and names ten Complexity
+Signals. Its §5 is a fixed set of eight simplification questions, and its §8 a
+closed vocabulary of nine preventive actions. This ADR adopts that structure
+rather than paraphrasing it.
+
 ## Context
 
 The product does two things at once: it builds workflows, and it trains the
@@ -35,11 +45,33 @@ absent.
 |---|---|
 | `why` | The doctrine reason the rule exists, in plain language |
 | `principle` | The product principle applied, e.g. "Principle 3 — Contracts Before Autonomy" |
-| `reduction_prompt` | The principle-9 question, asked *before* the remediation is offered |
+| `reduction_prompt` | The simplification question, asked *before* the remediation is offered |
 
 `reduction_prompt` is the field that separates training from error reporting.
 Every blocking finding asks whether the workflow is too complex before it
 tells anyone how to satisfy the rule.
+
+**`reduction_prompt` draws from a closed set, not free text.** The source
+doctrine §5 already fixes the eight questions, and using them verbatim keeps
+every rule author asking the same things in the same words:
+
+```
+Can a step be removed?          Can the input/output contract be clarified?
+Can a handoff be eliminated?    Can two artifacts be merged?
+Can the decision become a rule? Can the workflow stop earlier?
+Can the task move to a lower    Can escalation criteria be made cleaner?
+  reasoning layer?
+```
+
+**`remediation` should likewise be typed against §8's nine preventive
+actions** — remove step, reduce decision complexity, clarify ownership,
+improve input contract, improve output schema, move task downward, split
+overloaded task, merge redundant artifacts, add process only if reduction is
+insufficient. Free-text remediation may remain as elaboration, but the
+category should be selectable, because §8's ordering is itself doctrine:
+*prefer reduction before addition*, with "add process" listed last and
+conditionally. A closed vocabulary makes that preference visible and
+countable; free text hides it.
 
 **A registry test asserts all three are non-empty for every blocking rule.**
 Teaching becomes a build-breaking invariant rather than an intention. This is
