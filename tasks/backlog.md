@@ -3,7 +3,7 @@
 ## Phase 0
 
 - [ ] Create `docs/glossary.md`.
-- [ ] Create `docs/source-to-contract-map.md`.
+- [x] Create `docs/source-to-contract-map.md`.
 - [ ] Choose pilot workflow.
 - [ ] Convert one real workflow into a `WorkflowDesignBrief`.
 - [ ] Identify all required schemas from source doctrine.
