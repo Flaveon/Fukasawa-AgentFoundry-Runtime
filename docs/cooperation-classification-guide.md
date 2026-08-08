@@ -156,6 +156,45 @@ model uses.
 | `PILOT` | a safety floor applies, or the work is not yet routine and deterministic |
 | `READY` | routine, at least mostly deterministic, and unfloored |
 
+## Export mapping
+
+What each class becomes when the approved workflow is flattened onto the
+runtime. Published here per ADR-006; the tables that run are in
+`src/foundry/workflow_export.py`.
+
+| Executor class | Task depth | Transition owner | Agent declared? | Agent depth level |
+|---|---|---|---|---|
+| `NOT_READY_FOR_AUTOMATION` | CONSCIOUS | the human owner | **no** | — |
+| `HUMAN_ONLY` | CONSCIOUS | the human owner | no | — |
+| `HUMAN_LED_AI_ASSISTED` | GUIDED | the human owner | no | — |
+| `AGENT_PREPARED_HUMAN_APPROVED` | GUIDED, then CONSCIOUS | the agent, then the human | yes | 2 |
+| `DETERMINISTIC_AUTOMATION` | ROUTINE | the script | yes | 0 |
+| `AGENT_EXECUTED_HUMAN_SUPERVISED` | GUIDED | the agent | yes | 2 |
+| `BOUNDED_AUTONOMOUS_AGENT` | GUIDED, then CONSCIOUS | the agent, then the human | yes | 3 |
+
+Four things in that table are decisions rather than transcription:
+
+**The export reads the *effective* executor.** A recorded override is the
+human's decision about their own workflow, and it is what governs. The
+recommendation is never consulted at export.
+
+**`HUMAN_LED_AI_ASSISTED` declares no agent.** A person does the work and AI
+helps, so the human owns the transition — and an agent that owns no transition
+is one the package generator refuses to build. The assistance is recorded in
+`allowed_tools`, which is what it is: a tool, not a governed executor.
+
+**Gated classes export as two transitions, not one.** The runtime opens its
+review gate on CONSCIOUS-depth transitions, and a `WorkflowBrief` refuses a
+CONSCIOUS transition owned by an agent — so a gated agent step cannot be a
+single transition. It becomes the agent's work, a state the work waits in
+(`<step>-pending-approval`), and then the human's decision. The approval is
+therefore a place and an event the ledger records, not a field that claims one.
+`BOUNDED_AUTONOMOUS_AGENT` is refused outright if no gate is named.
+
+**No exported agent is ever Level 4 or 5.** Level 4 coordinates a whole
+workflow, which is this runtime's job rather than an exported agent's, and
+Level 5 is redesign-only and refused by the generator.
+
 ## Adding or changing a classification policy
 
 1. Change `_base_recommendation`, `_FLOOR_CEILINGS`, or `_SUPERVISION` in

@@ -1,0 +1,137 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# PILOT - stage 5b: the exported WorkflowBrief, ready for the existing runtime.
+#
+# NAMING - read this before assuming what this file is. This is a runtime
+# WorkflowBrief: states, transitions, owners, evidence. It is NOT the
+# "Workflow Design Brief" of FukasawaGPT/Workflow_Design_Brief.md, which is a
+# complexity-and-depth design spec with no states in it. Two different
+# artifacts; the name collision is recorded in docs/source-to-contract-map.md
+# section 3.
+#
+# Each step became a state. Each next_steps edge became a transition owned by
+# the executor of the step being left, carrying that step's evidence
+# requirement and its executor class's task depth.
+#
+# Note publish-post. It is AGENT_PREPARED_HUMAN_APPROVED, so it exported as
+# TWO transitions with a real state between them:
+#
+#     publish-post  -(publish-post-agent, GUIDED)->  publish-post-pending-approval
+#     publish-post-pending-approval  -(operator, CONSCIOUS)->  archive-notes
+#
+# The split is not decoration. The runtime opens its review gate on
+# CONSCIOUS-depth transitions, and a WorkflowBrief refuses a CONSCIOUS
+# transition owned by an agent - so "a gated agent step" cannot be one
+# transition. Splitting it makes the approval a place the work waits and an
+# event the ledger records. An agent may prepare the publication; a human
+# authorizes it, because an email to subscribers cannot be unsent.
+
+id: substack-publication
+title: ConcordiaPax Substack Article Production
+owner: operator
+task_depth: CONSCIOUS
+initial_state: capture-idea
+states:
+- capture-idea
+- scope-check
+- deep-research
+- draft-article
+- request-artwork
+- review-and-approve
+- publish-post
+- archive-notes
+- publish-post-pending-approval
+- complete
+transitions:
+- from_state: capture-idea
+  to_state: scope-check
+  owner: operator
+  evidence_required: note exists in the vault with a title and a claim
+  depth: GUIDED
+- from_state: scope-check
+  to_state: deep-research
+  owner: operator
+  evidence_required: scope decision recorded in the idea note with a reason
+  depth: CONSCIOUS
+- from_state: scope-check
+  to_state: draft-article
+  owner: operator
+  evidence_required: scope decision recorded in the idea note with a reason
+  depth: CONSCIOUS
+- from_state: scope-check
+  to_state: capture-idea
+  owner: operator
+  evidence_required: ''
+  depth: GUIDED
+- from_state: deep-research
+  to_state: draft-article
+  owner: research-helper
+  evidence_required: links or citations for each supported claim
+  depth: GUIDED
+- from_state: draft-article
+  to_state: request-artwork
+  owner: operator
+  evidence_required: draft file with a word count
+  depth: CONSCIOUS
+- from_state: request-artwork
+  to_state: review-and-approve
+  owner: operator
+  evidence_required: brief sent with the draft title, angle and target date
+  depth: GUIDED
+- from_state: review-and-approve
+  to_state: publish-post
+  owner: operator
+  evidence_required: a stated go/no-go with the reason
+  depth: CONSCIOUS
+- from_state: review-and-approve
+  to_state: draft-article
+  owner: operator
+  evidence_required: ''
+  depth: GUIDED
+- from_state: publish-post
+  to_state: publish-post-pending-approval
+  owner: publish-post-agent
+  evidence_required: live post URL
+  depth: GUIDED
+- from_state: publish-post-pending-approval
+  to_state: archive-notes
+  owner: operator
+  evidence_required: ''
+  depth: CONSCIOUS
+- from_state: publish-post
+  to_state: publish-post
+  owner: operator
+  evidence_required: ''
+  depth: GUIDED
+- from_state: archive-notes
+  to_state: complete
+  owner: archive-notes-agent
+  evidence_required: notes present under the archive path
+  depth: ROUTINE
+completion_criteria: The post is live on Substack with a header image, the subscriber email has gone out,
+  and the working notes are archived.
+exception_path: Stop, leave the work where it is, and tell the operator. Do not improvise a new path;
+  add the missing step to this workflow.
+status: approved
+agents:
+- agent_name: publish-post-agent
+  depth_level: 2
+  responsibilities: Publish the post and send it to subscribers.
+  escalation_target: research-helper
+  deployment_method: file_package
+  allowed_tools: []
+  forbidden:
+  - reason above the declared depth level
+  - improvise a path when no transition matches — escalate instead
+  - let this step take effect before the approval gate records a decision
+- agent_name: archive-notes-agent
+  depth_level: 0
+  responsibilities: Move working notes into the archive folder.
+  escalation_target: research-helper
+  deployment_method: file_package
+  allowed_tools: []
+  forbidden:
+  - reason above the declared depth level
+  - improvise a path when no transition matches — escalate instead
+  - substitute judgment for the rule when the rule does not fit — escalate
