@@ -666,10 +666,17 @@ class RunLedger:
         """Load a draft. Without a version, returns the most recently updated.
 
         Raises KeyError when no draft matches, so a caller cannot mistake a
-        missing workflow for an empty one.
+        missing workflow for an empty one. Both branches raise the same type:
+        the version-pinned lookup used to leak sqlite_utils' NotFoundError,
+        which reached the CLI as a traceback instead of a message.
         """
         if version:
-            row = self.db["workflow_drafts"].get((workflow_id, version))
+            try:
+                row = self.db["workflow_drafts"].get((workflow_id, version))
+            except sqlite_utils.db.NotFoundError:
+                raise KeyError(
+                    f"no draft stored for workflow '{workflow_id}' version '{version}'"
+                ) from None
             return HumanWorkflowDraft.model_validate_json(row["draft_json"])
         rows = list(
             self.db["workflow_drafts"].rows_where(
