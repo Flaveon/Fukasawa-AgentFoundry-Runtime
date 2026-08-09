@@ -28,6 +28,21 @@ Tables added for the human & cooperative workflow lifecycle:
 | `risk_acceptances` | consciously accepted findings, with actor and rationale | append-only |
 | `workflow_promotions` | every transition attempt, granted or refused | append-only |
 | `accountable_workflows` | promoted artifacts, keyed by workflow, version **and maturity** | append-only |
+| `cooperation_assessments` | per-step executor recommendations and human overrides | append-only |
+| `cooperative_workflows` | built and approved executor assignments | append-only |
+
+`cooperation_assessments` and `cooperative_workflows` use a **surrogate
+`record_id`** rather than a natural key, and this is deliberate. `apply_override`
+returns a copy carrying the *same* `assessment_id`, so an override is a later row
+on top of the original rather than an edit of it; approving a cooperative
+workflow likewise lands as a second row beside the unapproved build. Reads
+collapse to the newest row per step (`load_cooperation_assessments`) or per
+workflow (`load_cooperative_workflow`), while
+`cooperation_assessment_history()` returns every row.
+
+Keying either table naturally would have forced a choice between refusing the
+override and overwriting the recommendation it replaced. Both are wrong: the
+value of an override is that you can still see what it overruled.
 
 `accountable_workflows` is keyed by maturity as well as version because a
 workflow climbs several steps at the same draft version, and each step is its

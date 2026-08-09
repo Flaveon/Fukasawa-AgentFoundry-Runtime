@@ -19,6 +19,7 @@ from typing import Optional
 
 import sqlite_utils
 
+from src.schemas.cooperation import CooperationAssessment, CooperativeWorkflow
 from src.schemas.eval_case import EvalResult
 from src.schemas.findings import RiskAcceptance, ValidationReport
 from src.schemas.graph import GraphRunState
@@ -56,6 +57,8 @@ _APPEND_ONLY_TABLES = (
     "risk_acceptances",
     "workflow_promotions",
     "accountable_workflows",
+    "cooperation_assessments",
+    "cooperative_workflows",
 )
 
 _APPEND_ONLY_TRIGGERS = [
@@ -259,6 +262,45 @@ _TABLE_SCHEMAS = {
             "artifact_json": str,  # full AccountableWorkflow
         },
         ("workflow_id", "version", "maturity"),
+    ),
+    # Stage-4 evidence: what was recommended for each step, and what a human
+    # decided instead. Append-only with a surrogate key rather than keyed on
+    # assessment_id, because `apply_override` returns a copy carrying the SAME
+    # assessment_id — an override is a later row on top of the original, not an
+    # edit of it. `load_cooperation_assessments` therefore returns the newest
+    # row per step, and the earlier ones remain readable as the record of what
+    # the table recommended before a person overruled it.
+    "cooperation_assessments": (
+        {
+            "record_id": str,
+            "workflow_id": str,
+            "step_id": str,
+            "assessment_id": str,
+            "recommended_executor": str,
+            "effective_executor": str,
+            "safety_floor": str,
+            "overridden": int,  # 1 = a human replaced the recommendation
+            "recorded_at": str,
+            "assessment_json": str,  # full CooperationAssessment
+        },
+        "record_id",
+    ),
+    # Stage-5 artifact. Append-only for the same reason: approving a built
+    # workflow is a decision, so it lands as a new row and the unapproved build
+    # it supersedes stays visible. An audit needs to see that the assignments
+    # existed before anyone signed them.
+    "cooperative_workflows": (
+        {
+            "record_id": str,
+            "workflow_id": str,
+            "version": str,
+            "source_workflow_version": str,
+            "approved": int,  # 1 = a named human approved the assignments
+            "approved_by": str,
+            "recorded_at": str,
+            "artifact_json": str,  # full CooperativeWorkflow
+        },
+        "record_id",
     ),
 }
 
@@ -817,3 +859,123 @@ class RunLedger:
                 "workflow_id = ?", [workflow_id], order_by="promoted_at desc"
             )
         ]
+
+    # ------------------------------------------------- cooperation and export
+
+    def save_cooperation_assessments(
+        self, assessments: list[CooperationAssessment]
+    ) -> list[str]:
+        """Store a workflow's assessments, returning the new record ids.
+
+        Written with one `insert_all`, so an interrupted save cannot leave a
+        workflow half-assessed: SQLite applies the batch or none of it.
+
+        Saving again after an override does not overwrite anything. The new row
+        supersedes the old one for reads while the original remains as the
+        record of what the decision table recommended before a person overruled
+        it — which is the only way an override stays auditable.
+        """
+        recorded_at = datetime.now(timezone.utc).isoformat()
+        rows = [
+            {
+                "record_id": _new_id("ca"),
+                "workflow_id": a.workflow_id,
+                "step_id": a.step_id,
+                "assessment_id": a.assessment_id,
+                "recommended_executor": a.recommended_executor.value,
+                "effective_executor": a.effective_executor.value,
+                "safety_floor": a.safety_floor.value,
+                "overridden": 1 if a.override is not None else 0,
+                "recorded_at": recorded_at,
+                "assessment_json": a.model_dump_json(),
+            }
+            for a in assessments
+        ]
+        if not rows:
+            return []
+        self.db["cooperation_assessments"].insert_all(rows)
+        return [r["record_id"] for r in rows]
+
+    def load_cooperation_assessments(
+        self, workflow_id: str
+    ) -> list[CooperationAssessment]:
+        """The current assessment for each step, newest row per step winning.
+
+        Returns an empty list for a workflow that has never been assessed —
+        absence is a normal state, not an error, and the caller decides whether
+        it matters.
+        """
+        newest: dict[str, dict] = {}
+        for row in self.db["cooperation_assessments"].rows_where(
+            "workflow_id = ?", [workflow_id], order_by="recorded_at, rowid"
+        ):
+            # Ascending order means the last row seen for a step is its newest.
+            newest[row["step_id"]] = row
+        return [
+            CooperationAssessment.model_validate_json(r["assessment_json"])
+            for r in newest.values()
+        ]
+
+    def cooperation_assessment_history(self, workflow_id: str) -> list[dict]:
+        """Every assessment row ever written for a workflow, oldest first.
+
+        The audit view: shows a step's recommendation and any later override as
+        separate events, which `load_cooperation_assessments` deliberately
+        collapses.
+        """
+        return list(
+            self.db["cooperation_assessments"].rows_where(
+                "workflow_id = ?", [workflow_id], order_by="recorded_at, rowid"
+            )
+        )
+
+    def save_cooperative_workflow(self, artifact: CooperativeWorkflow) -> str:
+        """Store a built or approved cooperative workflow, returning its record id.
+
+        Never overwrites. Approving a workflow writes a second row whose
+        `approved` flag is set; the unapproved build stays readable, because an
+        audit needs to see that the assignments existed before anyone signed
+        them.
+        """
+        record_id = _new_id("cw")
+        self.db["cooperative_workflows"].insert(
+            {
+                "record_id": record_id,
+                "workflow_id": artifact.workflow_id,
+                "version": artifact.version,
+                "source_workflow_version": artifact.source_workflow_version,
+                "approved": 1 if artifact.approved else 0,
+                "approved_by": artifact.approved_by,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "artifact_json": artifact.model_dump_json(),
+            }
+        )
+        return record_id
+
+    def load_cooperative_workflow(
+        self, workflow_id: str, version: str = ""
+    ) -> CooperativeWorkflow:
+        """Load the newest cooperative workflow, optionally pinned to a version."""
+        where, params = ["workflow_id = ?"], [workflow_id]
+        if version:
+            where.append("version = ?")
+            params.append(version)
+        rows = list(
+            self.db["cooperative_workflows"].rows_where(
+                " and ".join(where), params, order_by="recorded_at desc, rowid desc"
+            )
+        )
+        if not rows:
+            raise KeyError(
+                f"no cooperative workflow stored for '{workflow_id}'"
+                + (f" version '{version}'" if version else "")
+            )
+        return CooperativeWorkflow.model_validate_json(rows[0]["artifact_json"])
+
+    def has_cooperative_workflow(self, workflow_id: str) -> bool:
+        """Whether any cooperative workflow has been built for this workflow."""
+        return any(
+            self.db["cooperative_workflows"].rows_where(
+                "workflow_id = ?", [workflow_id]
+            )
+        )
