@@ -137,16 +137,41 @@ copied into the CLI. Flagged rather than silently reinterpreted.
   `required_tools` is matched rather than inferred. With no stored draft it
   reports none — inheriting phase 4's decision 7.
 
+## Addendum — two gaps closed after the first merge
+
+Both items originally flagged here as open were fixed in a follow-up commit
+(`workflow accept-risk, and share the file/ledger rule`), on the operator's
+instruction. Recorded here rather than rewritten out, because the sequence is
+the useful part.
+
+**1. Risk acceptance was unreachable *and* would not have worked.** The missing
+command was the visible half. The hidden half: `promote` builds
+`accepted_risks` from a freshly computed report, validation is stateless, and
+acceptances live in the ledger — so nothing re-attached them and every workflow
+promoted through the CLI carried `accepted_risks: []`. That is **the third
+instance of one root pattern this phase hit**: a command recomputing from the
+file while the decision lives in the ledger. Maturity and overrides were the
+first two, both found by driving the lifecycle; this one was found only by
+being asked about it. The pattern is worth naming for later phases — anything
+that reads a draft from disk and re-derives state is a candidate.
+
+`workflow accept-risk` now exists (advisory findings only; blocking exits `3`,
+unknown finding id exits `1` with the available ids listed).
+
+**2. The file/ledger rule now lives in governance.** `at_recorded_maturity` and
+the new `reattach_acceptances` moved out of `src/cli.py` into
+`src/governance/workflow_promotion.py`, authorized on the same ownership terms
+as `ledger.py`. Phase 7 calls them rather than reinventing them, which was the
+whole risk. `TestSharedReconciliation` asserts the CLI keeps no private copy.
+
+Suite after the addendum: **502 passed, 4 skipped**.
+
 ## Known limitations
 
 - **The two conventions do not extend backwards.** The ten older sub-apps
   return `1` for every failure and have no `--json`. Unifying them would mean
   editing existing commands, which the phase boundary forbids. Worth doing;
   not done.
-- **No `accept-risk` command.** Non-blocking findings can be accepted through
-  `src/governance/workflow_promotion.accept_risk`, but §17 does not list a CLI
-  surface for it and I did not invent one. An operator cannot currently accept
-  an advisory finding from the CLI.
 - **`workflow promote` cannot pass `--owners`.** `promote()` accepts it;
   ownership falls back to the draft's actors. Adding a repeatable flag is easy
   and was out of the named command set.
@@ -167,9 +192,10 @@ copied into the CLI. Flagged rather than silently reinterpreted.
 - **For phase 7:** the desktop must call these same governance functions, not
   re-derive anything. Directive §6.3 forbids classification logic under
   `src/gui/`, and `TestBoundary` in this phase's suite is the pattern to extend.
-  Note also that `src/gui/services.py` will need the same
-  content-from-file/progress-from-ledger rule the CLI now implements, or the
-  GUI will reproduce bug 1.
+  Any `src/gui/services.py` path that loads a draft from disk **must** call
+  `at_recorded_maturity` and `reattach_acceptances` from
+  `src/governance/workflow_promotion.py` — they are shared for exactly this
+  reason, and skipping them reproduces bugs 1 and 3 in the desktop.
 - **For phase 8:** the pilot artifacts in
   `examples/workflows/substack-publication/` were generated with the operator's
   `request-artwork` override applied. A fresh `assess-cooperation` produces
@@ -189,11 +215,12 @@ Branch `claude/phase-6-cli` @ head (merge to
 `feature/human-cooperative-workflow-runtime` first).
 Read: `docs/cli-guide.md` → this note → `adr-proposals/adr-007` → directive §16.
 Import surface, all already used by the CLI and safe to call from services:
-`validate_workflow`; `promote`, `assess`, `accept_risk`; `assess_workflow`,
+`validate_workflow`; `promote`, `assess`, `accept_risk`,
+**`at_recorded_maturity`, `reattach_acceptances`**; `assess_workflow`,
 `apply_override`, `steps_not_ready`; `build_cooperative_workflow`,
 `export_workflow`, `steps_kept_human`; and on the ledger
 `save_cooperation_assessments`, `load_cooperation_assessments`,
 `cooperation_assessment_history`, `save_cooperative_workflow`,
 `load_cooperative_workflow`.
-Current suite: **490 passed, 4 skipped**. Do not touch any file listed FROZEN
+Current suite: **502 passed, 4 skipped**. Do not touch any file listed FROZEN
 in directive §3.
