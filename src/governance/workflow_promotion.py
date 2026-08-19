@@ -167,6 +167,92 @@ def accept_risk(
     return acceptance
 
 
+# ------------------------------------------------- reconciling file and ledger
+#
+# Two functions every caller that loads a draft from disk must go through. They
+# exist because of one recurring mistake: a draft *file* carries the workflow's
+# content, but decisions made about it — how far it has been promoted, which
+# findings a human accepted — live in the ledger. A caller that reads only the
+# file silently discards those decisions, and the decisions are the part this
+# product exists to preserve.
+#
+# Both are here rather than in a CLI or a view so the CLI, the desktop, and any
+# future service surface share one implementation. Reimplementing either is how
+# the bug comes back.
+
+
+def at_recorded_maturity(
+    draft: HumanWorkflowDraft, ledger: RunLedger
+) -> tuple[HumanWorkflowDraft, str]:
+    """Lift a draft read from disk to the maturity the ledger has recorded.
+
+    ``promote`` stores an advanced copy of the draft; it never rewrites the
+    operator's YAML. So a file that has already been promoted still says
+    ``OBSERVED`` on disk, and a caller trusting the file would let the same step
+    be promoted forever.
+
+    Content comes from the file and progress from the ledger, which keeps both
+    honest: edits to the file are never ignored, and progress already recorded is
+    never repeated. Returns the draft plus a note to show the operator, or an
+    empty note when nothing was lifted.
+    """
+    try:
+        stored = ledger.load_workflow_draft(draft.workflow_id, draft.version)
+    except KeyError:
+        return draft, ""
+    if PROMOTION_PATH.index(stored.maturity) <= PROMOTION_PATH.index(draft.maturity):
+        return draft, ""
+    lifted = draft.model_copy(deep=True)
+    lifted.maturity = stored.maturity
+    return lifted, (
+        f"{draft.workflow_id} is recorded at {stored.maturity.value}; "
+        f"using the file's content at that maturity rather than "
+        f"{draft.maturity.value}."
+    )
+
+
+def reattach_acceptances(report: ValidationReport, ledger: RunLedger) -> list[str]:
+    """Re-attach previously recorded risk acceptances to a fresh report.
+
+    Validation is deterministic and stateless: it re-derives findings from the
+    draft every time, with no memory of what a human already accepted. The
+    acceptances live in the ledger, so without this the record of a conscious
+    decision never reaches the artifact that cites it —
+    ``AccountableWorkflow.accepted_risks`` would always be empty.
+
+    Matching is by ``finding_id``, which is content-addressed (rule id plus
+    location), so this is stable across re-validation. If the operator edits the
+    step a finding was about, its id changes and the stale acceptance simply does
+    not re-attach — which is correct: accepting a finding about an older version
+    of a step should not silently carry forward.
+
+    Mutates ``report`` in place and returns the finding ids re-attached.
+    """
+    stored = {
+        row["finding_id"]: row
+        for row in ledger.risk_acceptances_for(report.workflow_id)
+    }
+    reattached: list[str] = []
+    for finding in report.findings:
+        row = stored.get(finding.finding_id)
+        if row is None or finding.acceptance is not None:
+            continue
+        # A blocking finding can never be accepted, so a stored acceptance for
+        # one means the rule's policy changed since. Refusing to re-attach it
+        # keeps the gate real; the row stays in the ledger as history.
+        if finding.blocking:
+            continue
+        finding.acceptance = RiskAcceptance(
+            finding_id=finding.finding_id,
+            rule=finding.rule,
+            accepted_by=row["accepted_by"],
+            accepted_at=row["accepted_at"],
+            rationale=row["rationale"],
+        )
+        reattached.append(finding.finding_id)
+    return reattached
+
+
 # ------------------------------------------------------------------- assessing
 
 

@@ -17,6 +17,8 @@ workflow init          write down what actually happens
       ↓
 workflow validate      find the gaps (16 deterministic rules)
       ↓
+workflow accept-risk   optional: record a decision about an advisory finding
+      ↓
 workflow promote        ×2   OBSERVED → MAPPED → ACCOUNTABLE
       ↓
 workflow assess-cooperation   who should do each step
@@ -93,6 +95,30 @@ fukasawa workflow findings weekly-report.yaml --blocking-only
 
 `validate` is the gate; `findings` is the lens. Separating them means a script
 can read findings without having to treat their existence as a failure.
+
+### `workflow accept-risk <draft.yaml> --finding <id> --by <name> --why <reason>`
+
+Records that you have consciously accepted an advisory finding as residual risk.
+
+```bash
+fukasawa workflow accept-risk weekly-report.yaml \
+  --finding "HW-013:unwritten_rules/Cadence is a judgement call" \
+  --by drew --why "The operator decides this weekly; a rule would be wrong."
+```
+
+**Accepting changes no outcome.** Advisory findings never gated promotion, so
+this unlocks nothing. What it changes is whether the reason is on the record —
+and "we know about this and it is fine" is a different statement from silence.
+HW-013 and HW-014 are the heuristic pair this exists for.
+
+A **blocking** finding cannot be accepted and exits `3`. Waiving one would turn
+the promotion gate into a formality.
+
+Acceptances are re-attached automatically on later `validate` and `promote`
+runs, and they appear in the promoted artifact's `accepted_risks`. Matching is by
+finding id, which is derived from the rule and the location — so if you edit the
+step a finding was about, the old acceptance correctly stops applying rather than
+carrying over to different content.
 
 ### `workflow promote <draft.yaml> --by <name>`
 

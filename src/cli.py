@@ -25,6 +25,7 @@ The workflow lifecycle, in the order you use it:
     fukasawa workflow init <id>              write a draft skeleton to fill in
     fukasawa workflow validate <draft>       check it against the 16 rules
     fukasawa workflow findings <draft>       list findings without gating
+    fukasawa workflow accept-risk <draft>    record a decision on an advisory finding
     fukasawa workflow promote <draft> --by   advance one maturity step
     fukasawa workflow assess-cooperation <id>   recommend an executor per step
     fukasawa workflow build-cooperative <id>    assign every step
@@ -70,9 +71,14 @@ from src.governance.cooperation import (
 )
 from src.governance.evals import load_eval_case, run_eval_case
 from src.governance.maturity import PromotionRefusedError, assess, promote
-from src.governance.workflow_promotion import PROMOTION_PATH
 from src.governance.workflow_promotion import (
     PromotionRefusedError as WorkflowPromotionRefused,
+)
+from src.governance.workflow_promotion import (
+    RiskAcceptanceRefusedError,
+    accept_risk,
+    at_recorded_maturity,
+    reattach_acceptances,
 )
 from src.governance.workflow_promotion import promote as promote_workflow
 from src.governance.workflow_rules import validate_workflow
@@ -1746,36 +1752,6 @@ def _load_draft_file(path: str) -> HumanWorkflowDraft:
         raise typer.Exit(EXIT_INPUT)
 
 
-def _at_recorded_maturity(
-    draft: HumanWorkflowDraft, ledger: RunLedger
-) -> tuple[HumanWorkflowDraft, str]:
-    """Lift a draft read from disk to the maturity the ledger has recorded.
-
-    A draft file carries the workflow's *content*; the ledger carries its
-    *progress*. Promotion stores an advanced copy, so a file that has already
-    been promoted still says OBSERVED on disk — and re-reading it would let the
-    same step be promoted forever.
-
-    Taking content from the file and maturity from the ledger keeps both
-    honest: edits to the file are never ignored, and progress already recorded
-    is never repeated. Returns the draft plus a note to show the operator, or
-    an empty note when nothing was lifted.
-    """
-    try:
-        stored = ledger.load_workflow_draft(draft.workflow_id, draft.version)
-    except KeyError:
-        return draft, ""
-    if PROMOTION_PATH.index(stored.maturity) <= PROMOTION_PATH.index(draft.maturity):
-        return draft, ""
-    lifted = draft.model_copy(deep=True)
-    lifted.maturity = stored.maturity
-    return lifted, (
-        f"{draft.workflow_id} is recorded at {stored.maturity.value}; "
-        f"using the file's content at that maturity rather than "
-        f"{draft.maturity.value}."
-    )
-
-
 def _finding_row(finding: WorkflowFinding) -> dict:
     """One finding as plain data, for --json and for table rendering alike."""
     return {
@@ -1887,10 +1863,14 @@ def workflow_validate(
     """
     _set_json(json_out)
     draft = _load_draft_file(path)
+    ledger = RunLedger(db)
     report = validate_workflow(draft)
+    # Validation is stateless, so a finding a human already accepted comes back
+    # looking unaccepted. Re-attach before reporting, or the operator is shown a
+    # decision they made as though they had not made it.
+    reattach_acceptances(report, ledger)
 
     if save:
-        ledger = RunLedger(db)
         ledger.save_workflow_draft(draft)
         ledger.save_validation_report(report)
 
@@ -1962,6 +1942,66 @@ def workflow_findings(
     _print_findings(filtered)
 
 
+@workflow_app.command("accept-risk")
+def workflow_accept_risk(
+    path: str = typer.Argument(..., help="Path to a workflow draft YAML file."),
+    finding: str = typer.Option(
+        ..., "--finding", help="Finding id to accept, e.g. 'HW-013:workflow'."
+    ),
+    by: str = typer.Option(..., "--by", help="Who is accepting it (self-attested)."),
+    why: str = typer.Option(..., "--why", help="Why this risk is acceptable."),
+    db: str = _DB_OPTION,
+) -> None:
+    """Consciously accept an advisory finding as residual risk.
+
+    Accepting records a decision; it does not unlock anything. Advisory findings
+    never gated promotion, so this changes no outcome — what it changes is
+    whether the reason is on the record. HW-013 and HW-014 are the heuristic
+    pair, and "we know about this and it is fine" is a different statement from
+    silence.
+
+    A **blocking** finding cannot be accepted and exits 3. Waiving one would
+    turn the promotion gate into a formality.
+    """
+    _set_json(False)
+    draft = _load_draft_file(path)
+    ledger = RunLedger(db)
+    report = validate_workflow(draft)
+    reattach_acceptances(report, ledger)
+
+    try:
+        acceptance = accept_risk(
+            ledger,
+            draft.workflow_id,
+            report,
+            finding_id=finding,
+            accepted_by=by,
+            rationale=why,
+        )
+    except RiskAcceptanceRefusedError as exc:
+        # An unknown finding id is the operator mistyping; a blocking finding is
+        # doctrine refusing. Different codes, because the fixes differ.
+        known = {f.finding_id for f in report.findings}
+        if finding not in known:
+            _fail_input(
+                f"{exc}. Findings in this draft: "
+                f"{', '.join(sorted(known)) or '(none)'}"
+            )
+        _fail_refused(str(exc), error="acceptance_refused")
+
+    ledger.save_workflow_draft(draft)
+    ledger.save_validation_report(report)
+    console.print(
+        f"[green]Accepted[/green] {acceptance.rule.rule_id} "
+        f"([cyan]{acceptance.finding_id}[/cyan]) as residual risk."
+    )
+    console.print(f"Recorded by {acceptance.accepted_by}: {escape(acceptance.rationale)}")
+    console.print(
+        "\n[dim]This records a decision. It does not change whether the "
+        "workflow may be promoted — advisory findings never blocked it.[/dim]"
+    )
+
+
 @workflow_app.command("promote")
 def workflow_promote(
     path: str = typer.Argument(..., help="Path to a workflow draft YAML file."),
@@ -1980,10 +2020,13 @@ def workflow_promote(
     _set_json(json_out)
     draft = _load_draft_file(path)
     ledger = RunLedger(db)
-    draft, lifted_note = _at_recorded_maturity(draft, ledger)
+    draft, lifted_note = at_recorded_maturity(draft, ledger)
     if lifted_note and not _json_mode:
         console.print(f"[dim]{escape(lifted_note)}[/dim]")
     report = validate_workflow(draft)
+    # Without this the promoted artifact's accepted_risks is always empty: the
+    # acceptances are in the ledger, and validation has no memory of them.
+    reattach_acceptances(report, ledger)
     assessments = ledger.load_cooperation_assessments(draft.workflow_id)
 
     if report.unresolved_blocking:

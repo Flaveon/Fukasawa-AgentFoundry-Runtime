@@ -642,6 +642,185 @@ class TestLifecycle:
         assert stages()["exported"] is True
 
 
+class TestRiskAcceptance:
+    """Accepting an advisory finding records a decision and reaches the artifact.
+
+    The bug this closes was two-sided: there was no way to record an acceptance
+    from the CLI, and `promote` would have discarded one anyway. Validation is
+    stateless, so a fresh report has no memory of what a human accepted — and
+    `AccountableWorkflow.accepted_risks` is built from that report.
+    """
+
+    ADVISORY = "HW-013:unwritten_rules/Never publish two long articles in the s"
+
+    def test_an_advisory_finding_can_be_accepted(self, draft, db):
+        result = run(
+            "workflow", "accept-risk", str(draft), "--db", db,
+            "--finding", self.ADVISORY, "--by", "tester", "--why", "judgement call",
+        )
+        assert result.exit_code == 0
+
+    def test_an_acceptance_survives_revalidation(self, draft, db):
+        run(
+            "workflow", "accept-risk", str(draft), "--db", db,
+            "--finding", self.ADVISORY, "--by", "tester", "--why", "judgement call",
+        )
+        result = run("workflow", "validate", str(draft), "--db", db, "--json")
+        accepted = [f["finding_id"] for f in json.loads(result.output)["findings"] if f["accepted"]]
+        assert accepted == [self.ADVISORY]
+
+    def test_an_acceptance_reaches_the_promoted_artifact(self, draft, db):
+        # This is the half that was silently broken: the acceptance existed in
+        # the ledger but never appeared on the artifact that cites it.
+        run(
+            "workflow", "accept-risk", str(draft), "--db", db,
+            "--finding", self.ADVISORY, "--by", "tester", "--why", "judgement call",
+        )
+        accountable(draft, db)
+
+        from src.runtime.ledger import RunLedger
+
+        artifact = RunLedger(db).load_accountable_workflow("substack-publication")
+        assert [a.rule.rule_id for a in artifact.accepted_risks] == ["HW-013"]
+        assert artifact.accepted_risks[0].accepted_by == "tester"
+
+    def test_promotion_without_an_acceptance_carries_none(self, draft, db):
+        # The negative half of the pair: re-attachment must not invent rows.
+        accountable(draft, db)
+
+        from src.runtime.ledger import RunLedger
+
+        artifact = RunLedger(db).load_accountable_workflow("substack-publication")
+        assert artifact.accepted_risks == []
+
+    def test_a_blocking_finding_cannot_be_accepted(self, tmp_path, db):
+        skeleton = tmp_path / "new.yaml"
+        run("workflow", "init", "new-flow", "--out", str(skeleton))
+        result = run(
+            "workflow", "accept-risk", str(skeleton), "--db", db,
+            "--finding", "HW-001:trigger", "--by", "t", "--why", "we do not need one",
+        )
+        # Doctrine refusing, not a typo: waiving a blocking finding would turn
+        # the promotion gate into a formality.
+        assert result.exit_code == 3
+
+    def test_an_unknown_finding_id_is_an_input_error(self, draft, db):
+        result = run(
+            "workflow", "accept-risk", str(draft), "--db", db,
+            "--finding", "HW-999:nope", "--by", "t", "--why", "x",
+        )
+        assert result.exit_code == 1
+        assert_clean_exit(result)
+        # The message lists what is available, so the operator can correct it.
+        assert "HW-013" in result.output
+
+    def test_a_stored_acceptance_never_reattaches_onto_a_blocking_finding(
+        self, tmp_path, db
+    ):
+        # The scenario this guards is a rule's *policy* changing between
+        # versions: HW-013 and HW-014 are documented as the heuristic pair, and
+        # an acceptance recorded while a rule was advisory must not silently
+        # waive it once it is blocking. `accept_risk` cannot create such a row,
+        # so the test writes it straight to the ledger — which is exactly the
+        # shape an older release would have left behind.
+        from src.governance.workflow_promotion import reattach_acceptances
+        from src.governance.workflow_rules import validate_workflow
+        from src.runtime.ledger import RunLedger
+        from src.schemas.findings import RiskAcceptance
+        from src.schemas.human_workflow import HumanWorkflowDraft
+
+        import yaml as yamllib
+
+        skeleton = tmp_path / "new.yaml"
+        run("workflow", "init", "new-flow", "--out", str(skeleton))
+        drafted = HumanWorkflowDraft.model_validate(
+            yamllib.safe_load(skeleton.read_text(encoding="utf-8"))
+        )
+        report = validate_workflow(drafted)
+        blocking = next(f for f in report.findings if f.blocking)
+
+        ledger = RunLedger(db)
+        ledger.save_risk_acceptance(
+            "new-flow",
+            RiskAcceptance(
+                finding_id=blocking.finding_id,
+                rule=blocking.rule,
+                accepted_by="someone-long-ago",
+                rationale="this was advisory when I accepted it",
+            ),
+        )
+
+        fresh = validate_workflow(drafted)
+        reattached = reattach_acceptances(fresh, ledger)
+        assert reattached == []
+        assert all(f.acceptance is None for f in fresh.findings if f.blocking)
+        # And the gate stays shut.
+        assert fresh.promotion_ready is False
+
+    def test_acceptance_requires_actor_and_reason(self, draft, db):
+        result = run(
+            "workflow", "accept-risk", str(draft), "--db", db, "--finding", self.ADVISORY
+        )
+        # Typer's own missing-option handling; must not be a traceback.
+        assert result.exit_code != 0
+        assert "Traceback" not in result.output
+
+
+class TestSharedReconciliation:
+    """The file/ledger rule lives in governance, not in the CLI.
+
+    Phase 7's services.py must reach the same behaviour, and the only way that
+    happens reliably is by calling the same function. A private copy in cli.py
+    is how the promote-repeats bug comes back in the desktop.
+    """
+
+    def test_the_helpers_are_importable_from_governance(self):
+        from src.governance.workflow_promotion import (  # noqa: F401
+            at_recorded_maturity,
+            reattach_acceptances,
+        )
+
+    def test_the_cli_does_not_keep_a_private_copy(self):
+        source = (ROOT / "src" / "cli.py").read_text(encoding="utf-8")
+        assert "def _at_recorded_maturity" not in source
+        assert "def _reattach_acceptances" not in source
+
+    def test_at_recorded_maturity_prefers_file_content(self, draft, db):
+        from src.governance.workflow_promotion import at_recorded_maturity
+        from src.runtime.ledger import RunLedger
+        from src.schemas.human_workflow import HumanWorkflowDraft, WorkflowMaturity
+
+        import yaml as yamllib
+
+        ledger = RunLedger(db)
+        run("workflow", "promote", str(draft), "--by", "t", "--db", db)
+
+        on_disk = HumanWorkflowDraft.model_validate(
+            yamllib.safe_load(draft.read_text(encoding="utf-8"))
+        )
+        assert on_disk.maturity is WorkflowMaturity.OBSERVED
+
+        lifted, note = at_recorded_maturity(on_disk, ledger)
+        assert lifted.maturity is WorkflowMaturity.MAPPED
+        assert lifted.name == on_disk.name  # content untouched
+        assert "MAPPED" in note
+
+    def test_at_recorded_maturity_never_lowers_maturity(self, draft, db):
+        from src.governance.workflow_promotion import at_recorded_maturity
+        from src.runtime.ledger import RunLedger
+        from src.schemas.human_workflow import WorkflowMaturity
+
+        ledger = RunLedger(db)
+        accountable(draft, db)
+        stored = ledger.load_workflow_draft("substack-publication")
+        # Hand it something already ahead of the ledger; it must not regress.
+        ahead = stored.model_copy(deep=True)
+        ahead.maturity = WorkflowMaturity.RUNTIME_READY
+        result, note = at_recorded_maturity(ahead, ledger)
+        assert result.maturity is WorkflowMaturity.RUNTIME_READY
+        assert note == ""
+
+
 class TestExistingCommandsUntouched:
     """The phase boundary forbids editing the ten sub-apps that were here."""
 
