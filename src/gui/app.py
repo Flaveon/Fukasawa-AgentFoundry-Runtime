@@ -18,6 +18,7 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 from src.gui.services import BriefValidation, BuildOutcome, build_workflow, validate_brief_file
+from src.gui.workflow_views import WorkflowTab
 
 #: Brand palette (BRAND.md): primary purple, secondary pink.
 PRIMARY = "#A855F7"
@@ -47,14 +48,18 @@ class FukasawaApp(ctk.CTk):
         header.pack(pady=(16, 0))
         ctk.CTkLabel(
             self,
-            text="Validate a brief, then build its workflow.",
+            text="Capture a workflow, decide who does each step, then build it.",
             text_color=SECONDARY,
         ).pack(pady=(0, 10))
 
         self.tabs = ctk.CTkTabview(self, fg_color=("gray92", "gray14"))
         self.tabs.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        self.tabs.add("Workflow")
         self.tabs.add("Validate Brief")
         self.tabs.add("Build Workflow")
+        # The lifecycle tab comes first: a brief is what the lifecycle
+        # produces, so validating and building one are the later steps.
+        self.workflow_tab = WorkflowTab(self.tabs.tab("Workflow"))
         self._build_validate_tab(self.tabs.tab("Validate Brief"))
         self._build_build_tab(self.tabs.tab("Build Workflow"))
 

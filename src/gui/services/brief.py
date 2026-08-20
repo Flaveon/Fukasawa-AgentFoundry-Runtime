@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 ConcordiaPax LLC
-"""GUI service layer — the two tasks the desktop app exists to do.
+"""Brief services — validating a workflow brief and building its packages.
+
+The desktop's two original tasks. Unchanged by the workflow-lifecycle work;
+moved into the services package when it grew past one file (ADR-007's
+consequence note), which is why this reads as a self-contained pair.
 
 This module is deliberately Tk-free. It wraps the existing runtime
 (validator, generator) into plain, structured results the view can render,
