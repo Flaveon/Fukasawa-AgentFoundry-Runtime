@@ -150,10 +150,39 @@ Both deliberate, both minimal, both flagged rather than buried.
 
 ## New risks or defects
 
-- Nothing new for the register.
+- **A FROZEN file was modified, and nobody recorded it.** `src/runtime/state_machine.py`
+  was refactored by `google-labs-jules[bot]` on 2026-08-05 (commit `3d3bea4`,
+  128 lines changed), merged to `main` via PR, and inherited by this branch.
+  Directive §3 lists that file as FROZEN and §7 makes touching it a
+  stop-and-escalate condition. No handoff, note, or register entry mentions it.
+
+  Nothing observably broke — 559 tests pass, including the golden
+  `graph_fingerprint` tripwire — but "nothing broke" is the wrong measure for a
+  freeze. The freeze existed so that nobody would have to re-derive whether the
+  proven runtime's behavior had changed; that guarantee has been spent and does
+  not come back. **A human should decide** whether to accept the refactor
+  explicitly, revert it, or re-verify the runtime against it.
+
+  Same agent also rewrote `src/runtime/ledger.py` (241 lines, `301ca83` —
+  phase 3's file), `src/foundry/validator.py` (`693328b`), and
+  `src/governance/maturity.py` (`0f2d6b4`).
+
+- **The ownership rules are unenforced.** Directive §3 and `file-change-map.md`
+  are instructions, and the one non-Claude agent working this repo does not
+  follow them. Branch protection on the FROZEN paths would bind where prose does
+  not — cheap, and a natural phase 9 packaging item.
+
+- **Jules commits are a code/doc drift source.** It changes code without
+  changing the contracts that describe the code, which is the exact drift
+  `docs/source-to-contract-map.md` exists to detect. When code and a doc
+  disagree in this repo, check `git log --author=jules -- <file>` before
+  concluding the doc is stale.
 - **For phase 8:** the pilot walkthrough should show both surfaces reaching the
   same result — `TestParity` already asserts it, and a reader seeing it once is
-  worth more than the assertion.
+  worth more than the assertion. Phase 8 also runs Jules verification: it will
+  meet a `tests/test_gui.py` whose patch target this phase changed, and a
+  `src/gui/services.py` that is now a package. Both are anticipated, neither is
+  a regression.
 - **For phase 9:** `customtkinter` stays an optional dependency and the desktop
   must remain optional forever (ADR-007 §5). `TestImportLaw` and the plain-pytest
   run (544 passed with no display) are the evidence that still holds.
