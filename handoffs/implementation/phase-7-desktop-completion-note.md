@@ -7,9 +7,15 @@
 
 ## Scope completed
 
-- **`src/gui/services/`** — the twelve §16 service functions, split into a
-  package (`brief.py` unchanged, `workflow.py` new) per ADR-007's consequence
-  note. Import surface unchanged.
+> **Phase 7 is partial.** It delivers 8 of §16's 15 items with 5 partial and 2
+> not started — see "§16 compliance" below. Gate F is not met. The phase was
+> built against a reconstruction of §16 because the master handoff was untracked
+> and therefore invisible from a worktree; it is now committed.
+
+- **`src/gui/services/`** — twelve service functions, split into a package
+  (`brief.py` unchanged, `workflow.py` new) per ADR-007's consequence note.
+  Import surface unchanged. These cover the §16 capabilities that are met, and
+  the services behind items 6 and 9 exist but have no UI.
 - **`src/gui/workflow_views.py`** — the Workflow tab: stage column, detail
   pane, worker threads.
 - **`src/gui/app.py`** — mounts the new tab. The two existing tabs are
@@ -122,28 +128,83 @@ Both deliberate, both minimal, both flagged rather than buried.
 
 ## Assumptions
 
-- **§16's fifteen items are a reconstruction.** They are written down nowhere in
-  this repository, and no master handoff exists on disk. Built from
-  `file-change-map`'s twelve-function list plus ADR-007's threading,
-  no-second-validator, and parity requirements — the same method used for §17 in
-  phase 6, and it should be checked against the real spec if it ever surfaces.
 - Desktop actions are attributed to `desktop-operator`. Self-attested, like every
   actor name here.
 
+> **Superseded, 2026-08-20.** This section previously assumed §16's fifteen items
+> were unknowable and recorded a reconstruction built from `file-change-map` and
+> ADR-007. The master handoff was then located — untracked in the main checkout,
+> now committed as `handoffs/handoff-master.md` — and §16 read directly. The
+> reconstruction was wrong in ways the section below records. It is replaced
+> rather than deleted because *how confident it read while being wrong* is the
+> lesson.
+
+## §16 compliance — measured against the real specification
+
+**Phase 7 does not complete §16.** Scored against `handoffs/handoff-master.md`
+§16 after the document was recovered:
+
+| # | Required capability | Status |
+|---|---|---|
+| 1 | Workflow project list | met |
+| 2 | Create/import observed workflow | met |
+| 3 | **Guided step editor** | **not built** |
+| 4 | Findings view grouped by severity and workflow location | partial — flat log, sorted not grouped |
+| 5 | Finding detail and remediation | met |
+| 6 | Accept non-blocking risk with rationale | partial — service only, no UI |
+| 7 | Promote to Accountable Workflow | met |
+| 8 | Cooperation assessment table | partial — text lines, not a table |
+| 9 | Executor override with required rationale | partial — service only, no UI |
+| 10 | Cooperative workflow preview | met |
+| 11 | Export to Workflow Design Brief / Agent Foundry | met |
+| 12 | Save, reload, and resume | met |
+| 13 | Visible maturity state | met |
+| 14 | **Visible validation/rule version** | **not built** |
+| 15 | No UI-thread blocking during long operations | met |
+
+**8 met, 5 partial, 2 never started.**
+
+Two corrections worth carrying forward:
+
+* The reconstruction guessed items 13 and 14 were "no second validator" and
+  "CLI/desktop parity". Both are wrong — they are the **constraint sentence
+  following the list** ("The desktop app is a client of the runtime services. It
+  must not implement a second validator."), not numbered capabilities. The real
+  13 and 14 are visible maturity state and visible rule version.
+* Items 6 and 9 were recorded below as *deliberate* omissions, on the reasoning
+  that a half-built override without a mandatory reason field is worse than
+  none. That reasoning still holds; the premise that they were optional does
+  not. They are required capabilities, and the services behind both already
+  exist and are tested — the remaining work is UI only.
+
+Gate F ("CustomTkinter lifecycle works") is therefore **not met by this phase**.
+Its third criterion, "same authoritative services used", is met and asserted by
+`TestParity`.
+
 ## Known limitations
 
-- **No override UI.** `override_executor` exists as a service and is tested, but
-  the tab offers no widget for it — an override needs a step picker, a class
-  picker, and a mandatory reason field, and a half-built version that let
-  someone skip the reason would be worse than none. The CLI has it.
-- **No accept-risk UI**, for the same reason: `accept_finding` is a tested
-  service with no widget. Findings render with their remediation; accepting one
-  is currently a CLI action.
+*Items 3, 4, 6, 8, 9 and 14 are §16 requirements, not discretionary scope — see
+the table above. They are listed here with the reasoning that produced them.*
+
+- **No override UI** (§16.9). `override_executor` exists as a service and is
+  tested, but the tab offers no widget — an override needs a step picker, a class
+  picker, and a mandatory reason field, and a half-built version that let someone
+  skip the reason would be worse than none. The CLI has it.
+- **No accept-risk UI** (§16.6), for the same reason: `accept_finding` is a
+  tested service with no widget. Findings render with their remediation;
+  accepting one is currently a CLI action.
+- **No guided step editor** (§16.3). Not started, and not previously identified
+  as required. The largest single gap: it needs per-field editing of
+  `WorkflowStep` with the rule guidance that makes it *guided* rather than a form.
+- **No visible rule-set version** (§16.14). `ValidationResult` does not carry
+  `rule_set_version` and nothing renders it. The CLI shows it ("rule set v1").
+  Small: one field through the service and one label.
+- **The results pane is a text log**, not a table (§16.4, §16.8). Findings are
+  sorted blocking-first then by rule id, not grouped by severity and location;
+  assessments render as lines rather than a table.
 - **`--paths-file` has no desktop equivalent**, so the Workflow tab's export
   does not generate agent packages. The existing Build Workflow tab does that
-  from an exported brief.
-- **The results pane is a text log**, not a table. Adequate and honest; a real
-  findings table with per-row actions is the natural next increment.
+  from an exported brief. Not a §16 item.
 - **The stage column shows six stages**, matching `workflow status`. The maturity
   ladder has eight values; `DEPLOYED` and `VALIDATED` have no desktop surface,
   consistent with the release enforcing gates only through `RUNTIME_READY`.
@@ -172,6 +233,15 @@ Both deliberate, both minimal, both flagged rather than buried.
   follow them. Branch protection on the FROZEN paths would bind where prose does
   not — cheap, and a natural phase 9 packaging item.
 
+- **Phases 1–6 were built against derived documents too, and have not been
+  re-checked.** The master handoff was untracked for all of them. Phase 7's
+  reconstruction of §16 scored 8 of 15; phase 6's of §17 fared better only
+  because `file-change-map.md` happened to list the commands verbatim. §5
+  (domain objects), §7 (the 16 validator rules), §8 (promotion state machine),
+  §15 (test strategy) and §19 (gates A–E) governed the earlier phases and none
+  has been read against what was built. A drift in §7 or §8 would reach further
+  back than the desktop.
+
 - **Jules commits are a code/doc drift source.** It changes code without
   changing the contracts that describe the code, which is the exact drift
   `docs/source-to-contract-map.md` exists to detect. When code and a doc
@@ -191,15 +261,28 @@ Both deliberate, both minimal, both flagged rather than buried.
 
 ## Recommended next action
 
-Phase 8 (hardening + pilot README/walkthrough): `docs/pilot-walkthrough.md`,
+**Not phase 8.** Two things come first, in this order:
+
+1. **A review of phases 1–7 against `handoffs/handoff-master.md`**, now that it
+   is readable. Operator-directed, pending. §16 was wrong by a third; §5, §7,
+   §8, §15 and §19 are unverified.
+2. **Finish §16** — items 3 and 14 from nothing, UI for 6 and 9 over existing
+   services, and 4 and 8 from text to grouped/tabular. Gate F depends on it.
+
+Phase 8 (hardening + pilot README/walkthrough) follows: `docs/pilot-walkthrough.md`,
 `docs/lifecycle-overview.md`, the pilot README, Jules verification, and closing
-the Gate C false-positive review. No new capability.
+the Gate C false-positive review.
 
 ## Exact starting point for next agent
 
-Branch `claude/phase-7-desktop` @ head (merge to
-`feature/human-cooperative-workflow-runtime` first).
-Read: `docs/desktop-guide.md` → `docs/cli-guide.md` → this note → directive §8.
+Branch `claude/phase-7-desktop` @ head. **Do not merge to
+`feature/human-cooperative-workflow-runtime` yet** — the review above comes
+first, and phase 7 is knowingly partial against §16.
+
+Read **`handoffs/handoff-master.md` §16 first** — it is the authority, it is now
+tracked, and every derived document (`file-change-map.md`, ADR-007, the
+directive) is a lossy summary of it. Then `docs/desktop-guide.md` → this note.
+
 Run the suite **both ways** — `pytest -q` and `xvfb-run -a pytest -q` — because
 the second runs 15 tests the first skips, and one of this phase's two defects
 only ever appeared under xvfb.
