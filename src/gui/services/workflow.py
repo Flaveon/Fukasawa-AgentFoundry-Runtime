@@ -53,16 +53,34 @@ from src.governance.workflow_promotion import (
     promote,
     reattach_acceptances,
 )
-from src.governance.workflow_rules import validate_workflow
+from src.governance.workflow_rules import RULES, validate_workflow
 from src.runtime.ledger import DEFAULT_DB_PATH, RunLedger
 from src.schemas.cooperation import ExecutorClass, SafetyFloor
-from src.schemas.findings import ValidationReport
-from src.schemas.human_workflow import HumanWorkflowDraft
+from src.schemas.findings import RULE_SET_VERSION, ValidationReport
+from src.schemas.human_workflow import (
+    SCHEMA_VERSION,
+    DataSensitivity,
+    Determinism,
+    HumanWorkflowDraft,
+    JudgmentLoad,
+    Repeatability,
+    Reversibility,
+    RiskLevel,
+)
 from src.schemas.templates import DRAFT_SKELETON
 
 #: Lifecycle stages, in the order the operator moves through them. The view
 #: renders this list; `lifecycle_status` reports one entry per stage.
 STAGES = ("draft", "accountable", "assessed", "cooperative", "exported", "runs")
+
+#: Every executor class an override may choose, least autonomous first, read
+#: from the contract rather than typed out. §6 of the master handoff says the
+#: UI *may* emphasise a subset; it does not say the schema may be filtered by
+#: the view, and a picker missing NOT_READY_FOR_AUTOMATION would hide the
+#: honest answer. Ordering by autonomy means the safe direction is up the list.
+EXECUTOR_CLASSES = tuple(
+    e.value for e in sorted(ExecutorClass, key=lambda e: e.autonomy_rank)
+)
 
 
 # ------------------------------------------------------------------- results
@@ -83,7 +101,14 @@ class Outcome:
 
 @dataclass
 class FindingView:
-    """One finding, flattened for display."""
+    """One finding, flattened for display.
+
+    Carries its grouping keys — ``severity`` and ``location`` — as separate
+    fields rather than only the rendered ``where`` string, because §16.4 asks
+    for findings *grouped by severity and workflow location* and a view that
+    had to parse "publish-post.actor" back apart to group them would be
+    re-deriving something the service already knew.
+    """
 
     finding_id: str
     rule_id: str
@@ -92,6 +117,12 @@ class FindingView:
     where: str
     message: str
     remediation: str
+    severity: str = ""
+    finding_type: str = ""
+    #: Step id, gate id, or "" for a workflow-level finding — the grouping key.
+    location: str = ""
+    #: Field at fault, e.g. "decision_authority". Empty when not field-specific.
+    field_name: str = ""
 
 
 @dataclass
@@ -102,6 +133,11 @@ class ValidationResult(Outcome):
     promotion_ready: bool = False
     findings: list[FindingView] = field(default_factory=list)
     unresolved_blocking: int = 0
+    #: §16.14 — which rule logic produced these findings, and which contract
+    #: shape they were written against. Rendered, not merely stored: an
+    #: operator comparing two reports needs to know whether the rules moved.
+    rule_set_version: str = RULE_SET_VERSION
+    schema_version: str = SCHEMA_VERSION
 
 
 @dataclass
@@ -121,6 +157,12 @@ class LifecycleResult(Outcome):
     stages: list[StageView] = field(default_factory=list)
     steps_not_ready: list[str] = field(default_factory=list)
     steps_overridden: list[str] = field(default_factory=list)
+    #: §16.13/§16.14 — the maturity the ledger records, and the versions the
+    #: decisions were made under. Carried on the one result the view reads on
+    #: every refresh, so the status bar never has to run a second query.
+    maturity: str = ""
+    rule_set_version: str = RULE_SET_VERSION
+    schema_version: str = SCHEMA_VERSION
 
 
 @dataclass
@@ -260,9 +302,30 @@ def _load_draft(path: str | Path) -> tuple[HumanWorkflowDraft | None, str]:
         return None, f"Draft does not match the contract — {problems}"
 
 
+#: Severity order for display: worst first. Findings are grouped by severity
+#: (§16.4), and a group order that put INFO above ERROR would bury the thing
+#: the operator opened the screen to find.
+_SEVERITY_ORDER = {"ERROR": 0, "WARNING": 1, "INFO": 2}
+
+
 def _finding_views(report: ValidationReport) -> list[FindingView]:
-    """Flatten findings for display, blocking first then by rule id."""
-    ordered = sorted(report.findings, key=lambda f: (not f.blocking, f.rule.rule_id))
+    """Flatten findings for display, grouped by severity then location.
+
+    The order is the grouping: severity first (worst first), then workflow
+    location, then rule id. Blocking-ness rides along inside each severity
+    group rather than sorting above it, because §16.4 asks for severity groups
+    and every ERROR in this rule set is blocking anyway but for the two
+    heuristics — which are WARNING, and therefore already below.
+    """
+    ordered = sorted(
+        report.findings,
+        key=lambda f: (
+            _SEVERITY_ORDER.get(f.severity.value, 99),
+            not f.blocking,
+            f.location.step_id or f.location.gate_id,
+            f.rule.rule_id,
+        ),
+    )
     views = []
     for f in ordered:
         where = f.location.step_id or f.location.gate_id or "(workflow)"
@@ -277,6 +340,10 @@ def _finding_views(report: ValidationReport) -> list[FindingView]:
                 where=where,
                 message=f.message,
                 remediation=f.remediation,
+                severity=f.severity.value,
+                finding_type=f.finding_type.value,
+                location=f.location.step_id or f.location.gate_id,
+                field_name=f.location.field,
             )
         )
     return views
@@ -420,6 +487,8 @@ def validate_draft(
         promotion_ready=report.promotion_ready,
         findings=_finding_views(report),
         unresolved_blocking=unresolved,
+        rule_set_version=report.rule_set_version,
+        schema_version=report.schema_version,
     )
 
 
@@ -926,4 +995,13 @@ def lifecycle_status(
         stages=stages,
         steps_not_ready=not_ready,
         steps_overridden=overridden,
+        # The furthest maturity the ledger will vouch for: the promoted
+        # artifact if there is one, otherwise the draft's own. Reading it from
+        # the stored artifacts rather than the file means a maturity typed into
+        # the YAML by hand cannot make the status bar lie.
+        maturity=(
+            accountable.maturity.value
+            if accountable is not None
+            else (draft.maturity.value if draft is not None else "")
+        ),
     )

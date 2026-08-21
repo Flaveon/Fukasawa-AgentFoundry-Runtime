@@ -58,10 +58,51 @@ unfinished process is the first stage, not a failure of it.
 *Save to ledger* stores the draft. **Saving never depends on the draft being
 complete.** *Reload* reads it back, and *List all* shows every stored workflow.
 
+*Edit steps* opens the **guided step editor**. Pick a step from the dropdown and
+every field of it becomes a box, in the order an observer naturally answers
+them: what is it, who does it, what does it need, what does it produce, where
+does it go, what can go wrong, and what is it like.
+
+What makes it *guided*: beside each box is the remediation sentence of the rule
+that fires on that box, and the fields a **blocking** rule governs are tinted.
+The advice is read from the rule set itself, so it cannot drift from the
+findings you will get. The findings against **this step only** sit above the
+form, so you see what you came to fix before you start typing.
+
+Three things worth knowing:
+
+* **`step_id` is not editable here.** Other steps, exception paths and gates
+  point at it by name, and renaming it from a form would break those references
+  silently. Change it in the YAML, where you can see what else moves.
+* **Lists are one entry per line**, and objects use `|` between their columns —
+  the column names are printed above the box. A line with only some columns
+  filled in is accepted; the validator will tell you what is still missing.
+* **Saving rewrites the YAML, and comments are not preserved.** The previous
+  file is copied to `<name>.yaml.bak` first. If your draft's comments matter to
+  you, edit that file directly instead.
+
+The six *characteristics* at the bottom — judgment load, repeatability,
+determinism, risk, reversibility, data sensitivity — are dropdowns rather than
+free text because they decide who is allowed to execute the step. Recording that
+a step is irreversible and high-risk is what pulls it back from automation at
+stage 3.
+
 ### Stage 2 — Accountable
 
-*Validate* checks the draft against the 16 rules and lists every finding with
-its remediation. Blocking findings block promotion and nothing else.
+*Validate* checks the draft against the 16 rules and shows every finding in a
+table **grouped by severity, then by where in the workflow it is**, with the
+count of blocking findings on each group's heading. Blocking findings block
+promotion and nothing else.
+
+*Accept risk…* records a conscious decision to live with an **advisory**
+finding. Click the finding first, then the button. The dialog asks for your name
+and a reason and **will not enable Confirm until both are filled in** — an
+acceptance without a reason is not a decision. Accepting unlocks nothing:
+advisory findings never blocked promotion. What changes is that the reason is on
+the record.
+
+A blocking finding cannot be accepted, and the button says so rather than
+opening a dialog that would refuse at the end.
 
 *Promote* advances one maturity step — run it twice to reach `ACCOUNTABLE`.
 Content comes from your file and progress from the ledger, so editing the file
@@ -70,8 +111,20 @@ between promotions is picked up, and a step already taken is not repeated.
 ### Stage 3 — Assessed
 
 *Assess cooperation* recommends an executor for every step from the published
-decision table. No model is involved: the same workflow always yields the same
-recommendations, so you can disagree with one before you run it.
+decision table, and shows them as a table: step, executor, supervision,
+readiness, floor, and the reason. No model is involved — the same workflow
+always yields the same recommendations, so you can disagree with one before you
+run it.
+
+The table is in two groups, and the division is the one that matters: steps with
+**no safety floor**, which you may override in either direction, and steps
+**with** one, which may only move toward human control.
+
+*Override executor…* replaces one step's recommendation with your judgment.
+Click the step first. The dialog lists all seven executor classes ordered by
+autonomy, least first, and requires a name and a reason before Confirm enables.
+For a floored step it says up front which floor applies and which direction is
+refused.
 
 Re-assessing **carries your recorded overrides forward**. A safety floor —
 irreversible effect, sensitive data, no named decision authority — can only be
@@ -107,6 +160,19 @@ a second way to execute.
 **How many steps stayed with a person**, including when the answer is zero.
 Reading "3 packages generated" and nothing else teaches you nothing about the
 five steps still on your desk.
+
+**Which maturity the ledger records, and under which versions.** The line under
+the detail pane always reads:
+
+```
+maturity ACCOUNTABLE   ·   rule set v1   ·   schema v1
+```
+
+The maturity comes from the stored artifacts rather than from your file, so a
+maturity typed into the YAML by hand cannot make it say something untrue. The
+rule set version is what produced the findings you are looking at; two reports
+that disagree may be disagreeing because the rules moved, and this is where you
+find out.
 
 ## Refusals are not errors
 

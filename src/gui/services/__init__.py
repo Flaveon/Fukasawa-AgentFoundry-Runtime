@@ -14,6 +14,7 @@ it did when this was one file, so no view needed editing for the split.
 
 * `brief` — validate a workflow brief, build its agent packages (the original two)
 * `workflow` — the capture → export lifecycle
+* `step_editor` — per-field step editing, with guidance read from the rules
 
 Nothing here imports customtkinter, tkinter, or prints. If it ever does, the
 import-law test in `tests/test_gui_workflow.py` fails.
@@ -27,7 +28,18 @@ from src.gui.services.brief import (
     build_workflow,
     validate_brief_file,
 )
+from src.gui.services.step_editor import (
+    CHARACTERISTIC_FIELDS,
+    SEPARATOR,
+    FieldGuidance,
+    StepResult,
+    StepView,
+    read_step,
+    step_field_guidance,
+    write_step,
+)
 from src.gui.services.workflow import (
+    EXECUTOR_CLASSES,
     STAGES,
     AgentView,
     AssessmentResult,
@@ -66,6 +78,7 @@ __all__ = [
     "build_workflow",
     "validate_brief_file",
     # lifecycle results
+    "EXECUTOR_CLASSES",
     "STAGES",
     "AgentView",
     "AssessmentResult",
@@ -81,6 +94,15 @@ __all__ = [
     "StageView",
     "ValidationResult",
     "WorkflowListing",
+    # step editor
+    "CHARACTERISTIC_FIELDS",
+    "SEPARATOR",
+    "FieldGuidance",
+    "StepResult",
+    "StepView",
+    "read_step",
+    "step_field_guidance",
+    "write_step",
     # lifecycle services
     "accept_finding",
     "assess_cooperation",

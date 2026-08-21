@@ -32,6 +32,9 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 from src.gui import services
+from src.gui.dialogs import ReasonDialog
+from src.gui.step_editor_view import StepEditor
+from src.gui.tables import Group, Row, Table
 
 #: How often the UI thread checks for finished worker results, in milliseconds.
 #: Short enough to feel immediate, long enough not to spin.
@@ -104,10 +107,75 @@ class WorkflowTab(ctk.CTkFrame):
         self.actions = ctk.CTkFrame(right, fg_color="transparent")
         self.actions.pack(fill="x")
 
-        self.results = ctk.CTkTextbox(right, wrap="word", font=ctk.CTkFont(size=13))
-        self.results.pack(fill="both", expand=True, pady=(10, 0))
+        # The summary lives outside the swappable region, because it is the
+        # sentence that says what just happened and it has to stay readable
+        # whichever pane is forward.
+        self.summary_label = ctk.CTkLabel(
+            right, text="", anchor="w", justify="left", wraplength=680
+        )
+        self.summary_label.pack(fill="x", pady=(8, 0))
+
+        # One region, four possible occupants. A findings table, an assessment
+        # table and the step editor are all "what you look at after an action",
+        # and giving each its own permanent strip would leave three of them
+        # empty at any moment.
+        self.pane = ctk.CTkFrame(right, fg_color="transparent")
+        self.pane.pack(fill="both", expand=True, pady=(10, 0))
+
+        self.results = ctk.CTkTextbox(self.pane, wrap="word", font=ctk.CTkFont(size=13))
+        self.findings_table = Table(
+            self.pane,
+            columns=["Rule", "Where", "Field", "What is wrong / what to do"],
+            weights=[0, 0, 0, 1],
+        )
+        self.assessment_table = Table(
+            self.pane,
+            columns=["Step", "Executor", "Supervision", "Readiness", "Floor", "Why"],
+            weights=[0, 0, 0, 0, 0, 1],
+        )
+        self.editor = StepEditor(self.pane, on_saved=lambda _r: self.refresh_stages())
+        self.editor.bind_source(self._draft, self._db)
+        self._panes = {
+            "results": self.results,
+            "findings": self.findings_table,
+            "assessments": self.assessment_table,
+            "editor": self.editor,
+        }
+        self.shown_pane = ""
+        self._show_pane("results")
+
+        # §16.13 and §16.14: the maturity the ledger records, and the rule and
+        # schema versions the decisions were made under. Always on screen —
+        # "which rules produced this?" is not a question worth a menu.
+        self.version_bar = ctk.CTkLabel(
+            right, text="", anchor="w", text_color=MUTED, font=ctk.CTkFont(size=11)
+        )
+        self.version_bar.pack(fill="x", pady=(6, 0))
+        self._set_versions(services.LifecycleResult(ok=True, summary=""))
 
         self._render_actions()
+
+    def _show_pane(self, name: str) -> None:
+        """Bring one occupant of the detail region forward."""
+        if name == self.shown_pane:
+            return
+        for key, widget in self._panes.items():
+            if key == name:
+                widget.pack(fill="both", expand=True)
+            else:
+                widget.pack_forget()
+        self.shown_pane = name
+
+    def _set_versions(self, result) -> None:
+        """Render the maturity and version line."""
+        maturity = getattr(result, "maturity", "") or "—"
+        self.version_bar.configure(
+            text=(
+                f"maturity {maturity}   ·   rule set v"
+                f"{getattr(result, 'rule_set_version', '?')}"
+                f"   ·   schema v{getattr(result, 'schema_version', '?')}"
+            )
+        )
 
     def _labelled(self, parent, label: str, placeholder: str) -> ctk.CTkEntry:
         """A labelled single-line entry."""
@@ -173,26 +241,101 @@ class WorkflowTab(ctk.CTkFrame):
         if getattr(result, "refusal", ""):
             lines.append("")
             lines.append(f"Refused: {result.refusal}")
-        self._write("\n".join(lines))
+        text = "\n".join(lines)
+        self.summary_label.configure(text=text)
+        self._write(text)
+        self._show_pane("results")
         self._render_details(result)
+        # Versions come from the lifecycle read that refresh_stages does
+        # anyway, because that is the one result carrying the *recorded*
+        # maturity. Setting them from `result` first would flash a "—" for
+        # every result type that has no maturity to report.
         self.refresh_stages()
+
+    #: Order the severity groups appear in. The service already sorts findings
+    #: this way; this is here so a group with no findings is simply absent
+    #: rather than the view inventing an order of its own.
+    _SEVERITIES = ("ERROR", "WARNING", "INFO")
+
+    def show_findings(self, findings) -> None:
+        """Render findings as a table grouped by severity, then location.
+
+        §16.4. The grouping keys come off the FindingView; the view does not
+        re-derive them from the rendered text.
+        """
+        groups = []
+        for severity in self._SEVERITIES:
+            in_severity = [f for f in findings if f.severity == severity]
+            if not in_severity:
+                continue
+            rows = [
+                Row(
+                    [
+                        f.rule_id,
+                        f.location or "(workflow)",
+                        f.field_name or "—",
+                        f"{f.message}\n→ {f.remediation}"
+                        + ("\n(accepted as residual risk)" if f.accepted else ""),
+                    ],
+                    source=f,
+                    tone="alert" if f.blocking and not f.accepted else "",
+                )
+                for f in in_severity
+            ]
+            blocking = sum(1 for f in in_severity if f.blocking and not f.accepted)
+            title = severity + (f" — {blocking} blocking promotion" if blocking else "")
+            groups.append(Group(title, rows))
+        self.findings_table.show(groups)
+        self._show_pane("findings")
+
+    def show_assessments(self, assessments) -> None:
+        """Render cooperation assessments as a table. §16.8.
+
+        Grouped by whether a safety floor applies, because that is the division
+        that governs what may be overridden — and an operator scanning for
+        "what can I still change?" is scanning for exactly that line.
+        """
+        floored = [a for a in assessments if a.floored]
+        free = [a for a in assessments if not a.floored]
+
+        def rows(items):
+            return [
+                Row(
+                    [
+                        a.step_id,
+                        a.effective_executor + ("  (overridden)" if a.overridden else ""),
+                        a.supervision_mode,
+                        a.automation_readiness,
+                        a.safety_floor,
+                        a.rationale,
+                    ],
+                    source=a,
+                    tone="alert" if a.floored else "",
+                )
+                for a in items
+            ]
+
+        groups = []
+        if free:
+            groups.append(Group("No safety floor — may be overridden freely", rows(free)))
+        if floored:
+            groups.append(
+                Group(
+                    "Safety floor applies — may only move toward human control",
+                    rows(floored),
+                )
+            )
+        self.assessment_table.show(groups)
+        self._show_pane("assessments")
 
     def _render_details(self, result) -> None:
         """Append whatever detail the specific result type carries."""
         findings = getattr(result, "findings", None) or getattr(result, "blocking", None)
         if findings:
-            self._write("", clear=False)
-            for f in findings:
-                policy = "accepted" if f.accepted else ("blocking" if f.blocking else "advisory")
-                self._write(f"  {f.rule_id}  [{policy}]  {f.where}", clear=False)
-                self._write(f"      {f.message}", clear=False)
-                self._write(f"      → {f.remediation}", clear=False)
-        for view in getattr(result, "assessments", []) or []:
-            flag = "  (overridden)" if view.overridden else ""
-            floor = "" if not view.floored else f"  floor={view.safety_floor}"
-            self._write(
-                f"  {view.step_id:22} {view.effective_executor}{floor}{flag}", clear=False
-            )
+            self.show_findings(findings)
+        assessments = getattr(result, "assessments", None)
+        if assessments:
+            self.show_assessments(assessments)
         for view in getattr(result, "assignments", []) or []:
             self._write(
                 f"  {view.step_id:22} {view.executor_class:32} "
@@ -232,6 +375,7 @@ class WorkflowTab(ctk.CTkFrame):
                 text="●" if present else "·",
                 text_color=PRIMARY if present else MUTED,
             )
+        self._set_versions(result)
         return result
 
     def select_stage(self, stage: str) -> None:
@@ -273,15 +417,20 @@ class WorkflowTab(ctk.CTkFrame):
         return {
             "draft": [
                 ("New draft", self.on_create),
+                ("Edit steps", self.on_edit_steps),
                 ("Save to ledger", self.on_import),
                 ("Reload", self.on_reload),
                 ("List all", self.on_list),
             ],
             "accountable": [
                 ("Validate", self.on_validate),
+                ("Accept risk…", self.on_accept_risk),
                 ("Promote", self.on_promote),
             ],
-            "assessed": [("Assess cooperation", self.on_assess)],
+            "assessed": [
+                ("Assess cooperation", self.on_assess),
+                ("Override executor…", self.on_override),
+            ],
             "cooperative": [
                 ("Build assignments", self.on_build),
                 ("Build + approve", self.on_build_approved),
@@ -446,6 +595,20 @@ class WorkflowTab(ctk.CTkFrame):
         """Read the lifecycle stages."""
         return services.lifecycle_status(self._workflow_id(), self._db())
 
+    def run_accept(self, finding_id: str, actor: str, rationale: str) -> services.Outcome:
+        """Record a conscious acceptance of one advisory finding."""
+        return services.accept_finding(
+            self._draft(), finding_id, actor, rationale, self._db()
+        )
+
+    def run_override(
+        self, step_id: str, executor_class: str, actor: str, rationale: str
+    ) -> services.AssessmentResult:
+        """Replace one step's recommended executor with a human's judgment."""
+        return services.override_executor(
+            self._workflow_id(), step_id, executor_class, actor, rationale, self._db()
+        )
+
     def _actor(self) -> str:
         """Who is acting. Self-attested — this runtime has no authentication."""
         return "desktop-operator"
@@ -497,6 +660,110 @@ class WorkflowTab(ctk.CTkFrame):
     def on_status(self) -> None:
         """Refresh the lifecycle view."""
         self._in_worker(self.run_status, self._show)
+
+    def on_edit_steps(self) -> None:
+        """Open the guided step editor on the current draft. §16.3.
+
+        Runs on the UI thread rather than in a worker: reading one step of one
+        YAML file is not long work, and the editor's first act is to build
+        widgets, which only the UI thread may do.
+        """
+        self._show_pane("editor")
+        result = self.editor.open_step("")
+        self.summary_label.configure(
+            text=result.summary + (f"\nRefused: {result.refusal}" if result.refusal else "")
+        )
+
+    # ------------------------------------------------- the two reason dialogs
+    #
+    # Both open a modal, wait for it, then run the service in a worker. The
+    # dialog is UI-thread work by necessity; the service call that follows is
+    # not, and the split keeps the window responsive while the ledger is
+    # written.
+
+    def on_accept_risk(self) -> None:
+        """Accept the selected advisory finding, with a reason. §16.6."""
+        finding = self.findings_table.selected_source()
+        if finding is None:
+            self._write(
+                "Validate first, then click the finding you want to accept.\n"
+                "Only advisory findings may be accepted — a blocking finding is "
+                "fixed or the workflow does not advance."
+            )
+            self._show_pane("results")
+            return
+        if finding.blocking:
+            self._write(
+                f"{finding.rule_id} is blocking. Blocking findings cannot be "
+                f"accepted; they are fixed. {finding.remediation}"
+            )
+            self._show_pane("results")
+            return
+
+        values = ReasonDialog(
+            self,
+            title="Accept a residual risk",
+            subject=f"{finding.rule_id} — {finding.where}",
+            detail=finding.message,
+            actor=self._actor(),
+            confirm_text="Accept risk",
+            warning=(
+                "Accepting records your reason. It does not change whether this "
+                "workflow may be promoted — advisory findings never blocked it."
+            ),
+        ).wait()
+        if values is None:
+            return
+        self._in_worker(
+            lambda: self.run_accept(
+                finding.finding_id, values["actor"], values["rationale"]
+            ),
+            self._after_accept,
+        )
+
+    def _after_accept(self, result) -> None:
+        """Show the acceptance, then re-validate so the table reflects it."""
+        self._show(result)
+        if result.ok:
+            self._show(self.run_validate())
+
+    def on_override(self) -> None:
+        """Override the selected step's executor, with a reason. §16.9."""
+        assessment = self.assessment_table.selected_source()
+        if assessment is None:
+            self._write("Assess cooperation first, then click the step to override.")
+            self._show_pane("results")
+            return
+
+        warning = ""
+        if assessment.floored:
+            warning = (
+                f"A {assessment.safety_floor} safety floor applies to this step. "
+                f"You may move it toward human control; a move toward greater "
+                f"autonomy will be refused, and the refusal will say so."
+            )
+        values = ReasonDialog(
+            self,
+            title="Override the recommended executor",
+            subject=f"{assessment.step_id} — currently {assessment.effective_executor}",
+            detail=assessment.rationale,
+            actor=self._actor(),
+            choices=list(services.EXECUTOR_CLASSES),
+            choice_label="Executor class",
+            confirm_text="Override",
+            warning=warning,
+        ).wait()
+        if values is None:
+            return
+        self._in_worker(
+            lambda: self.run_override(
+                assessment.step_id,
+                values["choice"],
+                values["actor"],
+                values["rationale"],
+            ),
+            self._show,
+        )
 
     # ------------------------------------------------------------ test hooks
 
