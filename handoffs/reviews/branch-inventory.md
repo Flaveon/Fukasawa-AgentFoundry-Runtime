@@ -3,15 +3,28 @@
 **Date:** 2026-08-21. Every remote branch, checked against `origin/main` and
 against the release branch `feature/human-cooperative-workflow-runtime`.
 
+> **Executed 2026-08-21.** Phase 7b merged into `claude/phase-7-desktop`,
+> that fast-forwarded into `feature/human-cooperative-workflow-runtime`
+> (`7d9a9c4` → `913aaef`) and pushed to origin, then the nine branches below
+> were deleted. Eleven remote branches are now two: `main` and the feature
+> branch. The verification that preceded each deletion is recorded under
+> "What was checked before deleting".
+
 ## The live branches
 
 | Branch | Head | Ahead of main | Recommendation |
 |---|---|---|---|
-| `main` | `9273374` | — | Keep. Does **not** contain the release work. |
-| `feature/human-cooperative-workflow-runtime` | `7d9a9c4` | 56 | Keep — the release integration branch. Phases 1–6 merged. |
-| `claude/phase-6-cli` | `7d9a9c4` | 56 | **Delete.** Identical commit to the feature branch; phase 6 is merged and closed. |
-| `claude/phase-7-desktop` | `6b33657` | 61 | Keep until this branch merges into it. Local only, never pushed. |
-| `claude/handoff-master-verification-37e5d2` | this work | 61 + | Merge into `claude/phase-7-desktop`, then that into the feature branch. |
+| `origin/main` | `d9ed8db` | — | Keep. Does **not** contain the release work. |
+| `feature/human-cooperative-workflow-runtime` | `913aaef` | 61 | Keep — the release integration branch. Phases 1–7b merged and pushed. |
+| `claude/phase-6-cli` | `7d9a9c4` | 56 | **Deleted**, remote and local, with its worktree. Ancestor of the feature branch; phase 6 merged and closed. |
+| `claude/phase-7-desktop` | `913aaef` | 61 | Local only, never pushed. Now an ancestor of the feature branch and deletable; kept as a live worktree. |
+| `claude/handoff-master-verification-37e5d2` | `913aaef` | 61 | Merged. Same — deletable, kept as a live worktree. |
+
+**Note on the local `main`:** it sits at `9273374`, **30 commits behind
+`origin/main` (`d9ed8db`)**. An earlier draft of this table quoted that stale
+SHA as origin's. It also makes `git branch -d` misjudge merged-ness, since `-d`
+compares against the checked-out branch — check `merge-base --is-ancestor`
+against the branch that actually carries the work instead of reaching for `-D`.
 
 ## Fully superseded — safe to delete
 
@@ -62,9 +75,39 @@ is the largest and the one most worth reading next.
 
 Delete the branches; keep the review debt on the list.
 
+## What was checked before deleting
+
+Not "0 ahead of main" — that test is wrong for a branch whose content was
+rebased, and it would have kept `feature/smevals-integration` forever. What was
+actually verified, per branch:
+
+```
+git rev-list --count origin/<branch> --not origin/main origin/feature/...
+```
+
+Seven branches returned **0** — every commit reachable from another surviving
+ref. Two did not, and each was cleared by tree diff instead:
+
+* **`feature/smevals-integration`** (4 unreachable commits). Its content is
+  carried under different hashes. The tree diff against the feature branch is
+  22,903 deletions and 52 insertions, and **every one of those insertions is a
+  regression**: a backlog item marked incomplete that has since been done, an
+  older docstring, and `@patch("src.gui.services.generate_packages")` — a patch
+  target that has been broken since services became a package.
+* **`jules-14199667656236827410-ac71b3dc`** (1 unreachable commit, a merge of
+  `main` into itself). Its only unique content is `pr_description.md`, a stray
+  file **deliberately removed** in `344e4f0`, plus older copies of
+  `ledger.py` and `state_machine.py`.
+
+And one deletion had a real precondition rather than a formality:
+`release/v1-human-runtime` is only safe to delete if the release it points at
+survives. Verified: the `v0.1.0` tag exists on origin
+(`refs/tags/v0.1.0` → `9d49d56`) and that commit is an ancestor of
+`origin/main`.
+
 ## Recommendations
 
-1. **Delete now:** `claude/phase-6-cli`, `claude/resume-from-handoff-gx3at8`,
+1. **Delete now:** *(done — see the note at the top)* `claude/phase-6-cli`, `claude/resume-from-handoff-gx3at8`,
    `release/v1-human-runtime`, `feature/smevals-integration`, and the four Jules
    branches. Nine branches down to three plus the working one.
 2. **Do not delete `main`'s divergence from the feature branch by merging early.**
@@ -79,12 +122,12 @@ Delete the branches; keep the review debt on the list.
    what guarantee did the old shape provide locally that the new shape moved
    somewhere else?
 
-## Suggested commands
+## What remains open
 
-```bash
-git push origin --delete claude/phase-6-cli claude/resume-from-handoff-gx3at8 release/v1-human-runtime feature/smevals-integration
-```
+Items 3 and 4 above are the ones that outlive this cleanup: **protect the
+FROZEN paths mechanically**, and **review the remaining three Jules commits** —
+`ledger.py` (241 lines) first. Deleting the branches removed the clutter, not
+the review debt.
 
-```bash
-git push origin --delete jules-14199667656236827410-ac71b3dc jules-10749710553318904718-2cfb5225 fix/unused-import-app-7512446294262378718 fix/test-app-entry-4805474542911117311 refactor-ledger-schema-2696240816656306523
-```
+Local `main` is 30 behind `origin/main` and should be updated before anyone
+works from it.
