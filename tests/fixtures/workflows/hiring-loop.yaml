@@ -1,0 +1,231 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# FIXTURE — a well-formed workflow that must produce ZERO findings.
+#
+# Written for the Gate C false-positive review (handoffs/reviews/
+# gate-c-false-positive-review.md), deliberately in a domain unlike the
+# expense-approval fixture and unlike the Substack pilot, so the rule set is
+# tested against workflows it was not tuned on.
+#
+# If a new or changed rule makes this file report a finding, the rule is too
+# aggressive — fix the rule, not the fixture.
+schema_version: "1"
+workflow_id: engineer-hiring-loop
+name: Engineer Hiring Loop
+version: "1"
+maturity: OBSERVED
+
+purpose: Decide whether to make an offer to an engineering candidate.
+trigger: A recruiter marks a candidate as ready for the technical loop.
+claimed_outcome: >
+  Every candidate reaches a recorded decision — offer or decline — with the
+  hiring manager named on the decision.
+
+actors:
+  - recruiter
+  - interviewer
+  - hiring manager
+
+systems:
+  - applicant tracking system
+
+artifacts:
+  - interview scorecard
+  - decision record
+  - offer letter
+
+steps:
+  - step_id: schedule-loop
+    name: Schedule the loop
+    description: The recruiter books four interviewers against the candidate's availability.
+    actor: recruiter
+    action: Book the interview panel and send the candidate the schedule.
+    trigger: A candidate is marked ready for the technical loop.
+    preconditions:
+      - The candidate has passed the phone screen.
+    inputs:
+      - name: candidate profile
+        source: applicant tracking system
+        required: true
+      - name: candidate availability
+        source: recruiter
+        required: true
+    outputs:
+      - name: interview schedule
+        artifact_type: calendar invitations
+        evidence_requirement: four accepted invitations exist on the candidate record
+    entry_condition: The candidate has confirmed they want to continue.
+    exit_condition: Scheduling is done when four interviewers have accepted and the candidate has confirmed.
+    decision_authority: recruiter
+    next_steps:
+      - run-interviews
+    exception_paths:
+      - failure_mode: the candidate withdraws before the loop
+        owner: recruiter
+        handling: Close the candidate record as withdrawn and record the stated reason.
+    characteristics:
+      judgment_load: LOW
+      repeatability: ROUTINE
+      determinism: MOSTLY_DETERMINISTIC
+      risk: LOW
+      reversibility: REVERSIBLE
+      data_sensitivity: SENSITIVE
+
+  - step_id: run-interviews
+    name: Run the interviews
+    description: Each interviewer submits an independent scorecard before seeing the others.
+    actor: interviewer
+    action: Interview the candidate and submit a written scorecard.
+    trigger: The scheduled loop begins.
+    preconditions:
+      - Four interviewers have accepted.
+    inputs:
+      - name: interview schedule
+        source: schedule-loop
+        required: true
+      - name: interview rubric
+        source: applicant tracking system
+        required: true
+    outputs:
+      - name: interview scorecard
+        artifact_type: tracking-system record
+        evidence_requirement: four scorecards exist against the candidate, each with a written rationale
+    entry_condition: The first interview has started.
+    exit_condition: Interviews are complete when all four scorecards are submitted.
+    decision_authority: interviewer
+    next_steps:
+      - debrief
+    exception_paths:
+      - failure_mode: an interviewer misses their slot
+        owner: recruiter
+        handling: Rebook that slot within two working days and hold the debrief until the scorecard lands.
+        next_step: run-interviews
+    characteristics:
+      judgment_load: HIGH
+      repeatability: ROUTINE
+      determinism: JUDGMENT_BASED
+      risk: MODERATE
+      reversibility: REVERSIBLE
+      data_sensitivity: SENSITIVE
+
+  - step_id: debrief
+    name: Debrief
+    description: The panel meets and the hiring manager makes the call.
+    actor: hiring manager
+    action: Run the debrief and record an offer or decline decision.
+    trigger: All four scorecards are submitted.
+    preconditions:
+      - Four scorecards exist.
+    inputs:
+      - name: interview scorecard
+        source: run-interviews
+        required: true
+    outputs:
+      - name: decision record
+        artifact_type: tracking-system record
+        evidence_requirement: the candidate record states offer or decline, with the hiring manager named
+    entry_condition: The panel has assembled and every scorecard has been read.
+    exit_condition: The debrief is done when the decision field is set to offer or decline.
+    decision_authority: hiring manager
+    next_steps:
+      - extend-offer
+      - send-decline
+    exception_paths:
+      - failure_mode: the panel is split and the manager wants more evidence
+        owner: hiring manager
+        handling: Add one focused follow-up interview and reconvene, at most once.
+        next_step: run-interviews
+    characteristics:
+      judgment_load: HIGH
+      repeatability: ROUTINE
+      determinism: JUDGMENT_BASED
+      risk: HIGH
+      reversibility: PARTIALLY_REVERSIBLE
+      data_sensitivity: SENSITIVE
+
+  - step_id: extend-offer
+    name: Extend the offer
+    description: The recruiter sends the offer letter and tracks the response.
+    actor: recruiter
+    action: Send the offer letter at the approved level.
+    trigger: The decision field is set to offer.
+    preconditions:
+      - The decision record says offer.
+    inputs:
+      - name: decision record
+        source: debrief
+        required: true
+      - name: approved compensation band
+        source: hiring manager
+        required: true
+    outputs:
+      - name: offer letter
+        artifact_type: signed document
+        evidence_requirement: a countersigned offer letter is attached to the candidate record
+    entry_condition: The compensation band has been approved.
+    exit_condition: The offer stage ends when the candidate has accepted or declined in writing.
+    decision_authority: hiring manager
+    next_steps: []
+    exception_paths:
+      - failure_mode: the candidate declines the offer
+        owner: recruiter
+        handling: Record the stated reason and close the candidate record as declined-by-candidate.
+    characteristics:
+      judgment_load: MODERATE
+      repeatability: ROUTINE
+      determinism: MOSTLY_DETERMINISTIC
+      risk: HIGH
+      reversibility: IRREVERSIBLE
+      data_sensitivity: SENSITIVE
+
+  - step_id: send-decline
+    name: Send the decline
+    description: The recruiter closes the candidate out with written feedback.
+    actor: recruiter
+    action: Send the decline and record the reason against the rubric.
+    trigger: The decision field is set to decline.
+    preconditions:
+      - The decision record says decline.
+    inputs:
+      - name: decision record
+        source: debrief
+        required: true
+    outputs:
+      - name: decline notice
+        artifact_type: email
+        evidence_requirement: the candidate record shows a decline notice sent, with a date
+    entry_condition: The decision has been recorded as decline.
+    exit_condition: The decline is complete when the notice is sent and the record is closed.
+    decision_authority: recruiter
+    next_steps: []
+    characteristics:
+      judgment_load: LOW
+      repeatability: ROUTINE
+      determinism: MOSTLY_DETERMINISTIC
+      risk: MODERATE
+      reversibility: IRREVERSIBLE
+      data_sensitivity: SENSITIVE
+
+gates:
+  - gate_id: manager-decision
+    at_step: debrief
+    approver: hiring manager
+    criteria: Four scorecards are in and the panel has stated a recommendation against the rubric.
+    on_approve: extend-offer
+    on_reject: send-decline
+
+observed_exceptions:
+  - the candidate withdraws before the loop
+  - an interviewer misses their slot
+  - the panel is split and the manager wants more evidence
+  - the candidate declines the offer
+
+unwritten_rules: []
+known_pain_points:
+  - Scheduling four senior interviewers routinely takes longer than the interviews.
+
+source_evidence:
+  - kind: interview
+    reference: recruiting team, 2026-08
+    note: Walked through two recent loops end to end.

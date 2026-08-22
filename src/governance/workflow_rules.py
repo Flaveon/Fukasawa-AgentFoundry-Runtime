@@ -149,7 +149,12 @@ def _ambiguous_terms_in(text: str) -> list[str]:
     least one reviewer has signed it" out of the report.
     """
     low = text.lower()
-    present = lambda terms: {t for t in terms if re.search(rf"\b{re.escape(t)}", low)}
+    # Bounded at BOTH ends. Anchoring only the leading edge made "good" match
+    # "goods receipt", "clean" match "cleanroom", "ok" match "okra" and
+    # "complete" match "completeness" — precise conditions reported as vague,
+    # found by the Gate C false-positive review. A term is ambiguous when it is
+    # the word, not when it is a prefix of a different word.
+    present = lambda terms: {t for t in terms if re.search(rf"\b{re.escape(t)}\b", low)}
     flagged = present(PERCEPTION_TERMS)
     if not _has_criterion(text):
         flagged |= present(STATE_TERMS)

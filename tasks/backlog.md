@@ -77,3 +77,25 @@ are needed before "the optimization worked" is a claim rather than a hope.
       inform agent maturity promotion (separate ADR; deterministic checkers
       only — never an LLM judge in an authoritative path).
 - [ ] Never use outcome grades to select a model. That is not what they measure.
+
+## Validator rule policy — from the Gate C false-positive review (2026-08-21)
+
+Recorded rather than done: both are decisions about *detection policy*, which
+belongs to whoever owns the rule set, not to a review pass. Full reasoning and
+the evidence in `handoffs/reviews/gate-c-false-positive-review.md`.
+
+- [ ] `MEMORY_PHRASES` contains `undocumented`, a bare adjective that attaches
+      to anything — it fires on "the API returns an undocumented field" and
+      "undocumented behaviour in the vendor firmware", neither of which is a
+      human memory dependency. Every other phrase in the list names a human
+      relationship to knowledge. Removing it would also drop a real true
+      positive ("the threshold is undocumented"), so this is a trade, not a fix.
+- [ ] `MEMORY_PHRASES` also contains `remembers`, which fires on machines
+      ("the test rig remembers the last calibration", "the cache remembers the
+      previous response").
+- [ ] HW-013's phrase list is English and literal — it matches "it's all in
+      Dave's head" but not "Dave is the only one who knows". Carried from
+      phase 2, unchanged by the Gate C review.
+- [ ] Grok Build's adversarial fixture pass (master handoff §11.4) has still
+      not happened. It would cheaply strengthen the four-domain guard set the
+      Gate C review established.

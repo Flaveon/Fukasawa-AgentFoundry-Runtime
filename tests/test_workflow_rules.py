@@ -89,6 +89,34 @@ class TestBaselineIsClean:
         assert report.findings == [], [f.message for f in report.findings]
         assert report.promotion_ready
 
+    @pytest.mark.parametrize("name", sorted(p.name for p in FIXTURES.glob("*.yaml")))
+    def test_every_clean_fixture_reports_nothing(self, name):
+        """Each false-positive guard fixture, discovered rather than listed.
+
+        Added by the Gate C false-positive review. One clean workflow proves
+        the rules are silent on the workflow they were tuned against; four in
+        four unrelated domains — expense approval, incident response, hiring,
+        board assembly — prove something closer to the claim Gate C makes.
+
+        `uncharacterized-workflow.yaml` is the deliberate exception: it is the
+        adversarial sparse capture and is *meant* to report findings.
+        """
+        if name == "uncharacterized-workflow.yaml":
+            pytest.skip("the adversarial fixture is supposed to report findings")
+        report = validate_workflow(_load(FIXTURES / name))
+        assert report.findings == [], (
+            f"{name} is a false-positive guard and must stay silent; it reported "
+            + "; ".join(f"{f.rule.rule_id} at {f.location.step_id}: {f.message}"
+                        for f in report.findings)
+        )
+
+    def test_the_guard_set_covers_more_than_one_domain(self):
+        # A guard set that is one file is a guard against one workflow.
+        guards = {p.name for p in FIXTURES.glob("*.yaml")} - {
+            "uncharacterized-workflow.yaml"
+        }
+        assert len(guards) >= 4, f"only {len(guards)} clean fixtures: {sorted(guards)}"
+
     def test_registry_matches_the_approved_blocking_table(self):
         assert set(RULES) == set(EXPECTED_BLOCKING)
         for rule_id, blocking in EXPECTED_BLOCKING.items():
@@ -421,6 +449,36 @@ class TestHW014AmbiguousCriteria:
     def test_numeric_criterion_suppresses_the_finding(self, clean):
         clean.step("pay-claim").exit_condition = "Complete when all 3 receipts are attached."
         _assert_silent(clean, "HW-014")
+
+    @pytest.mark.parametrize(
+        "exit_condition",
+        [
+            # Every one of these contains an ambiguous term as a SUBSTRING of a
+            # longer, entirely precise word. Found by the Gate C false-positive
+            # review: the term regex anchored `\b` on the leading edge only, so
+            # "good" matched "goods", "clean" matched "cleanroom", and a
+            # perfectly checkable exit condition was reported as vague.
+            "Ends when the goods receipt matches the packing list.",          # good
+            "Ends when the cleanroom gowning checklist is fully signed.",     # clean
+            "Ends when the cleaning log has an entry for this shift.",        # clean
+            "Ends when completeness is confirmed against the manifest.",      # complete
+            "Ends when doneness is measured at 74 degrees core.",             # done
+            "Ends when the okra crate count matches the delivery note.",      # ok
+            "Ends when the mesh is finely ground to under 200 microns.",      # fine
+            "Ends when goodwill is recorded on the ledger at the agreed sum.",  # good
+        ],
+    )
+    def test_an_ambiguous_term_inside_a_longer_word_is_not_ambiguous(
+        self, clean, exit_condition
+    ):
+        clean.step("pay-claim").exit_condition = exit_condition
+        _assert_silent(clean, "HW-014")
+
+    def test_the_terms_still_fire_as_whole_words(self, clean):
+        # The boundary fix must not buy silence by breaking detection.
+        clean.step("pay-claim").exit_condition = "Payment is done when the file looks clean."
+        found = _fired(clean, "HW-014")
+        assert "clean" in found[0].location.detail
 
 
 class TestHW015GateWithoutNextAction:

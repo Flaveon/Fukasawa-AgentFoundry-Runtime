@@ -1,0 +1,307 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# FIXTURE — a well-formed workflow that must produce ZERO findings.
+#
+# Written for the Gate C false-positive review (handoffs/reviews/
+# gate-c-false-positive-review.md), deliberately in a domain unlike the
+# expense-approval fixture and unlike the Substack pilot, so the rule set is
+# tested against workflows it was not tuned on.
+#
+# If a new or changed rule makes this file report a finding, the rule is too
+# aggressive — fix the rule, not the fixture.
+schema_version: "1"
+workflow_id: board-assembly
+name: Prototype Board Assembly and Test
+version: "1"
+maturity: OBSERVED
+
+purpose: Turn a panel of bare PCBs into tested boards, or scrap them with a reason.
+trigger: A panel of bare boards arrives from the fabricator.
+claimed_outcome: >
+  Every board in the panel ends either passed and labelled, or scrapped with a
+  recorded failure mode.
+
+actors:
+  - assembly technician
+  - test technician
+  - pick-and-place machine
+
+systems:
+  - reflow oven
+  - test rig
+  - build log
+
+artifacts:
+  - populated panel
+  - test report
+  - scrap record
+
+steps:
+  # Three consecutive steps by the same actor — HW-008 must stay silent here,
+  # because no work crosses an actor boundary.
+  - step_id: stencil-paste
+    name: Stencil solder paste
+    description: The technician aligns the stencil and applies paste to the panel.
+    actor: assembly technician
+    action: Align the stencil to the fiducials and squeegee paste across the panel.
+    trigger: A bare panel and its stencil are both on the bench.
+    preconditions:
+      - The stencil matches the board revision on the panel.
+    inputs:
+      - name: bare panel
+        source: fabricator
+        required: true
+      - name: solder paste
+        source: assembly technician
+        required: true
+    outputs:
+      - name: pasted panel
+        artifact_type: physical panel
+        evidence_requirement: a photograph of the pasted panel is attached to the build log
+    entry_condition: The stencil is clamped and aligned to the fiducials.
+    exit_condition: Pasting is done when every pad is covered and no bridges are visible under the loupe.
+    decision_authority: assembly technician
+    next_steps:
+      - place-components
+    characteristics:
+      judgment_load: LOW
+      repeatability: ROUTINE
+      determinism: MOSTLY_DETERMINISTIC
+      risk: LOW
+      reversibility: REVERSIBLE
+      data_sensitivity: INTERNAL
+
+  - step_id: place-components
+    name: Place components
+    description: The pick-and-place machine populates the panel from the loaded reels.
+    actor: pick-and-place machine
+    action: Run the placement program for this board revision.
+    trigger: A pasted panel is loaded into the machine.
+    preconditions:
+      - The reels match the bill of materials for this revision.
+    inputs:
+      - name: pasted panel
+        source: stencil-paste
+        required: true
+      - name: placement program
+        source: build log
+        required: true
+    outputs:
+      - name: populated panel
+        artifact_type: physical panel
+        evidence_requirement: the machine's placement log for the run is saved to the build log
+    entry_condition: The panel is loaded and the program is selected.
+    exit_condition: Placement is done when the machine reports every position placed with no skips.
+    decision_authority: assembly technician
+    next_steps:
+      - reflow
+    exception_paths:
+      - failure_mode: a reel runs out mid-panel
+        owner: assembly technician
+        handling: Pause the run, reload the reel, and resume from the reported position.
+        next_step: place-components
+    characteristics:
+      judgment_load: NONE
+      repeatability: ROUTINE
+      determinism: DETERMINISTIC
+      risk: LOW
+      reversibility: REVERSIBLE
+      data_sensitivity: INTERNAL
+
+  - step_id: reflow
+    name: Reflow
+    description: The panel goes through the oven on the profile for this paste.
+    actor: assembly technician
+    action: Run the panel through the reflow oven on the matching thermal profile.
+    trigger: A populated panel is ready for the oven.
+    preconditions:
+      - The oven is at temperature and the profile matches the paste in use.
+    inputs:
+      - name: populated panel
+        source: place-components
+        required: true
+      - name: thermal profile
+        source: build log
+        required: true
+    outputs:
+      - name: reflowed panel
+        artifact_type: physical panel
+        evidence_requirement: the oven's profile trace for the run is saved to the build log
+    entry_condition: The panel has entered the oven.
+    exit_condition: Reflow is done when the panel has cooled below sixty degrees.
+    decision_authority: assembly technician
+    next_steps:
+      - electrical-test
+    exception_paths:
+      # A failure that legitimately ENDS the workflow — no next_step.
+      - failure_mode: the oven profile overshoots and lifts components
+        owner: assembly technician
+        handling: Scrap the panel, record the profile trace against the scrap record, and stop.
+    characteristics:
+      judgment_load: NONE
+      repeatability: ROUTINE
+      determinism: DETERMINISTIC
+      risk: MODERATE
+      reversibility: IRREVERSIBLE
+      data_sensitivity: INTERNAL
+
+  # Actor changes here — assembly hands off to test. HW-008 SHOULD be satisfied
+  # by the verifiable output above, not fire.
+  - step_id: electrical-test
+    name: Electrical test
+    description: The test technician runs each board on the rig.
+    actor: test technician
+    action: Run the test suite on each depanelized board.
+    trigger: A reflowed panel is delivered to the test bench.
+    preconditions:
+      - The panel has cooled and been depanelized.
+    inputs:
+      - name: reflowed panel
+        source: reflow
+        required: true
+      - name: test suite
+        source: test rig
+        required: true
+    outputs:
+      - name: test report
+        artifact_type: rig output file
+        evidence_requirement: a per-board pass or fail line exists in the test report
+    entry_condition: The first board is seated in the fixture.
+    exit_condition: Testing is done when every board in the panel has a pass or fail line.
+    decision_authority: test technician
+    next_steps:
+      - rework
+      - label-and-stock
+    exception_paths:
+      - failure_mode: the test rig itself fails self-check
+        owner: test technician
+        handling: Stop testing, recalibrate the rig, and re-run every board tested since the last good self-check.
+        next_step: electrical-test
+    characteristics:
+      judgment_load: LOW
+      repeatability: ROUTINE
+      determinism: DETERMINISTIC
+      risk: MODERATE
+      reversibility: REVERSIBLE
+      data_sensitivity: INTERNAL
+
+  - step_id: rework
+    name: Rework
+    description: Failed boards get one attempt at repair before scrapping.
+    actor: assembly technician
+    action: Diagnose the failure and repair the board, once.
+    trigger: A board failed electrical test.
+    preconditions:
+      - The board has a recorded failure line in the test report.
+    inputs:
+      - name: test report
+        source: electrical-test
+        required: true
+      - name: failed board
+        source: test technician
+        required: true
+    outputs:
+      - name: rework record
+        artifact_type: build log entry
+        evidence_requirement: the build log names the board, the fault found, and what was changed
+    entry_condition: The failing board is on the rework bench with its test report line.
+    exit_condition: Rework is done when the board has been repaired or marked beyond repair.
+    decision_authority: assembly technician
+    next_steps:
+      - electrical-test
+      - scrap
+    exception_paths:
+      - failure_mode: the fault cannot be located
+        owner: assembly technician
+        handling: Mark the board beyond repair and route it to scrap with the symptoms recorded.
+        next_step: scrap
+    characteristics:
+      judgment_load: MODERATE
+      repeatability: OCCASIONAL
+      determinism: JUDGMENT_BASED
+      risk: LOW
+      reversibility: REVERSIBLE
+      data_sensitivity: INTERNAL
+
+  # First terminal step.
+  - step_id: scrap
+    name: Scrap
+    description: Boards beyond repair are recorded and disposed of.
+    actor: assembly technician
+    action: Record the scrap reason and dispose of the board.
+    trigger: A board has been marked beyond repair.
+    preconditions:
+      - The board is marked beyond repair in the build log.
+    inputs:
+      - name: rework record
+        source: rework
+        required: true
+    outputs:
+      - name: scrap record
+        artifact_type: build log entry
+        evidence_requirement: the build log names the board serial and the failure mode
+    entry_condition: The board has been marked beyond repair.
+    exit_condition: Scrapping is done when the serial is recorded against a failure mode.
+    decision_authority: assembly technician
+    next_steps: []
+    characteristics:
+      judgment_load: NONE
+      repeatability: OCCASIONAL
+      determinism: DETERMINISTIC
+      risk: LOW
+      reversibility: IRREVERSIBLE
+      data_sensitivity: INTERNAL
+
+  # Second terminal step.
+  - step_id: label-and-stock
+    name: Label and stock
+    description: Passing boards are serialized, labelled and put into stock.
+    actor: test technician
+    action: Apply the serial label and move the board into stock.
+    trigger: A board passed electrical test.
+    preconditions:
+      - The board has a passing line in the test report.
+    inputs:
+      - name: test report
+        source: electrical-test
+        required: true
+    outputs:
+      - name: stocked board
+        artifact_type: labelled board
+        evidence_requirement: the serial appears in the build log against a passing test line
+    entry_condition: The board has a passing test line.
+    exit_condition: Stocking is done when the serial is recorded and the board is in the bin.
+    decision_authority: test technician
+    next_steps: []
+    characteristics:
+      judgment_load: NONE
+      repeatability: ROUTINE
+      determinism: DETERMINISTIC
+      risk: LOW
+      reversibility: REVERSIBLE
+      data_sensitivity: INTERNAL
+
+gates:
+  # A gate whose approval COMPLETES the workflow — on_approve is null.
+  - gate_id: batch-signoff
+    at_step: label-and-stock
+    approver: test technician
+    criteria: Every board in the panel has either a passing test line or a scrap record.
+    on_approve: null
+    on_reject: rework
+
+observed_exceptions:
+  - a reel runs out mid-panel
+  - the oven profile overshoots and lifts components
+  - the test rig itself fails self-check
+  - the fault cannot be located
+
+unwritten_rules: []
+known_pain_points:
+  - Rework is attempted more than once when the bench is busy, against the rule.
+
+source_evidence:
+  - kind: observation
+    reference: bench notes, 2026-08
+    note: Followed two panels from paste to stock.
