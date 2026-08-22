@@ -55,6 +55,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
+from src import resources
 from src.foundry.generator import BuildRefusedError, generate_packages
 from src.foundry.validator import validate_package
 from src.foundry.workflow_export import (
@@ -510,7 +511,7 @@ def validate_brief(
     path: str = typer.Argument(..., help="Path to a workflow brief YAML file."),
 ) -> None:
     """Validate a workflow brief file, reporting problems field by field."""
-    file = Path(path)
+    file = resources.resolve(path)
     if not file.exists():
         console.print(f"[red]No such file:[/red] {path}")
         raise typer.Exit(1)
@@ -1666,7 +1667,10 @@ def _load_draft_file(path: str) -> HumanWorkflowDraft:
     Never raises past the CLI boundary: a missing file and a malformed one are
     both ordinary operator mistakes, and a traceback is not an error message.
     """
-    file = Path(path)
+    # resolve() prefers the operator's working directory and falls back to the
+    # copy bundled in the PyInstaller binary, so every documented example path
+    # works identically from a checkout and from the executable.
+    file = resources.resolve(path)
     if not file.exists():
         _fail_input(f"No such file: {path}")
     try:

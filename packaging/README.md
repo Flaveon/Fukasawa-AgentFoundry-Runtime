@@ -14,12 +14,20 @@ python -m pip install -e '.[build]'
 PYTHON=.venv/bin/python ./packaging/build.sh
 ```
 
-The result is `dist/fukasawa` (≈38 MB on Linux). Verify it:
+The result is `dist/fukasawa` (≈30 MB on Linux). Verify it:
 
 ```bash
 ./dist/fukasawa validate brief examples/q2c-production-handoff.yaml   # CLI mode
 ./dist/fukasawa                                                        # GUI mode
 ```
+
+**The example paths above work from anywhere**, including a directory with no
+source: `examples/` is bundled into the executable and `src/resources.py`
+resolves it, with your working directory always winning. That was not true
+before phase 9 — all 39 files were inside the binary and none were reachable.
+
+`docs/packaging-guide.md` records the full Linux verification and the
+differences between a checkout, a wheel and this binary.
 
 ## One binary, two modes
 

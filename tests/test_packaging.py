@@ -147,3 +147,111 @@ def test_a_built_wheel_contains_every_package(tmp_path):
     for package in sorted(source_packages()):
         expected = package.replace(".", "/") + "/__init__.py"
         assert expected in names, f"{package} is missing from the built wheel"
+
+
+# ------------------------------------------------------- the documented commands
+
+
+class TestDocumentedCommandsAreReal:
+    """§2.3: "a clean checkout can install, test, build, and run using
+    documented commands", and §17: "useful --help".
+
+    Written after the README shipped `fukasawa workflow findings <workflow-id>`
+    when that command actually takes a path. Documentation drift of this kind is
+    invisible until someone types the command and it fails, and by then they
+    have concluded the tool is broken rather than the sentence.
+    """
+
+    README = ROOT / "README.md"
+
+    #: (command, argument metavar the CLI really declares).
+    EXPECTED = {
+        "init": "workflow_id",
+        "validate": "path",
+        "findings": "path",
+        "accept-risk": "path",
+        "promote": "path",
+        "assess-cooperation": "workflow_id",
+        "build-cooperative": "workflow_id",
+        "export-agent-brief": "workflow_id",
+        "status": "workflow_id",
+    }
+
+    def test_every_workflow_command_exists(self):
+        from typer.testing import CliRunner
+
+        from src.cli import app
+
+        result = CliRunner().invoke(app, ["workflow", "--help"])
+        assert result.exit_code == 0
+        for command in self.EXPECTED:
+            assert command in result.output, f"`workflow {command}` is gone"
+
+    @pytest.mark.parametrize("command,metavar", sorted(EXPECTED.items()))
+    def test_each_command_takes_the_argument_the_readme_says(self, command, metavar):
+        from typer.testing import CliRunner
+
+        from src.cli import app
+
+        result = CliRunner().invoke(app, ["workflow", command, "--help"])
+        assert result.exit_code == 0, result.output
+        assert metavar in result.output, (
+            f"`workflow {command}` no longer takes {metavar!r}; the README "
+            f"documents it as such and would now be wrong"
+        )
+
+    def test_the_readme_documents_each_command_with_the_right_argument(self):
+        text = self.README.read_text(encoding="utf-8")
+        wrong = []
+        for command, metavar in self.EXPECTED.items():
+            line = next(
+                (
+                    ln for ln in text.splitlines()
+                    if ln.strip().startswith(f"fukasawa workflow {command} ")
+                ),
+                None,
+            )
+            if line is None:
+                wrong.append(f"{command}: not documented in the README")
+                continue
+            # The README writes `path` as <draft.yaml> and workflow_id as
+            # <workflow-id>; check the shape rather than the literal metavar.
+            shown_path = "<draft.yaml>" in line
+            shown_id = "<workflow-id>" in line
+            if metavar == "path" and not shown_path:
+                wrong.append(f"{command}: takes a path, README shows {line.strip()!r}")
+            if metavar == "workflow_id" and not shown_id:
+                wrong.append(f"{command}: takes an id, README shows {line.strip()!r}")
+        assert not wrong, "README command drift:\n  " + "\n  ".join(wrong)
+
+    def test_the_readme_does_not_claim_unbuilt_infrastructure(self):
+        """The README described a "workflow node library" and a prompt/module
+        registry as delivered infrastructure. Neither exists — the first not at
+        all, the second as a `schema_version: 0.1` draft no code reads.
+
+        That text dated from the 2026-07-19 planning package and survived nine
+        phases unread. This fails if either claim returns without the thing.
+        """
+        text = self.README.read_text(encoding="utf-8").lower()
+        historical = text[text.index("historical, not current"):] if "historical, not current" in text else ""
+
+        node_library_exists = any(
+            "node_library" in p.read_text(encoding="utf-8")
+            or "NodeLibrary" in p.read_text(encoding="utf-8")
+            for p in (ROOT / "src").rglob("*.py")
+        )
+        if not node_library_exists:
+            claims = text.count("node library")
+            assert claims == 0 or "node library" in historical, (
+                "the README mentions a workflow node library outside the "
+                "historical-documents section, and none exists in src/"
+            )
+
+    def test_every_doc_the_readme_links_exists(self):
+        import re
+
+        text = self.README.read_text(encoding="utf-8")
+        referenced = set(re.findall(r"`(docs/[a-z0-9-]+\.md)`", text))
+        assert referenced, "the README stopped linking any documentation"
+        missing = [d for d in sorted(referenced) if not (ROOT / d).is_file()]
+        assert not missing, f"README links dead documents: {missing}"
