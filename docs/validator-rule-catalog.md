@@ -3,9 +3,22 @@
 
 # Validator Rule Catalog
 
-The deterministic rules that validate an observed human workflow. Generated
-from `src/governance/workflow_rules.py`, so this catalog cannot drift from the
-code — regenerate it when the registry changes.
+The deterministic rules that validate an observed human workflow, derived from
+`src/governance/workflow_rules.py`.
+
+**This catalog cannot drift from the code, and that is enforced rather than
+promised.** `TestRuleCatalogMatchesTheRegistry` in `tests/test_workflow_rules.py`
+checks every rule's id, title, dimension, blocking policy, description and
+remediation against the registry, plus the published term lists for HW-013 and
+HW-014. Change a rule without changing this file and the suite fails, naming
+what moved.
+
+*(An earlier version of this line claimed the catalog was generated and said to
+"regenerate it when the registry changes". No generator ever existed, so the
+no-drift claim rested on whoever edited the rules remembering to edit this file
+too. The tests replace that hope with a check; the explanatory sections below
+stay hand-written, which is why generating the whole document would be a step
+backwards.)*
 
 **16 rules — 14 blocking, 2 advisory.**
 
@@ -200,6 +213,30 @@ A criterion is considered stated when the text contains any digit or one of:
 So `approved when at least one reviewer has signed it` is accepted, while bare
 `approved` and `approved when it looks right` are both reported.
 
+**Terms match as whole words only.** `the goods receipt matches the packing
+list`, `the cleanroom gowning checklist is signed` and `completeness is
+confirmed against the manifest` are all precise and all stay silent, even though
+each contains an ambiguous term as a prefix. Until the Gate C false-positive
+review (2026-08-21) the boundary was anchored on the leading edge only and all
+three were reported as vague.
+
+**Known residual, accepted rather than fixed.** Three perception terms have
+precise non-perceptual senses that a keyword scan cannot distinguish, because
+telling them apart requires knowing what the sentence is *about*:
+
+| Legitimate text | Still fires on |
+|---|---|
+| "the panel has been wiped **clean** with IPA" | `clean` |
+| "the **quality** inspection report QA-114 is attached" | `quality` |
+| "the last **good** self-check is under 24h old" | `good` |
+
+This is the documented ceiling of a deterministic scan and the reason HW-014 is
+non-blocking: the finding names the exact term it matched, and one action with a
+recorded reason accepts it. The alternatives — dropping the terms, or an
+unbounded list of context exceptions — would cost the common true positives or
+the predictability this catalog promises. Reasoning in
+`handoffs/reviews/gate-c-false-positive-review.md`.
+
 ### How HW-011 matches failures
 
 An observed failure counts as handled when some step declares an exception path
@@ -210,8 +247,18 @@ predictable. Half is the documented threshold.
 
 ### How HW-013 spots memory dependencies
 
-Every entry in `unwritten_rules` produces one advisory finding. Step text is
-additionally scanned for: `in the operator's head`, `in their head`, `in his head`, `in her head`, `from memory`, `remembers`, `remember to`, `just knows`, `tribal knowledge`, `nobody wrote`, `not written down`, `undocumented`, `everyone knows`.
+Every entry in `unwritten_rules` produces one advisory finding — that list is
+the rule's primary path, and it is where honest capture puts this information.
+Step `description`, `exit_condition` and `notes` are additionally scanned for:
+`in the operator's head`, `in their head`, `in his head`, `in her head`, `from memory`, `remembers`, `remember to`, `just knows`, `tribal knowledge`, `nobody wrote`, `not written down`, `undocumented`, `everyone knows`.
+
+**Known residual.** The prose scan is a secondary net and two of its phrases
+attach to non-human subjects: `remembers` fires on "the test rig remembers the
+last calibration" and "the cache remembers the previous response", and
+`undocumented` fires on "the API returns an undocumented field". Unchanged by
+the Gate C review, deliberately — removing `undocumented` would also drop the
+real "the threshold is undocumented", and narrowing a published rule's detection
+policy belongs to whoever owns the rule set. Tracked in `tasks/backlog.md`.
 
 ### Why HW-004 does not ask every step who decides
 

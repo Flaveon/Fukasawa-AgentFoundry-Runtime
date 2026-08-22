@@ -18,6 +18,7 @@ table matching the approved directive, and behavior on a sparse real-world
 capture where nothing is characterized.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,7 @@ from src.schemas.human_workflow import (
 )
 
 ROOT = Path(__file__).resolve().parent.parent
+CATALOG = ROOT / "docs" / "validator-rule-catalog.md"
 FIXTURES = ROOT / "tests" / "fixtures" / "workflows"
 CLEAN = FIXTURES / "clean-workflow.yaml"
 SPARSE = FIXTURES / "uncharacterized-workflow.yaml"
@@ -54,6 +56,12 @@ EXPECTED_BLOCKING = {
     "HW-009": True, "HW-010": True, "HW-011": True, "HW-012": True,
     "HW-013": False, "HW-014": False, "HW-015": True, "HW-016": True,
 }
+
+
+@pytest.fixture(scope="module")
+def catalog() -> str:
+    """The published rule catalog, read once."""
+    return CATALOG.read_text(encoding="utf-8")
 
 
 def _load(path: Path) -> HumanWorkflowDraft:
@@ -635,3 +643,75 @@ class TestWorkflowIndex:
         clean.step("pay-claim").next_steps = ["pay-claim"]
         idx = WorkflowIndex.build(clean)
         assert "pay-claim" in idx.reachable
+
+
+# ------------------------------------------------- the catalog cannot drift
+
+
+class TestRuleCatalogMatchesTheRegistry:
+    """`docs/validator-rule-catalog.md` says it "cannot drift from the code".
+
+    It says it is *generated* from `src/governance/workflow_rules.py` — but no
+    generator exists in this repository, so until now the no-drift claim rested
+    on whoever last edited the rules remembering to edit the catalog too. These
+    tests supply the guarantee the document promises: the catalog and the
+    registry are checked against each other, and the check fails loudly when a
+    rule is added, renumbered, retitled, or has its blocking policy changed
+    without the catalog following.
+
+    Deliberately checks the *facts* — id, title, policy, dimension, severity,
+    remediation — and not the prose. The catalog's explanatory sections are
+    hand-written on purpose and a test that pinned them would only make the
+    document harder to improve.
+    """
+
+    def test_every_rule_appears(self, catalog):
+        missing = [rid for rid in sorted(RULES) if f"`{rid}`" not in catalog]
+        assert not missing, f"{missing} are in the registry but not the catalog"
+
+    def test_no_ghost_rules(self, catalog):
+        cited = set(re.findall(r"`(HW-\d{3})`", catalog))
+        assert cited <= set(RULES), (
+            f"{sorted(cited - set(RULES))} are documented but do not exist"
+        )
+
+    def test_the_headline_count_is_right(self, catalog):
+        blocking = len(BLOCKING_RULE_IDS)
+        expected = f"**{len(RULES)} rules — {blocking} blocking, {len(RULES) - blocking} advisory.**"
+        assert expected in catalog, f"catalog headline should read: {expected}"
+
+    @pytest.mark.parametrize("rule_id", sorted(RULES))
+    def test_each_rule_row_states_the_truth(self, catalog, rule_id):
+        rule = RULES[rule_id]
+        row = next(
+            (ln for ln in catalog.splitlines() if ln.startswith(f"| [`{rule_id}`]")),
+            None,
+        )
+        assert row is not None, f"{rule_id} has no summary row"
+        assert rule.title in row, f"{rule_id} title drifted: {row}"
+        assert rule.finding_type.value in row, f"{rule_id} dimension drifted: {row}"
+        policy = "**blocking**" if rule.blocking else "advisory"
+        assert policy in row, f"{rule_id} policy drifted — catalog row says: {row}"
+
+    @pytest.mark.parametrize("rule_id", sorted(RULES))
+    def test_each_rule_detail_carries_its_remediation(self, catalog, rule_id):
+        rule = RULES[rule_id]
+        assert rule.remediation in catalog, (
+            f"{rule_id}'s remediation is not in the catalog — an operator reading "
+            f"the catalog would be told something different from the finding"
+        )
+        assert rule.description in catalog, f"{rule_id}'s description drifted"
+
+    def test_the_documented_term_lists_match_the_code(self, catalog):
+        # HW-013 and HW-014 publish their word lists so a human can predict what
+        # fires. A published list that has drifted is worse than none.
+        from src.governance.workflow_rules import (
+            MEMORY_PHRASES,
+            PERCEPTION_TERMS,
+            STATE_TERMS,
+        )
+
+        for term in sorted(PERCEPTION_TERMS | STATE_TERMS):
+            assert f"`{term}`" in catalog, f"HW-014 term {term!r} is undocumented"
+        for phrase in MEMORY_PHRASES:
+            assert f"`{phrase}`" in catalog, f"HW-013 phrase {phrase!r} is undocumented"
