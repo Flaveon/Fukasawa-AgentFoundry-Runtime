@@ -373,7 +373,23 @@ So:
 
 Being honest about the boundary of what was observed is the house style.
 
-## 5. Discovery — `src/kernel/discovery.py`
+## 5. Discovery — `src/nodes/`
+
+### 5.0 Why not `src/kernel/`
+
+An earlier draft of this spec put discovery in `src/kernel/discovery.py`. That
+is wrong: directive §3 lists **`src/kernel/*` as FROZEN**, and the
+`frozen-paths` CI job added in phase 9 would block the pull request. New code
+does not need to live in a frozen package.
+
+Discovery therefore gets its own top-level package, `src/nodes/`, and **no
+frozen file is modified by this work**.
+
+The one place that looked like it needed a kernel change does not.
+`ModelEndpointRegistry.__init__` already accepts an explicit mapping
+(`endpoints: Optional[dict[str, dict]]`), so the merged resolution order in §6
+is produced *outside* the kernel and injected — the kernel is consumed
+unchanged, exactly as the release architecture requires everywhere else.
 
 ### 5.1 A stream, not a return value
 
@@ -412,6 +428,12 @@ part way still yields everything learned before that point.
 | `THIS_MACHINE` | `127.0.0.1:11434`, `127.0.0.1:8081` | local CPU count, RAM, platform |
 | `NAMED_HOST` | exactly the host and port given — including `localhost` | — |
 | `LOCAL_NETWORK` | the primary interface's /24, ports 11434 and 8081 | — |
+
+> **Not implemented in phase 10a.** The rung exists in the contract and both
+> interfaces offer it, but the sweep itself is deferred: choosing it yields a
+> legible refusal rather than a crash. The three simpler rungs cover the
+> overwhelmingly common case — inference running locally — and a /24 sweep is
+> worth building only once they are proven. Tracked in `tasks/backlog.md`.
 
 `NAMED_HOST` accepts `host`, `host:port`, or a full URL. A bare host is tried
 on both known ports. A bare `host:port` is tried as both backends and the one
@@ -453,9 +475,9 @@ itself authoritative.
 
 `tests/test_hardening.py::test_only_the_model_adapter_reaches_the_network`
 asserts `src/kernel/models.py` is the only module under `src/` importing
-network machinery. This adds a second, so that test changes to name both — with
-a comment recording that discovery is config-time, is consent-gated, and is not
-on an authoritative path.
+network machinery. This adds `src/nodes/backends.py`, so that test changes to
+name both — with a comment recording that discovery is config-time, is
+consent-gated, and is not on an authoritative path.
 
 The guard is widened deliberately and in the open. It is not relaxed.
 
@@ -480,10 +502,14 @@ nodes:
     ...
 ```
 
-**Backward compatibility.** `ModelEndpointRegistry` resolves in this order,
-later winning: built-in defaults → `model_endpoints.yaml` → `nodes.yaml`. An
-existing endpoint config keeps working untouched, and a node automatically
-becomes a usable endpoint under its `node_id`.
+**Backward compatibility.** Endpoints resolve in this order, later winning:
+built-in defaults → `model_endpoints.yaml` → `nodes.yaml`. An existing endpoint
+config keeps working untouched, and a node automatically becomes a usable
+endpoint under its `node_id`.
+
+The merge happens in `src/nodes/registry.py` and the result is **injected** into
+the existing `ModelEndpointRegistry(endpoints=...)`, which already takes a
+mapping. `src/kernel/models.py` is FROZEN and is not modified.
 
 ### 6.0 Identity and duplicates
 
@@ -529,6 +555,19 @@ refusal (e.g. scanning when consent is `NONE`).
 
 `src/gui/environment_views.py`, mounted by `src/gui/app.py`, backed by
 `src/gui/services/nodes.py`.
+
+Module layout for this phase, none of it under a frozen path:
+
+| File | Responsibility |
+|---|---|
+| `src/schemas/node.py` | contracts |
+| `src/nodes/backends.py` | the two backends' HTTP shapes — the only new network module |
+| `src/nodes/discovery.py` | consent, scanning, the event stream |
+| `src/nodes/store.py` | `nodes.yaml` read/write |
+| `src/nodes/registry.py` | merged endpoint resolution, injected into the kernel |
+| `src/nodes/summary.py` | unit conversion and the §3.6 panel, deterministic |
+| `src/gui/services/nodes.py` | GUI service layer |
+| `src/gui/environment_views.py` | the Environment tab |
 
 Follows the rules the desktop already lives by: the view decides nothing, it
 imports only `src.gui.services` plus stdlib and customtkinter, and long work
