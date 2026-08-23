@@ -1260,7 +1260,18 @@ def bundle_import(
 
 @model_app.command("list")
 def model_list() -> None:
-    """List configured model endpoints (defaults + config file)."""
+    """List configured model endpoints, and say where to add your own.
+
+    The second half matters more than the first. This runtime is meant to be
+    handed to someone who runs their own hardware, and until now the only
+    statement of where endpoints are configured lived in one line of source:
+    a user saw two localhost defaults and nothing telling them the file
+    existed, let alone where. Printing the path — whether or not it exists yet
+    — is the difference between a configurable product and one that looks
+    hardcoded.
+    """
+    from src.security.trust import DEFAULT_TRUST_ROOT
+
     registry = _model_endpoints()
     table = Table(title="Model endpoints")
     table.add_column("Name")
@@ -1274,6 +1285,36 @@ def model_list() -> None:
         "Reference these by name in a graph's model node: "
         "[cyan]endpoint: local-ollama[/cyan]"
     )
+
+    # soft_wrap on every line carrying the path: rich wraps to terminal width by
+    # default and will happily break a long path mid-filename, producing
+    # something the operator cannot copy. A path is not prose.
+    config = DEFAULT_TRUST_ROOT / "model_endpoints.yaml"
+    if config.exists():
+        console.print("\nConfigured in:")
+        console.print(f"[cyan]{config}[/cyan]", soft_wrap=True)
+    else:
+        console.print(
+            "\nThese are the built-in defaults. To add your own inference "
+            "nodes, create:"
+        )
+        console.print(f"[cyan]{config}[/cyan]", soft_wrap=True)
+        console.print()
+        console.print(_ENDPOINT_TEMPLATE)
+    console.print(
+        "An endpoint is a name, a kind and a URL — it carries no capabilities, "
+        "so nothing yet checks whether a node can run a given step. See "
+        "'Known gaps' in the README."
+    )
+
+
+#: Shown by `model list` when no endpoint config exists yet. A template beats a
+#: path alone: the file has never existed on this machine, so there is nothing
+#: for the user to open and read the shape of.
+_ENDPOINT_TEMPLATE = """[dim]endpoints:
+  my-gpu-box:
+    kind: ollama        # ollama | llamacpp
+    url: http://192.168.1.50:11434[/dim]"""
 
 
 @model_app.command("test")

@@ -131,6 +131,15 @@ on every persisted artifact so an audit can tell which logic produced it.
 - **No TypeScript.** Master handoff §3 describes a mixed Python/TypeScript
   runtime; this repository has never had any. Resolved at Gate A as defect D1 —
   JSON Schema export is the seam for any future consumer.
+- **You cannot register your own inference nodes from the product, and an
+  endpoint has no capabilities.** This is the largest known gap and it is a
+  product one, not a defect: the runtime resolves *named* endpoints from
+  `~/.fukasawa/model_endpoints.yaml`, but adding one means hand-writing YAML,
+  and an endpoint is only a name, a kind and a URL. Nothing therefore checks
+  whether the machines you actually own can run a step the cooperation layer
+  just said an agent could perform. Those are two different claims and this
+  release only makes the first. See *Known gaps* in the README and the
+  **Node library** entry in `tasks/backlog.md`.
 
 ### Deliberately not built
 
@@ -138,6 +147,9 @@ Not a multi-agent framework, not a swarm, not a node-canvas editor, not a
 marketplace, not an orchestration framework, and no LLM in any authoritative
 path — validation, promotion eligibility, classification, export and persistence
 are all deterministic.
+
+**Not to be confused with the node library**, which is *not* in this list: it is
+wanted and not yet built. See *Known limitations*.
 
 ### Verifying this release
 

@@ -151,11 +151,13 @@ code existed, and where they disagree with the code, **the code is right**:
 `docs/architecture.md` · `docs/product-principles.md` · `docs/dependencies.md` ·
 `docs/evaluation-strategy.md` · `registry/prompt-module-registry.yaml`
 
-Two things they describe were never built: a **workflow node library** (does not
-exist) and the **prompt/module registry**, which is a draft at
-`schema_version: 0.1` that no code reads. `roadmap.md` also uses a *different*
-phase numbering from the one this release followed — see
-`handoffs/handoff-master.md`.
+One thing they describe is a draft that no code reads: the **prompt/module
+registry** (`registry/prompt-module-registry.yaml`, `schema_version: 0.1`).
+`roadmap.md` also uses a *different* phase numbering from the one this release
+followed — see `handoffs/handoff-master.md`.
+
+The **node library** those documents mention is a different matter: it is
+**missing, not obsolete**. See [Known gaps](#known-gaps).
 
 `docs/source-to-contract-map.md` exists to detect exactly this kind of drift.
 
@@ -180,6 +182,41 @@ Fukasawa-AgentFoundry-Runtime/
 |-- packaging/                 # PyInstaller spec, build script, runtime hook
 `-- tasks/backlog.md
 ```
+
+## Known gaps
+
+### Bring your own inference nodes
+
+This is built to be handed to someone else, and that person runs their own
+hardware. Today the runtime resolves **named model endpoints** — a graph says
+`endpoint: gpu-node` and each operator's config decides what that means, so a
+shared workflow never carries anyone's IP addresses:
+
+```bash
+fukasawa model list          # what is configured
+fukasawa model test gpu-node # does it answer
+```
+
+Two limits, and they matter most for exactly the audience this is for:
+
+**Adding a node means hand-editing YAML at a path nothing tells you about.**
+Endpoints live in `$FUKASAWA_HOME/model_endpoints.yaml` (default
+`~/.fukasawa/model_endpoints.yaml`), modelled on
+`config/model_endpoints.example.yaml`. There is no `model add`, and no desktop
+screen for it. A person who was handed the binary has neither the repository nor
+that path.
+
+**An endpoint has no capabilities.** It is a name, a kind (`ollama` or
+`llamacpp`) and a URL — nothing about which models it serves, how much context
+it has, what hardware is behind it, or what work it is fit for. So nothing can
+answer the question the cooperation layer implicitly raises: *this step could be
+automated, but can this operator's hardware actually run it?*
+`CooperationAssessment.required_tools` and `StepAssignment.runtime_requirements`
+are free strings today, checked by nobody.
+
+Until both are closed, "an agent may perform this step" is a judgement about the
+**work**, not a promise that your machines can do it. Tracked in
+`tasks/backlog.md`.
 
 ## Status
 

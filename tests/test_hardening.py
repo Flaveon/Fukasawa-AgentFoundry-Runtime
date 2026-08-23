@@ -208,3 +208,75 @@ class TestOldPersistedData:
             for f in validate_workflow(ledger.load_workflow_draft(original.workflow_id)).findings
         ]
         assert before == after
+
+
+class TestEndpointsAreDiscoverable:
+    """`model list` must tell an operator where to add their own nodes.
+
+    This product is meant to be handed to someone who runs their own hardware.
+    Before phase 9 the only statement of where endpoints are configured was one
+    line of `src/cli.py`: a user saw two localhost defaults and nothing telling
+    them the config file existed. Adding a node meant reading the source.
+    """
+
+    def _run(self, tmp_path, monkeypatch, exists: bool):
+        from typer.testing import CliRunner
+
+        from src import cli
+
+        home = tmp_path / ".fukasawa"
+        home.mkdir()
+        if exists:
+            (home / "model_endpoints.yaml").write_text(
+                "endpoints:\n  mine:\n    kind: ollama\n    url: http://x:11434\n",
+                encoding="utf-8",
+            )
+        monkeypatch.setattr("src.security.trust.DEFAULT_TRUST_ROOT", home)
+        return CliRunner().invoke(cli.app, ["model", "list"])
+
+    def test_it_names_the_config_path_when_none_exists(self, tmp_path, monkeypatch):
+        result = self._run(tmp_path, monkeypatch, exists=False)
+        assert result.exit_code == 0, result.output
+        assert "model_endpoints.yaml" in result.output, (
+            "a user with no config is told nothing about where to add nodes"
+        )
+
+    def test_it_shows_a_template_when_none_exists(self, tmp_path, monkeypatch):
+        # A path alone is not enough when the file has never existed: there is
+        # nothing to open and read the shape of.
+        result = self._run(tmp_path, monkeypatch, exists=False)
+        assert "endpoints:" in result.output
+        assert "kind:" in result.output and "url:" in result.output
+
+    def test_it_names_the_config_path_when_one_exists(self, tmp_path, monkeypatch):
+        result = self._run(tmp_path, monkeypatch, exists=True)
+        assert result.exit_code == 0, result.output
+        assert "model_endpoints.yaml" in result.output
+
+    def test_it_states_the_capability_gap(self, tmp_path, monkeypatch):
+        # An operator must not infer from a green endpoint list that the runtime
+        # has checked their hardware can run anything.
+        result = self._run(tmp_path, monkeypatch, exists=True)
+        assert "capabilit" in result.output.lower()
+
+    def test_the_readme_documents_the_gap(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        assert "## Known gaps" in readme
+        assert "model_endpoints.yaml" in readme, (
+            "the endpoint config path is documented nowhere a user would look"
+        )
+        historical = readme[
+            readme.index("historical, not current"):readme.index("## Directory map")
+        ].lower()
+        # The historical section may *mention* the node library — it must not
+        # file it under "never built, ignore it". It is a missing requirement,
+        # and the section must hand the reader onward to Known gaps.
+        assert "never built" not in historical or "node library" not in historical, (
+            "the node library is listed as never-built planning cruft; it is a "
+            "missing requirement for a consumer-facing product"
+        )
+        if "node library" in historical:
+            assert "known gaps" in historical, (
+                "the historical section mentions the node library without "
+                "pointing at where the real gap is recorded"
+            )
