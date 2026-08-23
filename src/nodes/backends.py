@@ -20,7 +20,7 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Optional
 
 from src.schemas.node import HostCapability, ModelCapability, NodeKind
 
@@ -88,7 +88,7 @@ class ProbeResult:
 def probe_ollama(
     base_url: str,
     fetch: Fetcher = http_get_json,
-    post: "Poster" = None,  # type: ignore[assignment]  # defaulted below
+    post: Optional[Poster] = None,
 ) -> ProbeResult:
     """Ask an Ollama server what it is and what it can do.
 

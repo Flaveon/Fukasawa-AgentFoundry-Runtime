@@ -118,6 +118,87 @@ class TestLlamaCpp:
         assert result.kind is NodeKind.LLAMACPP
         assert result.models[0].context_length == 4096
 
+    def test_positive_offload_proves_a_graphics_card(self):
+        def fetch(url, timeout=0.0):
+            if url.endswith("/health"):
+                return {"status": "ok"}
+            if url.endswith("/props"):
+                return {"default_generation_settings": {"n_ctx": 4096, "n_gpu_layers": 32}}
+            if url.endswith("/v1/models"):
+                return {"data": [{"id": "q4.gguf"}]}
+            raise AssertionError(url)
+
+        result = probe_llamacpp("http://h:8081", fetch)
+        assert result.host.gpu_present is True
+
+    def test_zero_offload_is_the_only_way_to_prove_no_graphics_card(self):
+        # This is the only place in the codebase that can produce False: the
+        # backend positively reported no offload, rather than nothing having
+        # been observed.
+        def fetch(url, timeout=0.0):
+            if url.endswith("/health"):
+                return {"status": "ok"}
+            if url.endswith("/props"):
+                return {"default_generation_settings": {"n_ctx": 4096, "n_gpu_layers": 0}}
+            if url.endswith("/v1/models"):
+                return {"data": [{"id": "q4.gguf"}]}
+            raise AssertionError(url)
+
+        result = probe_llamacpp("http://h:8081", fetch)
+        assert result.host.gpu_present is False, "a positive report of no offload, not silence"
+
+    def test_missing_n_gpu_layers_leaves_the_card_unestablished(self):
+        # Unobserved is not the same as absent -- same reasoning as Ollama's
+        # /api/ps returning no loaded models.
+        def fetch(url, timeout=0.0):
+            if url.endswith("/health"):
+                return {"status": "ok"}
+            if url.endswith("/props"):
+                return {"default_generation_settings": {"n_ctx": 4096}}
+            if url.endswith("/v1/models"):
+                return {"data": [{"id": "q4.gguf"}]}
+            raise AssertionError(url)
+
+        result = probe_llamacpp("http://h:8081", fetch)
+        assert result.host.gpu_present is None, "absent and unobserved are different"
+
+    def test_an_unreachable_server_is_not_ok(self):
+        def fetch(url, timeout=0.0):
+            raise OSError("connection refused")
+
+        result = probe_llamacpp("http://h:8081", fetch)
+        assert not result.ok
+        assert "connection refused" in result.note
+
+    def test_a_failed_settings_read_still_yields_a_reachable_server(self):
+        def fetch(url, timeout=0.0):
+            if url.endswith("/health"):
+                return {"status": "ok"}
+            if url.endswith("/props"):
+                raise OSError("boom")
+            if url.endswith("/v1/models"):
+                return {"data": [{"id": "q4.gguf"}]}
+            raise AssertionError(url)
+
+        result = probe_llamacpp("http://h:8081", fetch)
+        assert result.ok, "a settings failure must not discard the whole probe"
+        assert [m.name for m in result.models] == ["q4.gguf"]
+        assert result.models[0].context_length == 0
+
+    def test_a_failed_model_list_still_yields_a_reachable_server(self):
+        def fetch(url, timeout=0.0):
+            if url.endswith("/health"):
+                return {"status": "ok"}
+            if url.endswith("/props"):
+                return {"default_generation_settings": {"n_ctx": 4096}}
+            if url.endswith("/v1/models"):
+                raise OSError("boom")
+            raise AssertionError(url)
+
+        result = probe_llamacpp("http://h:8081", fetch)
+        assert result.ok, "a listing failure must not discard the whole probe"
+        assert result.models == []
+
 
 class TestPorts:
     def test_the_two_known_ports_are_declared_once(self):
