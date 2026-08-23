@@ -128,10 +128,14 @@ class TestOffline:
                 offenders[str(path.relative_to(ROOT))] = sorted(reaching)
 
         assert offenders == {
-            "src/kernel/models.py": ["urllib.error", "urllib.request"]
+            "src/kernel/models.py": ["urllib.error", "urllib.request"],
+            "src/nodes/backends.py": ["urllib.error", "urllib.request"],
         }, (
-            f"network imports moved: {offenders}. The model adapter is the only "
-            f"module allowed to reach out, and it is not on an authoritative path."
+            f"network imports moved: {offenders}. Two modules may reach the "
+            f"network and no more: the model adapter, and node discovery. "
+            f"Discovery is config-time, runs only after a person grants "
+            f"permission, and is not on an authoritative path — validation, "
+            f"promotion, classification and export never call it."
         )
 
 
