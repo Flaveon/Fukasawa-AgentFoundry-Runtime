@@ -731,11 +731,11 @@ def summarise(nodes: list[InferenceNode]) -> Summary:
 
     consequence = ""
     if best_context:
+        words = _two_significant(words_from_tokens(best_context))
         consequence = (
-            f"A step needing more than {human_words(best_context).removeprefix('about ')} "
-            f"of input is likely to fail on these computers."
+            f"A step needing more than about {words:,} words of input is "
+            f"likely to fail on these computers."
         )
-        consequence = consequence.replace("more than ", "more than about ")
 
     return Summary(rows=rows, consequence=consequence)
 ```
@@ -764,7 +764,13 @@ The only new module that touches the network. Pure functions over an injected fe
 
 **Interfaces:**
 - Consumes: Task 1's contracts.
-- Produces: `Fetcher` (a `Callable[[str, float], dict]`), `http_get_json(url, timeout) -> dict`, `probe_ollama(base_url, fetch) -> ProbeResult`, `probe_llamacpp(base_url, fetch) -> ProbeResult`, `ProbeResult(kind, backend_version, models, host, ok, note)`, `PORTS = ((11434, NodeKind.OLLAMA), (8081, NodeKind.LLAMACPP))`.
+- Produces: `Fetcher` (`Callable[[str, float], dict]`), `Poster` (`Callable[[str, dict, float], dict]`), `http_get_json(url, timeout) -> dict`, `http_post_json(url, payload, timeout) -> dict`, `probe_ollama(base_url, fetch, post) -> ProbeResult`, `probe_llamacpp(base_url, fetch) -> ProbeResult`, `ProbeResult(kind, backend_version, models, host, ok, note)`, `PORTS = ((11434, NodeKind.OLLAMA), (8081, NodeKind.LLAMACPP))`.
+
+> **Ollama's `/api/show` is a POST with a JSON body**, not a GET with a query
+> string. The probe therefore takes an injected `post` alongside `fetch`,
+> mirroring the `Poster` the kernel already defines. A GET-only probe passes
+> against a fake and fails against a real server — exactly the class of bug a
+> test with a hand-written fake will not catch, so the shape is specified here.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -806,21 +812,27 @@ OLLAMA_PS = {"models": [{"name": "llama3.1:8b", "size": 4_700_000_000,
 
 
 def ollama_fetch(url, timeout=0.0):
-    """Answer like an Ollama server."""
+    """Answer GETs like an Ollama server."""
     if url.endswith("/api/version"):
         return {"version": "0.5.4"}
     if url.endswith("/api/tags"):
         return OLLAMA_TAGS
     if url.endswith("/api/ps"):
         return OLLAMA_PS
+    raise AssertionError(f"unexpected GET {url}")
+
+
+def ollama_post(url, payload, timeout=0.0):
+    """Answer POSTs like an Ollama server. /api/show is a POST."""
     if url.endswith("/api/show"):
+        assert "name" in payload, "/api/show needs the model name in the body"
         return OLLAMA_SHOW
-    raise AssertionError(f"unexpected url {url}")
+    raise AssertionError(f"unexpected POST {url}")
 
 
 class TestOllama:
     def test_reads_version_models_and_context(self):
-        result = probe_ollama("http://h:11434", ollama_fetch)
+        result = probe_ollama("http://h:11434", ollama_fetch, ollama_post)
         assert result.ok
         assert result.kind is NodeKind.OLLAMA
         assert result.backend_version == "0.5.4"
@@ -829,12 +841,12 @@ class TestOllama:
         assert result.models[0].quantization == "Q4_K_M"
 
     def test_tool_support_is_read_not_guessed(self):
-        result = probe_ollama("http://h:11434", ollama_fetch)
+        result = probe_ollama("http://h:11434", ollama_fetch, ollama_post)
         assert result.models[0].supports_tools is True
         assert result.models[0].supports_vision is False
 
     def test_committed_video_memory_proves_a_graphics_card(self):
-        result = probe_ollama("http://h:11434", ollama_fetch)
+        result = probe_ollama("http://h:11434", ollama_fetch, ollama_post)
         assert result.host.gpu_present is True
         assert result.host.vram_bytes == 4_700_000_000
 
@@ -845,14 +857,14 @@ class TestOllama:
                 return {"models": []}
             return ollama_fetch(url, timeout)
 
-        result = probe_ollama("http://h:11434", fetch)
+        result = probe_ollama("http://h:11434", fetch, ollama_post)
         assert result.host.gpu_present is None, "absent and unobserved are different"
 
     def test_an_unreachable_server_is_not_ok(self):
         def fetch(url, timeout=0.0):
             raise OSError("connection refused")
 
-        result = probe_ollama("http://h:11434", fetch)
+        result = probe_ollama("http://h:11434", fetch, ollama_post)
         assert not result.ok
         assert "connection refused" in result.note
 
@@ -862,7 +874,7 @@ class TestOllama:
                 raise OSError("boom")
             return ollama_fetch(url, timeout)
 
-        result = probe_ollama("http://h:11434", fetch)
+        result = probe_ollama("http://h:11434", fetch, ollama_post)
         assert result.ok, "a listing failure must not discard the whole probe"
         assert result.models == []
 
@@ -925,8 +937,12 @@ from typing import Callable
 
 from src.schemas.node import HostCapability, ModelCapability, NodeKind
 
-#: A fetcher takes (url, timeout) and returns decoded JSON.
+#: A fetcher takes (url, timeout) and returns decoded JSON from a GET.
 Fetcher = Callable[[str, float], dict]
+
+#: A poster takes (url, payload, timeout) and returns decoded JSON from a POST.
+#: Named to match the kernel's existing alias, because it is the same idea.
+Poster = Callable[[str, dict, float], dict]
 
 #: The ports each backend conventionally answers on. One declaration, so the
 #: scanner and the tests cannot disagree about what is worth trying.
@@ -943,6 +959,26 @@ MAX_MODELS_EXAMINED = 12
 def http_get_json(url: str, timeout: float = 5.0) -> dict:
     """GET a URL and decode JSON. Raises OSError on any failure."""
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    return _send(request, timeout)
+
+
+def http_post_json(url: str, payload: dict, timeout: float = 10.0) -> dict:
+    """POST a JSON body and decode the JSON reply. Raises OSError on failure."""
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    return _send(request, timeout)
+
+
+def _send(request: urllib.request.Request, timeout: float) -> dict:
+    """Send a prepared request, normalising every failure to OSError.
+
+    One exception type out means callers degrade one stage rather than
+    enumerating urllib's error taxonomy at six call sites.
+    """
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -962,13 +998,18 @@ class ProbeResult:
     note: str = ""
 
 
-def probe_ollama(base_url: str, fetch: Fetcher = http_get_json) -> ProbeResult:
+def probe_ollama(
+    base_url: str,
+    fetch: Fetcher = http_get_json,
+    post: "Poster" = None,  # type: ignore[assignment]  # defaulted below
+) -> ProbeResult:
     """Ask an Ollama server what it is and what it can do.
 
     A failure after the first reachability check degrades that one fact rather
     than the whole probe: a server that answers but cannot list its models is
     still a server worth recording.
     """
+    post = post or http_post_json
     result = ProbeResult(kind=NodeKind.OLLAMA)
     try:
         version = fetch(f"{base_url}/api/version", 5.0)
@@ -999,7 +1040,8 @@ def probe_ollama(base_url: str, fetch: Fetcher = http_get_json) -> ProbeResult:
 
     for model in result.models:
         try:
-            shown = fetch(f"{base_url}/api/show?name={model.name}", 10.0)
+            # A POST with the name in the body — Ollama's /api/show is not a GET.
+            shown = post(f"{base_url}/api/show", {"name": model.name}, 10.0)
         except OSError:
             continue
         info = shown.get("model_info", {})
@@ -1289,7 +1331,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Iterator, Optional
 
-from src.nodes.backends import PORTS, Fetcher, http_get_json, probe_llamacpp, probe_ollama
+from src.nodes.backends import (
+    PORTS,
+    Fetcher,
+    Poster,
+    http_get_json,
+    http_post_json,
+    probe_llamacpp,
+    probe_ollama,
+)
 from src.schemas.node import (
     InferenceNode,
     NodeKind,
@@ -1376,6 +1426,7 @@ def discover(
     host: str = "",
     *,
     fetch: Fetcher = http_get_json,
+    post: Poster = http_post_json,
     connect_timeout: float = 2.0,
 ) -> Iterator[DiscoveryEvent]:
     """Look for inference computers, yielding each finding as it is made.
@@ -1406,8 +1457,11 @@ def discover(
             progress=(index, total),
         )
 
-        probe = probe_ollama if kind is NodeKind.OLLAMA else probe_llamacpp
-        result = probe(base_url, fetch)
+        result = (
+            probe_ollama(base_url, fetch, post)
+            if kind is NodeKind.OLLAMA
+            else probe_llamacpp(base_url, fetch)
+        )
         if not result.ok:
             continue
 
@@ -1715,20 +1769,19 @@ class NodeStore:
         for index, existing in enumerate(nodes):
             if existing.url != node.url:
                 continue
-            merged = node.model_copy(
-                update={"node_id": existing.node_id, "provenance": {
-                    **node.provenance, **{
-                        key: source
-                        for key, source in existing.provenance.items()
-                        if source is Provenance.DECLARED
-                    }
-                }}
-            )
-            for key, source in existing.provenance.items():
-                if source is not Provenance.DECLARED:
-                    continue
-                if "." in key:
-                    continue  # nested declared values are rare; top level suffices
+            # Everything a person typed wins over anything just detected. Only
+            # top-level fields are editable (see EDITABLE in the GUI service),
+            # so a dotted key cannot be DECLARED and none is looked for.
+            typed = {
+                key: source
+                for key, source in existing.provenance.items()
+                if source is Provenance.DECLARED
+            }
+            merged = node.model_copy(update={
+                "node_id": existing.node_id,
+                "provenance": {**node.provenance, **typed},
+            })
+            for key in typed:
                 setattr(merged, key, getattr(existing, key))
             nodes[index] = merged
             self.save(nodes, consent)
@@ -2006,11 +2059,19 @@ def _node_store():
     return NodeStore()
 
 
+#: Both directions of the scope vocabulary, declared once. The CLI flag values
+#: are hyphenated; the enum values are not; the sentence is neither.
+_SCOPE_FLAGS = {
+    "none": "NONE",
+    "this-machine": "THIS_MACHINE",
+    "named-host": "NAMED_HOST",
+    "local-network": "LOCAL_NETWORK",
+}
 _SCOPE_WORDS = {
-    "none": "Not looking at anything",
-    "this-machine": "Just this computer",
-    "named-host": "One computer, named",
-    "local-network": "Every computer on this network",
+    "NONE": "Not looking at anything",
+    "THIS_MACHINE": "Just this computer",
+    "NAMED_HOST": "One computer, named",
+    "LOCAL_NETWORK": "Every computer on this network",
 }
 
 
@@ -2018,19 +2079,13 @@ def _scope_from(text: str):
     """Turn a --scope value into a ScanScope, or exit 1 naming the choices."""
     from src.schemas.node import ScanScope
 
-    mapping = {
-        "none": ScanScope.NONE,
-        "this-machine": ScanScope.THIS_MACHINE,
-        "named-host": ScanScope.NAMED_HOST,
-        "local-network": ScanScope.LOCAL_NETWORK,
-    }
-    if text not in mapping:
+    if text not in _SCOPE_FLAGS:
         console.print(
             f"[red]'{text}' is not one of the choices.[/red] "
-            f"Use one of: {', '.join(mapping)}"
+            f"Use one of: {', '.join(_SCOPE_FLAGS)}"
         )
         raise typer.Exit(1)
-    return mapping[text]
+    return ScanScope(_SCOPE_FLAGS[text])
 
 
 def _render_summary(nodes) -> None:
@@ -2107,7 +2162,8 @@ def node_scan(
     found = []
     for event in _discover(chosen, host):
         if as_json:
-            console.print(json.dumps({
+            # NOTE: src/cli.py imports the json module as `jsonlib`.
+            console.print(jsonlib.dumps({
                 "stage": event.stage, "message": event.message,
                 "ok": event.ok, "finished": event.finished,
             }))
@@ -2133,7 +2189,7 @@ def node_list(
     """Show every computer Fukasawa has been told about."""
     nodes, _consent = _node_store().load()
     if as_json:
-        console.print(json.dumps(
+        console.print(jsonlib.dumps(
             {"nodes": [n.model_dump(mode="json") for n in nodes]}, indent=2
         ))
         return
@@ -2216,14 +2272,11 @@ def node_consent(
     store = _node_store()
     _nodes, consent = store.load()
     if not set_to:
-        words = {v: k for k, v in {
-            "none": "NONE", "this-machine": "THIS_MACHINE",
-            "named-host": "NAMED_HOST", "local-network": "LOCAL_NETWORK",
-        }.items()}
-        console.print(f"Currently: {_SCOPE_WORDS[words[consent.scope.value]]}")
+        console.print(f"Currently: {_SCOPE_WORDS[consent.scope.value]}")
         return
-    store.set_consent(ScanConsent.granted(_scope_from(set_to), "operator"))
-    console.print(f"Changed to: {_SCOPE_WORDS[set_to]}")
+    chosen = _scope_from(set_to)
+    store.set_consent(ScanConsent.granted(chosen, "operator"))
+    console.print(f"Changed to: {_SCOPE_WORDS[chosen.value]}")
 ```
 
 - [ ] **Step 4: Run the tests and make sure they pass**
@@ -2833,7 +2886,6 @@ class EnvironmentTab(ctk.CTkFrame):
 
     def on_look(self) -> None:
         """Ask permission, then scan, showing findings as they arrive."""
-        from src.gui.dialogs import ReasonDialog  # noqa: F401  (kept for parity)
         from src.schemas.node import ScanScope
 
         self.log.delete("1.0", "end")
