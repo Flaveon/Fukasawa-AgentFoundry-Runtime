@@ -9,3 +9,6 @@ build/
 dist/
 *.sig
 run_handoffs/
+
+# Subagent-driven-development scratch (ledgers, briefs, review packages)
+.superpowers/
