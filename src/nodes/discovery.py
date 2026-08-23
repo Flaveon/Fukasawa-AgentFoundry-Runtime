@@ -17,7 +17,7 @@ That is the privacy promise this feature makes, and it is enforced here rather
 than in the interface, so no caller can skip it.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterator, Optional
 
@@ -123,6 +123,12 @@ def discover(
 
     Opens nothing when the permission is ``NONE``. Every other rung reaches
     exactly as far as it was granted and no further.
+
+    This early return and ``candidate_addresses()``'s own ``NONE`` guard are
+    deliberate defence in depth: either one alone stops every socket from
+    opening. ``test_none_yields_a_permission_stage_event`` pins this guard's
+    specific behaviour (a ``permission``-stage event), since a test that only
+    checks "nothing was fetched" cannot tell the two guards apart.
     """
     if scope is ScanScope.NONE:
         yield DiscoveryEvent(
