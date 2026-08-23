@@ -56,6 +56,32 @@ The one exemption is `node` as a **CLI command noun** — `fukasawa node scan` �
 because that is an identifier the user types, not prose describing their
 situation. It never appears in a sentence.
 
+### 3.1.1 State outputs. Never judge them.
+
+**No screen text characterises the user's hardware.** Not *slow*, *fast*,
+*good*, *poor*, *powerful*, *limited*, *adequate*, *sufficient*, *plenty*, or
+*only*. Report the measured figure with its unit and stop.
+
+Five words a second is twice a fast typist. Whether that is slow depends
+entirely on the task, and the person who knows the task is the user, not this
+program.
+
+This is the product's own doctrine applied to its own interface. The validator
+never says a workflow is bad; it says what is missing, where, and what the rule
+was, and lets a person decide. An environment screen that says "expect it to be
+slow" is the same failure the validator was built to avoid.
+
+The distinction that matters when writing copy:
+
+| | |
+|---|---|
+| **A judgement about the user's setup** — forbidden | "expect it to be slow", "that should be plenty", "a limited graphics card" |
+| **A fact about their setup** — required | "about 40 words a second", "no graphics card detected", "8,192 tokens" |
+| **A fact about how this program behaves** — allowed | "steps needing more than 6,000 words stay with you", "promotion never requires a computer" |
+
+The third row is not editorialising: it is mechanical consequence, and stating
+it is the whole reason the screen exists.
+
 | Internal | On screen |
 |---|---|
 | `InferenceNode` | "computer" / the label the user gave it |
@@ -160,26 +186,51 @@ Editing any field flips that field's source to *you told me*.
 
 ### 3.6 What this means for your workflows
 
-The closing sentence is the reason to capture any of this, and it is computed
-deterministically. Rules, in order; the first matching clause of each group is
-used.
+The closing panel is the reason to capture any of this. It is computed
+deterministically, and per §3.1.1 it **states figures and mechanical
+consequences — never a verdict**.
 
-**Can anything be handed off?**
-- No node, or none reachable → "Every step stays with you. That is the safe
-  default, and nothing is broken."
-- At least one reachable node with ≥1 model → "You can hand off drafting and
-  routine steps."
+```
+  What this means for your workflows
 
-**The ceiling.** From the largest `context_length` across all models on all
-reachable nodes → "Anything needing very long documents stays with you — your
-models top out around N words."
+    Steps can be handed off to     Home PC
+    Longest input any model takes  about 6,000 words   (8,192 tokens)
+    Fastest measured speed         about 40 words a second
+    Graphics card                  yes, on Home PC — 6 GB or more
 
-**Speed caveat.** If `gpu_present is False` on every reachable node, or the
-fastest measured speed is under 5 words a second → "Expect it to be slow; there
-is no graphics card doing the work."
+    Steps needing more than 6,000 words of input stay with you.
+```
 
-**Uncertainty.** If any displayed field is *not sure*, append: "Some details
-I could not work out — check the rows marked *not sure*."
+**The rows.** Each is a figure with a unit, or "not sure" where nothing was
+learned. Word figures are rounded to two significant digits and the exact token
+count is shown beside them, so a lay reader and a technical one both get what
+they need.
+
+**The consequence line.** Exactly one, and only when it follows arithmetically:
+the largest `context_length` across all models on all reachable computers
+becomes "Steps needing more than N words of input stay with you." Nothing is
+inferred about whether N is enough — that depends on the work, which the user
+knows and this program does not.
+
+**With nothing configured:**
+
+```
+  What this means for your workflows
+
+    Steps can be handed off to     nothing yet
+
+    Every step stays with you. Capture, validation, promotion and
+    export do not require a computer.
+```
+
+The second sentence is a fact about this program, not reassurance. A user with
+no hardware needs to know that the lifecycle still works, because otherwise the
+empty state reads as a failure.
+
+**When a graphics card was not detected**, the row says so and nothing more:
+`Graphics card — none detected`. No prediction about how that will feel. Note
+also that a card can be present and unobserved (§4.1), so the row distinguishes
+*none detected* from *not sure*.
 
 ### 3.7 The CLI matches
 
@@ -194,7 +245,8 @@ $ fukasawa node scan
   Where should I look?
     1  Just this computer         nothing leaves this machine
     2  A computer I'll name
-    3  Everything on my network   slower; some workplaces disallow this
+    3  Everything on my network   takes about a minute; some workplaces
+                                 disallow this
     4  Don't look — I'll type it in
 
   Choose [1]: 1
@@ -492,6 +544,15 @@ arrive.
 - Token→word and byte→GB conversions, including the "or more" phrasing.
 - §3.6's sentence for each branch: no nodes, nodes without GPU, low ceiling,
   fields marked *not sure*.
+- **No screen text judges the user's hardware** (§3.1.1). Every rendered
+  string is checked against a list — *slow*, *fast*, *good*, *poor*,
+  *powerful*, *weak*, *adequate*, *plenty*, *enough*, *limited* — and the
+  environment panel is rendered for each branch (no computers, no GPU, tiny
+  context, unmeasured speed) to prove none of them produces a verdict.
+
+  The positive half matters as much: each branch must still state its figure
+  with a unit, so a screen cannot pass by saying nothing.
+
 - **Prose** shown to a user contains none of: *provenance*, *scope*,
   *VRAM*, *endpoint*, or *capability*. Checked against the rendered strings.
 
