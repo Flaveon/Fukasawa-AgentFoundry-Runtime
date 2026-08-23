@@ -163,8 +163,9 @@ class TestCopyRules:
         assert all(r.value for r in summary.rows), "a row has no value"
 
     def _render(self, nodes) -> str:
+        """Concatenate all output into one string for rule checking."""
         summary = summarise(nodes)
         return " ".join(
-            [f"{r.label} {r.value} {r.source}" for r in summary.rows]
+            [f"{r.label} {r.value}" for r in summary.rows]
             + [summary.consequence]
         )

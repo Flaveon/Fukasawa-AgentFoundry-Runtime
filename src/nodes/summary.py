@@ -90,11 +90,17 @@ def human_bytes(count: int) -> str:
 
 @dataclass
 class SummaryRow:
-    """One line of the panel: what it is, the figure, and where it came from."""
+    """One line of the panel: what it is, and the figure.
+
+    Deliberately carries no provenance. Sources belong to the per-computer
+    card (spec §3.5), where "found it" refers to one machine and means
+    something. On this panel each figure is a maximum taken ACROSS computers,
+    so "found it" would beg the question "on which one?" — spec §3.6's panel
+    shows figures only.
+    """
 
     label: str
     value: str
-    source: str = ""
 
 
 @dataclass
@@ -135,7 +141,7 @@ def summarise(nodes: list[InferenceNode]) -> Summary:
         SummaryRow("Agent steps can run on", ", ".join(n.label for n in usable)),
         SummaryRow(
             "Longest input any model takes",
-            f"{human_words(best_context)}   ({best_context:,} tokens)"
+            f"{human_words(best_context)} ({best_context:,} tokens)"
             if best_context
             else UNKNOWN,
         ),
