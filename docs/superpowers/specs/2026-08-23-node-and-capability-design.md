@@ -82,6 +82,32 @@ The distinction that matters when writing copy:
 The third row is not editorialising: it is mechanical consequence, and stating
 it is the whole reason the screen exists.
 
+### 3.1.2 Never assume who owns the work, the hardware, or the network
+
+The person at this screen is not necessarily the person who performs any step.
+They may be an administrator, a consultant, or an analyst configuring a machine
+for a team. This runtime already models that distinction — `WorkflowStep.actor`
+and `StepAssignment.human_owner` name a step's performer explicitly — so copy
+that says "you" about the work contradicts the product's own data.
+
+Forbidden: *stays with you*, *off your hands*, *your workflows*, *your models*,
+*my network*. Each asserts an ownership nobody established.
+
+Say what happens to the **step** or the **operation** instead:
+
+| Instead of | Say |
+|---|---|
+| "stays with you" | "is likely to fail on these computers" |
+| "every step stays with you" | "no step can be assigned to an agent" |
+| "takes steps off your hands" | "runs some workflow steps automatically" |
+| "your models top out at N" | "the longest input any model accepts is N" |
+| "everything on my network" | "every computer on this network" |
+
+Second person remains correct where it addresses the reader about **their own
+choice or input** — "you can change this later", "you give me its address",
+"you told me". Those describe what the person did, which is exactly what is
+known.
+
 | Internal | On screen |
 |---|---|
 | `InferenceNode` | "computer" / the label the user gave it |
@@ -98,11 +124,10 @@ it is the whole reason the screen exists.
 The Environment tab, empty:
 
 ```
-   Fukasawa can take some steps off your hands — but only
-   using AI running on a computer you control. Nothing here
-   talks to the cloud.
+   Fukasawa can run some workflow steps automatically, using AI
+   on a computer you point it at. Nothing here talks to the cloud.
 
-   Do you have something like Ollama or llama.cpp running?
+   Is something like Ollama or llama.cpp running?
 
           [ Look for it ]      [ I'll type it in ]
 
@@ -125,9 +150,10 @@ any time from the same screen.
    ( ) A computer I'll name
        You give me its address; I check that one only.
 
-   ( ) Everything on my network
-       I'll look at other computers nearby. Takes about a
-       minute. Some workplaces don't allow this — check first.
+   ( ) Every computer on this network
+       I'll look at other computers on the same network.
+       Takes about a minute. Some workplaces don't allow
+       this — check first.
 
    ( ) Don't look at anything
        I'll type it in myself.
@@ -176,29 +202,30 @@ rows to check.
     [ Looks right ]   [ Change something ]   [ Check again ]
 
 
-  What this means for your workflows
-  You can hand off drafting and routine steps. Anything needing
-  very long documents stays with you — your models top out
-  around 6,000 words.
+  What this means when steps run
+  Agent steps can run on Home PC. A step needing more than
+  6,000 words of input is likely to fail there — that is the
+  longest input any model on it accepts.
 ```
 
 Editing any field flips that field's source to *you told me*.
 
-### 3.6 What this means for your workflows
+### 3.6 What this means when steps run
 
 The closing panel is the reason to capture any of this. It is computed
 deterministically, and per §3.1.1 it **states figures and mechanical
 consequences — never a verdict**.
 
 ```
-  What this means for your workflows
+  What this means when steps run
 
-    Steps can be handed off to     Home PC
+    Agent steps can run on         Home PC
     Longest input any model takes  about 6,000 words   (8,192 tokens)
     Fastest measured speed         about 40 words a second
     Graphics card                  yes, on Home PC — 6 GB or more
 
-    Steps needing more than 6,000 words of input stay with you.
+    A step needing more than 6,000 words of input is likely to
+    fail on these computers.
 ```
 
 **The rows.** Each is a figure with a unit, or "not sure" where nothing was
@@ -208,24 +235,29 @@ they need.
 
 **The consequence line.** Exactly one, and only when it follows arithmetically:
 the largest `context_length` across all models on all reachable computers
-becomes "Steps needing more than N words of input stay with you." Nothing is
-inferred about whether N is enough — that depends on the work, which the user
-knows and this program does not.
+becomes "A step needing more than N words of input is **likely to fail** on
+these computers."
+
+*Likely to fail* is chosen because it is defensible and falsifiable. Exceeding a
+model's context produces either an error or silent truncation, and both are
+failures of the step; which one occurs depends on the backend's configuration,
+so the sentence claims only what is certain. Nothing is inferred about whether N
+is enough for any particular work — that depends on the work.
 
 **With nothing configured:**
 
 ```
-  What this means for your workflows
+  What this means when steps run
 
-    Steps can be handed off to     nothing yet
+    Agent steps can run on         nothing yet
 
-    Every step stays with you. Capture, validation, promotion and
-    export do not require a computer.
+    No step can be assigned to an agent. Capture, validation,
+    promotion and export do not require a computer.
 ```
 
-The second sentence is a fact about this program, not reassurance. A user with
-no hardware needs to know that the lifecycle still works, because otherwise the
-empty state reads as a failure.
+Both sentences are facts about this program, not reassurance. Someone with no
+hardware configured needs to know the lifecycle still works, because otherwise
+the empty state reads as a breakage.
 
 **When a graphics card was not detected**, the row says so and nothing more:
 `Graphics card — none detected`. No prediction about how that will feel. Note
@@ -239,14 +271,14 @@ Same register, same cycling, same words. Not terse.
 ```
 $ fukasawa node scan
 
-  Fukasawa can take some steps off your hands — but only using
-  AI running on a computer you control.
+  Fukasawa can run some workflow steps automatically, using AI
+  on a computer you point it at.
 
   Where should I look?
-    1  Just this computer         nothing leaves this machine
+    1  Just this computer            nothing leaves this machine
     2  A computer I'll name
-    3  Everything on my network   takes about a minute; some workplaces
-                                 disallow this
+    3  Every computer on this network takes about a minute; some
+                                     workplaces disallow this
     4  Don't look — I'll type it in
 
   Choose [1]: 1
@@ -544,6 +576,12 @@ arrive.
 - Token→word and byte→GB conversions, including the "or more" phrasing.
 - §3.6's sentence for each branch: no nodes, nodes without GPU, low ceiling,
   fields marked *not sure*.
+- **No screen text asserts ownership** (§3.1.2). Rendered strings are checked
+  against *stays with you*, *your workflow*, *your model*, *your hardware*,
+  *off your hands*, *my network*. Second person is permitted only in the
+  sentences that describe the reader's own choice or input, which the test
+  lists explicitly rather than pattern-matching.
+
 - **No screen text judges the user's hardware** (§3.1.1). Every rendered
   string is checked against a list — *slow*, *fast*, *good*, *poor*,
   *powerful*, *weak*, *adequate*, *plenty*, *enough*, *limited* — and the
