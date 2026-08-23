@@ -163,8 +163,14 @@ def discover(
 
         seen_urls.add(base_url)
         found += 1
+        # The id is derived from host:port, not port alone -- two machines
+        # both running the default port (e.g. two Ollama boxes on :11434)
+        # must not collide by construction. See NodeStore.upsert for the
+        # second half of collision handling: an id already taken by a
+        # *different* URL gets a numeric suffix rather than overwriting.
+        netloc = base_url.split("//", 1)[1]
         node = InferenceNode(
-            node_id=slugify(f"{result.kind.value}-{port}"),
+            node_id=slugify(f"{result.kind.value}-{netloc}"),
             label=f"{result.kind.value} on {'this computer' if '127.0.0.1' in base_url else host}".strip(),
             kind=result.kind,
             url=base_url,

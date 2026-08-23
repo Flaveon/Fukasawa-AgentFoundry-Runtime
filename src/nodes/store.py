@@ -77,15 +77,20 @@ class NodeStore:
         """Add a computer, or refresh one already stored at the same address.
 
         Values a person typed are preserved; values that were detected are
-        replaced. Two computers may never share a URL.
+        replaced. Two computers may never share a URL, and never silently
+        share an id either -- a newly discovered id already in use by a
+        different computer gets a numeric suffix (see ``_with_unique_id``).
         """
         nodes, consent = self.load()
         for index, existing in enumerate(nodes):
             if existing.url != node.url:
                 continue
-            # Everything a person typed wins over anything just detected. Only
-            # top-level fields are editable (see EDITABLE in the GUI service),
-            # so a dotted key cannot be DECLARED and none is looked for.
+            # Everything a person typed wins over anything just detected.
+            # Only a top-level field can be copied across by name below --
+            # a dotted key (e.g. "host.vram_bytes") records provenance for
+            # a nested value, and nothing in the current UI produces one, so
+            # it is carried through in the provenance map but skipped in the
+            # copy loop rather than looked up as an attribute.
             typed = {
                 key: source
                 for key, source in existing.provenance.items()
@@ -96,14 +101,37 @@ class NodeStore:
                 "provenance": {**node.provenance, **typed},
             })
             for key in typed:
+                if "." in key:
+                    continue
                 setattr(merged, key, getattr(existing, key))
             nodes[index] = merged
             self.save(nodes, consent)
             return merged
 
+        node = self._with_unique_id(node, nodes)
         nodes.append(node)
         self.save(nodes, consent)
         return node
+
+    @staticmethod
+    def _with_unique_id(node: InferenceNode, nodes: list[InferenceNode]) -> InferenceNode:
+        """Give ``node`` an id nobody in ``nodes`` already holds.
+
+        Discovery derives an id from host:port (see ``src/nodes/discovery.py``),
+        so two different computers can independently produce the same one
+        before either is stored. A collision reaching here is never the same
+        computer -- ``upsert`` already matched on URL above and found none --
+        so the newcomer gets a numeric suffix (``-2``, ``-3``, ...) rather
+        than silently displacing whoever already holds the id when ``save()``
+        writes ``nodes`` as a dict keyed by id.
+        """
+        taken = {existing.node_id for existing in nodes}
+        if node.node_id not in taken:
+            return node
+        suffix = 2
+        while f"{node.node_id}-{suffix}" in taken:
+            suffix += 1
+        return node.model_copy(update={"node_id": f"{node.node_id}-{suffix}"})
 
     def forget(self, node_id: str) -> bool:
         """Remove one computer. False when there was nothing by that name."""

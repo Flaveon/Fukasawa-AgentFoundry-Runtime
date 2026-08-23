@@ -89,6 +89,21 @@ class TestUpsert:
         nodes, _ = store.load()
         assert nodes[0].label == "Kitchen Box", "a rescan overwrote a typed value"
         assert nodes[0].backend_version == "0.6", "a detected value was not refreshed"
+        assert nodes[0].source_of("label") is Provenance.DECLARED, (
+            "the value survived but its provenance reverted -- the next "
+            "rescan would silently overwrite it"
+        )
+
+    def test_a_dotted_declared_key_survives_a_rescan_without_raising(self, store):
+        # "host.vram_bytes" is a documented provenance form (a person can, in
+        # principle, declare a nested value) even though nothing in the
+        # current UI produces one. The merge must not assume every DECLARED
+        # key names a top-level attribute.
+        store.upsert(node(provenance={"host.vram_bytes": Provenance.DECLARED}))
+        store.upsert(node(backend_version="0.6"))
+        nodes, _ = store.load()
+        assert nodes[0].source_of("host.vram_bytes") is Provenance.DECLARED
+        assert nodes[0].backend_version == "0.6"
 
     def test_forget_removes_one(self, store):
         store.upsert(node())
@@ -97,6 +112,28 @@ class TestUpsert:
 
     def test_forgetting_an_unknown_id_reports_it(self, store):
         assert store.forget("nope") is False
+
+
+class TestNodeIdCollision:
+    def test_two_different_computers_with_the_same_id_both_survive(self, store):
+        # Discovery derives an id from host:port alone before this fix's
+        # sibling change, and even after it two ids can still coincide (a
+        # person can type one by hand). Whichever way it happens, the store
+        # must never let a second computer at a different URL silently
+        # displace the first when save() writes nodes keyed by id.
+        first = store.upsert(node(node_id="ollama-11434", url="http://10.0.0.9:11434"))
+        second = store.upsert(node(node_id="ollama-11434", url="http://10.0.0.5:11434"))
+        nodes, _ = store.load()
+        assert len(nodes) == 2, "one computer vanished on a node_id collision"
+        assert {n.node_id for n in nodes} == {first.node_id, second.node_id}
+        assert first.node_id != second.node_id
+        assert {n.url for n in nodes} == {"http://10.0.0.9:11434", "http://10.0.0.5:11434"}
+
+    def test_a_third_collision_gets_the_next_suffix(self, store):
+        store.upsert(node(node_id="ollama-11434", url="http://10.0.0.1:11434"))
+        store.upsert(node(node_id="ollama-11434", url="http://10.0.0.2:11434"))
+        third = store.upsert(node(node_id="ollama-11434", url="http://10.0.0.3:11434"))
+        assert third.node_id == "ollama-11434-3"
 
 
 class TestEndpointResolution:

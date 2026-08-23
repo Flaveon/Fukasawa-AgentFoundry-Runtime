@@ -198,3 +198,22 @@ class TestTheStream:
         assert events[-1].finished
         assert all(e.node is None for e in events)
         assert "didn't find" in events[-1].message.lower()
+
+    def test_two_different_hosts_on_the_same_port_get_different_ids(self):
+        # The id is derived from host:port, not port alone, so two machines
+        # both answering on the default Ollama port do not collide by
+        # construction (NodeStore.upsert handles any collision that still
+        # reaches it, e.g. a hand-typed id).
+        fetch_a = Recorder(answering={"10.0.0.9:11434"})
+        events_a = list(
+            discover(ScanScope.NAMED_HOST, "10.0.0.9", fetch=fetch_a, post=fetch_a.post)
+        )
+        fetch_b = Recorder(answering={"10.0.0.5:11434"})
+        events_b = list(
+            discover(ScanScope.NAMED_HOST, "10.0.0.5", fetch=fetch_b, post=fetch_b.post)
+        )
+        node_a = next(e.node for e in events_a if e.node is not None)
+        node_b = next(e.node for e in events_b if e.node is not None)
+        assert node_a.node_id != node_b.node_id
+        assert node_a.node_id == "ollama-10-0-0-9-11434"
+        assert node_b.node_id == "ollama-10-0-0-5-11434"
