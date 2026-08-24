@@ -118,6 +118,7 @@ maturity_app = typer.Typer(help="Evidence-based maturity assessment and promotio
 graph_app = typer.Typer(help="Run workflow graphs through the orchestration kernel.")
 trust_app = typer.Typer(help="Manage signing identity and trusted keys.")
 model_app = typer.Typer(help="Inspect and test configured model endpoints.")
+node_app = typer.Typer(help="Tell Fukasawa what computers can run AI for it.")
 bundle_app = typer.Typer(help="Export and import signed, shareable workflow bundles.")
 workflow_app = typer.Typer(
     help="Capture, validate, promote, assess and export a human workflow."
@@ -131,6 +132,7 @@ app.add_typer(maturity_app, name="maturity")
 app.add_typer(graph_app, name="graph")
 app.add_typer(trust_app, name="trust")
 app.add_typer(model_app, name="model")
+app.add_typer(node_app, name="node")
 app.add_typer(bundle_app, name="bundle")
 app.add_typer(workflow_app, name="workflow")
 
@@ -1340,6 +1342,248 @@ def model_test(
             Panel(escape(result.note), title=f"[red]{endpoint} failed[/red]", border_style="red")
         )
         raise typer.Exit(1)
+
+
+# ------------------------------------------------------------------------- node
+
+
+def _discover(scope, host="", **kwargs):
+    """Run a scan. Named so a test can replace it without a live network."""
+    from src.nodes.discovery import discover
+
+    return discover(scope, host, **kwargs)
+
+
+def _node_store():
+    """Open the store at its configured location."""
+    from src.nodes.store import NodeStore
+
+    return NodeStore()
+
+
+#: Both directions of the scope vocabulary, declared once. The CLI flag values
+#: are hyphenated; the enum values are not; the sentence is neither.
+_SCOPE_FLAGS = {
+    "none": "NONE",
+    "this-machine": "THIS_MACHINE",
+    "named-host": "NAMED_HOST",
+    "local-network": "LOCAL_NETWORK",
+}
+_SCOPE_WORDS = {
+    "NONE": "Not looking at anything",
+    "THIS_MACHINE": "Just this computer",
+    "NAMED_HOST": "One computer, named",
+    "LOCAL_NETWORK": "Every computer on this network",
+}
+
+
+def _scope_from(text: str):
+    """Turn a --scope value into a ScanScope, or exit 1 naming the choices."""
+    from src.schemas.node import ScanScope
+
+    if text not in _SCOPE_FLAGS:
+        console.print(
+            f"[red]'{text}' is not one of the choices.[/red] "
+            f"Use one of: {', '.join(_SCOPE_FLAGS)}"
+        )
+        raise typer.Exit(1)
+    return ScanScope(_SCOPE_FLAGS[text])
+
+
+def _render_summary(nodes) -> None:
+    """Print the panel: figures with units, and at most one consequence.
+
+    ``SummaryRow`` deliberately carries no ``source`` (see
+    ``src/nodes/summary.py``) — each figure on this panel is a maximum taken
+    across every computer, so a per-node provenance label would beg the
+    question "on which one?" Only the label and the value are printed.
+    """
+    from src.nodes.summary import summarise
+
+    summary = summarise(nodes)
+    console.print("\n[bold]What this means when steps run[/bold]")
+    for row in summary.rows:
+        console.print(f"  {row.label:<32} {row.value}")
+    if summary.consequence:
+        console.print(f"\n  {summary.consequence}")
+
+
+@node_app.command("scan")
+def node_scan(
+    scope: str = typer.Option(
+        "", "--scope", help="none | this-machine | named-host | local-network"
+    ),
+    host: str = typer.Option("", "--host", help="Address, for --scope named-host."),
+    label: str = typer.Option("", "--label", help="What to call what is found."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the prompts."),
+    as_json: bool = typer.Option(False, "--json", help="One event per line, as JSON."),
+) -> None:
+    """Look for computers that can run AI, and record what is found.
+
+    Nothing is examined until a permission is chosen. Findings are printed as
+    they arrive rather than in a block at the end, because a scan takes time
+    and a person watching one deserves to see it happening.
+    """
+    from src.schemas.node import ScanConsent, ScanScope
+
+    store = _node_store()
+    _nodes, existing = store.load()
+
+    if scope:
+        chosen = _scope_from(scope)
+    elif yes:
+        chosen = existing.scope
+    else:
+        console.print(
+            "\nFukasawa can run some workflow steps automatically, using AI\n"
+            "on a computer you point it at.\n"
+        )
+        console.print("[bold]Where should I look?[/bold]")
+        console.print("  1  Just this computer            nothing leaves this machine")
+        console.print("  2  A computer I'll name")
+        console.print("  3  Every computer on this network  takes about a minute; some")
+        console.print("                                     workplaces disallow this")
+        console.print("  4  Don't look — I'll type it in")
+        answer = typer.prompt("Choose", default="1")
+        chosen = {
+            "1": ScanScope.THIS_MACHINE,
+            "2": ScanScope.NAMED_HOST,
+            "3": ScanScope.LOCAL_NETWORK,
+            "4": ScanScope.NONE,
+        }.get(answer.strip(), ScanScope.THIS_MACHINE)
+
+    if chosen is ScanScope.NONE:
+        console.print(
+            "[yellow]Refused:[/yellow] no permission to look. "
+            "Choose a different option, or add a computer with "
+            "[cyan]fukasawa node add[/cyan]."
+        )
+        raise typer.Exit(3)
+
+    if chosen is ScanScope.NAMED_HOST and not host:
+        host = typer.prompt("Address of the computer")
+
+    store.set_consent(ScanConsent.granted(chosen, "operator"))
+
+    console.print("")
+    found = []
+    for event in _discover(chosen, host):
+        if as_json:
+            # NOTE: src/cli.py imports the json module as `jsonlib`.
+            console.print(jsonlib.dumps({
+                "stage": event.stage, "message": event.message,
+                "ok": event.ok, "finished": event.finished,
+            }))
+        else:
+            mark = "  [green]OK[/green]" if event.ok else "  [yellow]--[/yellow]"
+            console.print(f"{mark}  {event.message}")
+        if event.node is not None and event.node not in found:
+            found.append(event.node)
+
+    for node in found:
+        if label:
+            node.label = label
+        store.upsert(node)
+
+    if found:
+        _render_summary(store.load()[0])
+
+
+@node_app.command("list")
+def node_list(
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Show every computer Fukasawa has been told about."""
+    nodes, _consent = _node_store().load()
+    if as_json:
+        console.print(jsonlib.dumps(
+            {"nodes": [n.model_dump(mode="json") for n in nodes]}, indent=2
+        ))
+        return
+
+    from src.nodes.summary import human_words, source_label
+
+    for node in nodes:
+        console.print(f"\n[bold]{node.label}[/bold]  [dim]{node.url}[/dim]")
+        console.print(f"  Models it can run    {len(node.models)}")
+        if node.max_context_length:
+            console.print(
+                f"  Longest input        {human_words(node.max_context_length)}"
+                f"   [dim]{source_label(node.source_of('models'))}[/dim]"
+            )
+    _render_summary(nodes)
+
+
+@node_app.command("show")
+def node_show(node_id: str = typer.Argument(..., help="Which computer.")) -> None:
+    """Show one computer and every model it can serve."""
+    nodes, _ = _node_store().load()
+    match = next((n for n in nodes if n.node_id == node_id), None)
+    if match is None:
+        console.print(f"[red]Nothing stored called '{node_id}'.[/red]")
+        raise typer.Exit(1)
+
+    from src.nodes.summary import human_bytes, human_rate, human_words
+
+    console.print(f"\n[bold]{match.label}[/bold]  [dim]{match.url}[/dim]")
+    console.print(f"  Answering            {'yes' if match.reachable else 'no'}")
+    console.print(f"  Speed                {human_rate(match.host.tokens_per_second)}")
+    console.print(f"  Graphics card        {human_bytes(match.host.vram_bytes)}")
+    for model in match.models:
+        console.print(
+            f"    {model.name:<28} {human_words(model.context_length)}"
+        )
+
+
+@node_app.command("add")
+def node_add(
+    label: str = typer.Option(..., "--label", help="What to call it."),
+    kind: str = typer.Option(..., "--kind", help="ollama | llamacpp"),
+    url: str = typer.Option(..., "--url", help="Base URL it answers on."),
+) -> None:
+    """Add a computer by hand, without looking for it."""
+    from src.schemas.node import InferenceNode, NodeKind, Provenance, slugify
+
+    if kind not in {k.value for k in NodeKind}:
+        console.print(f"[red]'{kind}' is not one of: ollama, llamacpp[/red]")
+        raise typer.Exit(1)
+
+    node = InferenceNode(
+        node_id=slugify(label), label=label, kind=NodeKind(kind), url=url,
+        provenance={
+            "label": Provenance.DECLARED,
+            "url": Provenance.DECLARED,
+            "kind": Provenance.DECLARED,
+        },
+    )
+    _node_store().upsert(node)
+    console.print(f"Added [bold]{label}[/bold].")
+
+
+@node_app.command("forget")
+def node_forget(node_id: str = typer.Argument(..., help="Which computer.")) -> None:
+    """Remove a computer."""
+    if not _node_store().forget(node_id):
+        console.print(f"[red]Nothing stored called '{node_id}'.[/red]")
+        raise typer.Exit(1)
+    console.print(f"Removed {node_id}.")
+
+
+@node_app.command("consent")
+def node_consent(
+    set_to: str = typer.Option("", "--set", help="none | this-machine | named-host | local-network"),
+) -> None:
+    """Show or change how far a scan may reach."""
+    from src.schemas.node import ScanConsent
+
+    store = _node_store()
+    _nodes, consent = store.load()
+    if not set_to:
+        console.print(f"Currently: {_SCOPE_WORDS[consent.scope.value]}")
+        return
+    chosen = _scope_from(set_to)
+    store.set_consent(ScanConsent.granted(chosen, "operator"))
+    console.print(f"Changed to: {_SCOPE_WORDS[chosen.value]}")
 
 
 # ------------------------------------------------------------------------ eval
