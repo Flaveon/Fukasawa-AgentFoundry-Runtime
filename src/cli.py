@@ -1463,6 +1463,27 @@ def node_scan(
         )
         raise typer.Exit(3)
 
+    if chosen is ScanScope.LOCAL_NETWORK:
+        # Sweeping a whole network is named in the design and is not built in
+        # this phase. The answer has to come before the permission is written
+        # down, below: a permission nothing can act on would be read back by
+        # every later scan and fail again, and clearing it means knowing to
+        # run a command nothing mentions.
+        #
+        # Exit 1, not the 3 used just above. Three means refused as a matter
+        # of doctrine, and nothing here is refusing anyone anything — the
+        # part being asked for does not exist yet. That is the same condition
+        # as a scope this program does not recognise, which already exits 1.
+        console.print(
+            "[yellow]Looking at every computer on this network is not "
+            "built yet.[/yellow]\n"
+            "To look at one other computer, run [cyan]fukasawa node scan "
+            "--scope named-host --host <address>[/cyan].\n"
+            "To record a computer without looking for it, run "
+            "[cyan]fukasawa node add[/cyan]."
+        )
+        raise typer.Exit(1)
+
     if chosen is ScanScope.NAMED_HOST and not host:
         host = typer.prompt("Address of the computer")
 

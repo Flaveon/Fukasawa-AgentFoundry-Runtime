@@ -139,6 +139,70 @@ class TestScan:
         assert events[-1]["finished"] is True
 
 
+class TestTheWholeNetworkIsNotBuiltYet:
+    """Asking for the sweep of a whole network is answered, not crashed.
+
+    The sweep is out of this plan's scope. The plan said so and said the
+    refusal should be legible. Two things have to hold: the person is told
+    what to do instead, and the permission is never written down, because a
+    permission the program cannot act on turns one mistake into a permanent
+    one — every later scan reads it back and hits the same wall.
+    """
+
+    def _assert_answered(self, result):
+        assert result.exit_code == 1, result.output
+        assert "not built yet" in result.output
+        assert "named-host" in result.output
+
+    def test_the_flag_is_answered_in_sentences(self, store_path):
+        seed(store_path)
+        self._assert_answered(CliRunner().invoke(
+            app, ["node", "scan", "--scope", "local-network", "--yes"]
+        ))
+
+    def test_the_third_choice_on_the_menu_is_answered_the_same_way(
+        self, store_path
+    ):
+        seed(store_path)
+        self._assert_answered(
+            CliRunner().invoke(app, ["node", "scan"], input="3\n")
+        )
+
+    def test_the_permission_on_file_is_left_alone(self, store_path):
+        """Nothing unusable is stored, so the next scan is unaffected."""
+        seed(store_path)
+        CliRunner().invoke(app, ["node", "scan", "--scope", "local-network", "--yes"])
+        _nodes, consent = NodeStore(store_path).load()
+        assert consent.scope is ScanScope.THIS_MACHINE
+
+    def test_a_later_scan_looks_where_the_permission_on_file_says(
+        self, store_path, monkeypatch
+    ):
+        """The proof the mistake did not stick.
+
+        The next bare scan has to look at this computer, which is what the
+        file says. Exit code alone would not show that — the stand-in for
+        discovery answers to anything — so the scope it is handed is what
+        gets checked.
+        """
+        from src.nodes.discovery import DiscoveryEvent
+
+        seed(store_path)
+        runner = CliRunner()
+        runner.invoke(app, ["node", "scan", "--scope", "local-network", "--yes"])
+
+        asked = []
+
+        def fake(scope, host="", **kw):
+            asked.append(scope)
+            yield DiscoveryEvent("done", "Found 1 computer.", finished=True)
+
+        monkeypatch.setattr("src.cli._discover", fake)
+        result = runner.invoke(app, ["node", "scan", "--yes"])
+        assert result.exit_code == 0, result.output
+        assert asked == [ScanScope.THIS_MACHINE]
+
+
 class TestAddAndForget:
     def test_a_computer_can_be_added_by_hand(self, store_path):
         result = CliRunner().invoke(app, [
