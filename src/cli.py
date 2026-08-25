@@ -1383,7 +1383,7 @@ def _scope_from(text: str):
 
     if text not in _SCOPE_FLAGS:
         console.print(
-            f"[red]'{text}' is not one of the choices.[/red] "
+            f"[red]'{escape(text)}' is not one of the choices.[/red] "
             f"Use one of: {', '.join(_SCOPE_FLAGS)}"
         )
         raise typer.Exit(1)
@@ -1403,7 +1403,10 @@ def _render_summary(nodes) -> None:
     summary = summarise(nodes)
     console.print("\n[bold]What this means when steps run[/bold]")
     for row in summary.rows:
-        console.print(f"  {row.label:<32} {row.value}")
+        # The first row is a list of the labels people chose, so it is their
+        # text, not ours. escape() keeps a square bracket in a label from
+        # being read as formatting and aborting the print.
+        console.print(f"  {row.label:<32} {escape(row.value)}")
     if summary.consequence:
         console.print(f"\n  {summary.consequence}")
 
@@ -1469,14 +1472,20 @@ def node_scan(
     found = []
     for event in _discover(chosen, host):
         if as_json:
-            # NOTE: src/cli.py imports the json module as `jsonlib`.
-            console.print(jsonlib.dumps({
+            # A plain print, not console.print: Rich wraps to the window and
+            # would split a message in two. Not `_emit_json` either — that
+            # helper indents across several lines, and the design (§3.7) calls
+            # this a stream of one object per line. So: dumped flat, printed
+            # raw. NOTE: src/cli.py imports the json module as `jsonlib`.
+            print(jsonlib.dumps({
                 "stage": event.stage, "message": event.message,
                 "ok": event.ok, "finished": event.finished,
             }))
         else:
             mark = "  [green]OK[/green]" if event.ok else "  [yellow]--[/yellow]"
-            console.print(f"{mark}  {event.message}")
+            # A finding quotes model names read off another computer, so the
+            # text is not ours and is escaped before it is printed.
+            console.print(f"{mark}  {escape(event.message)}")
         if event.node is not None and event.node not in found:
             found.append(event.node)
 
@@ -1496,15 +1505,17 @@ def node_list(
     """Show every computer Fukasawa has been told about."""
     nodes, _consent = _node_store().load()
     if as_json:
-        console.print(jsonlib.dumps(
-            {"nodes": [n.model_dump(mode="json") for n in nodes]}, indent=2
-        ))
+        _emit_json({"nodes": [n.model_dump(mode="json") for n in nodes]})
         return
 
     from src.nodes.summary import human_words, source_label
 
     for node in nodes:
-        console.print(f"\n[bold]{node.label}[/bold]  [dim]{node.url}[/dim]")
+        # Label and address are both typed by a person; escape() keeps a
+        # square bracket in either from being read as formatting.
+        console.print(
+            f"\n[bold]{escape(node.label)}[/bold]  [dim]{escape(node.url)}[/dim]"
+        )
         console.print(f"  Models it can run    {len(node.models)}")
         if node.max_context_length:
             console.print(
@@ -1520,18 +1531,23 @@ def node_show(node_id: str = typer.Argument(..., help="Which computer.")) -> Non
     nodes, _ = _node_store().load()
     match = next((n for n in nodes if n.node_id == node_id), None)
     if match is None:
-        console.print(f"[red]Nothing stored called '{node_id}'.[/red]")
+        console.print(f"[red]Nothing stored called '{escape(node_id)}'.[/red]")
         raise typer.Exit(1)
 
     from src.nodes.summary import human_bytes, human_rate, human_words
 
-    console.print(f"\n[bold]{match.label}[/bold]  [dim]{match.url}[/dim]")
+    console.print(
+        f"\n[bold]{escape(match.label)}[/bold]  [dim]{escape(match.url)}[/dim]"
+    )
     console.print(f"  Answering            {'yes' if match.reachable else 'no'}")
     console.print(f"  Speed                {human_rate(match.host.tokens_per_second)}")
     console.print(f"  Graphics card        {human_bytes(match.host.vram_bytes)}")
     for model in match.models:
+        # A model name is read off another computer, so it is escaped. Padding
+        # happens first and escaping second, so the column still lines up: the
+        # backslashes escape() adds are not printed.
         console.print(
-            f"    {model.name:<28} {human_words(model.context_length)}"
+            f"    {escape(f'{model.name:<28}')} {human_words(model.context_length)}"
         )
 
 
@@ -1545,7 +1561,7 @@ def node_add(
     from src.schemas.node import InferenceNode, NodeKind, Provenance, slugify
 
     if kind not in {k.value for k in NodeKind}:
-        console.print(f"[red]'{kind}' is not one of: ollama, llamacpp[/red]")
+        console.print(f"[red]'{escape(kind)}' is not one of: ollama, llamacpp[/red]")
         raise typer.Exit(1)
 
     node = InferenceNode(
@@ -1557,16 +1573,16 @@ def node_add(
         },
     )
     _node_store().upsert(node)
-    console.print(f"Added [bold]{label}[/bold].")
+    console.print(f"Added [bold]{escape(label)}[/bold].")
 
 
 @node_app.command("forget")
 def node_forget(node_id: str = typer.Argument(..., help="Which computer.")) -> None:
     """Remove a computer."""
     if not _node_store().forget(node_id):
-        console.print(f"[red]Nothing stored called '{node_id}'.[/red]")
+        console.print(f"[red]Nothing stored called '{escape(node_id)}'.[/red]")
         raise typer.Exit(1)
-    console.print(f"Removed {node_id}.")
+    console.print(f"Removed {escape(node_id)}.")
 
 
 @node_app.command("consent")
