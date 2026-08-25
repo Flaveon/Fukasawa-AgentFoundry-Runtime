@@ -1456,6 +1456,19 @@ def node_scan(
         }.get(answer.strip(), ScanScope.THIS_MACHINE)
 
     if chosen is ScanScope.NONE:
+        # OPEN QUESTION — for the operator, not to be guessed at here.
+        #
+        # Two different situations end up on this line. `--scope none` is a
+        # refusal of something explicitly asked for, and exit 3 is right for
+        # it; a test holds that contract. Choice 4 on the menu — "Don't look
+        # — I'll type it in" — is not a refusal of anything. It is a person
+        # taking a route this program offers, and answering it with
+        # "Refused" and a non-zero exit describes them wrongly.
+        #
+        # Telling the two paths apart in code is easy. What the chosen route
+        # should then do is not: exit 0 pointing at `node add`, or exit 3
+        # with different words, turns on whether anything is expected to read
+        # this exit code, and nobody has said. Left as one path on purpose.
         console.print(
             "[yellow]Refused:[/yellow] no permission to look. "
             "Choose a different option, or add a computer with "
@@ -1485,6 +1498,17 @@ def node_scan(
         raise typer.Exit(1)
 
     if chosen is ScanScope.NAMED_HOST and not host:
+        if yes:
+            # --yes is documented as skipping the prompts, so this one cannot
+            # be asked either. Asked anyway on a closed input, it aborts
+            # mid-question and names nothing that would fix it.
+            console.print(
+                "[yellow]No address was given.[/yellow] --yes skips the "
+                "prompts, so the address has to arrive as a flag.\n"
+                "Run [cyan]fukasawa node scan --scope named-host --host "
+                "<address>[/cyan]."
+            )
+            raise typer.Exit(1)
         host = typer.prompt("Address of the computer")
 
     store.set_consent(ScanConsent.granted(chosen, "operator"))

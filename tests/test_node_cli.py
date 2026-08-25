@@ -139,6 +139,37 @@ class TestScan:
         assert events[-1]["finished"] is True
 
 
+class TestSkippingThePrompts:
+    """--yes says it skips the prompts, so it has to skip all of them."""
+
+    def test_naming_a_computer_without_an_address_says_which_flag_is_missing(
+        self, store_path
+    ):
+        """One prompt was left in, and it was the one --yes could not answer.
+
+        Exit 1 on its own proves nothing: an unanswerable prompt on a closed
+        input also ends at exit 1, having printed half a question. What is
+        checked is that the question is not asked at all and the missing
+        flag is named.
+        """
+        result = CliRunner().invoke(
+            app, ["node", "scan", "--scope", "named-host", "--yes"]
+        )
+        assert result.exit_code == 1, result.output
+        assert "Address of the computer" not in result.output
+        assert "--host" in result.output
+
+    def test_the_same_holds_when_the_permission_came_off_the_file(
+        self, store_path
+    ):
+        """A bare --yes reads the stored permission and lands in the same place."""
+        store = NodeStore(store_path)
+        store.save([], ScanConsent.granted(ScanScope.NAMED_HOST, "sam"))
+        result = CliRunner().invoke(app, ["node", "scan", "--yes"])
+        assert result.exit_code == 1, result.output
+        assert "--host" in result.output
+
+
 class TestTheWholeNetworkIsNotBuiltYet:
     """Asking for the sweep of a whole network is answered, not crashed.
 
