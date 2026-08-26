@@ -1513,7 +1513,12 @@ def node_scan(
 
     store.set_consent(ScanConsent.granted(chosen, "operator"))
 
-    console.print("")
+    # A blank line to separate the findings from the question above them --
+    # spacing for a person reading, and so not written when the reader is a
+    # program. Under --json this line is the stream's first line, and an
+    # empty first line is not an object.
+    if not as_json:
+        console.print("")
     found = []
     for event in _discover(chosen, host):
         if as_json:
@@ -1539,7 +1544,12 @@ def node_scan(
             node.label = label
         store.upsert(node)
 
-    if found:
+    # The summary panel is prose for a person: labelled rows, rounded word
+    # figures, and a consequence sentence. Under --json it would land inside
+    # the stream as several lines that are not objects, and only ever on a
+    # scan that FOUND something -- so a stand-in yielding no node never
+    # reaches it, and the leak hides behind the success case.
+    if found and not as_json:
         _render_summary(store.load()[0])
 
 

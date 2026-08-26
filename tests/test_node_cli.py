@@ -214,24 +214,69 @@ class TestScan:
         A message can be longer than the window and can carry brackets, since
         part of it is a model name read off another computer. Neither may
         break a line in two or alter a character.
+
+        The scan here FINDS something, and that is the point. A scan that
+        finds nothing never reaches the summary panel, so a stand-in that
+        yields no node cannot see whether human text is being written into
+        the stream -- which is the same blind spot, in the same command, that
+        the wrapping bug hid behind. Every line is parsed, blanks included:
+        one object per line means no decoration before, between, or after.
         """
         from src.nodes.discovery import DiscoveryEvent
 
         message = "Biggest is a model with a very long name [red] indeed here"
+        found = InferenceNode(
+            node_id="found-pc", label="Found PC", kind=NodeKind.OLLAMA,
+            url="http://127.0.0.1:11434", reachable=True,
+            models=[ModelCapability(name="llama3.1:8b", context_length=8192)],
+        )
 
         def fake(scope, host="", **kw):
             yield DiscoveryEvent("biggest", message)
-            yield DiscoveryEvent("done", "Found 1 computer.", finished=True)
+            yield DiscoveryEvent(
+                "done", "Found 1 computer.", node=found, finished=True
+            )
 
         monkeypatch.setattr("src.cli._discover", fake)
         result = CliRunner(env={"COLUMNS": "60"}).invoke(
             app, ["node", "scan", "--scope", "this-machine", "--yes", "--json"]
         )
         assert result.exit_code == 0, result.output
-        lines = [ln for ln in result.output.splitlines() if ln.strip()]
-        events = [json.loads(ln) for ln in lines]
+        events = [json.loads(ln) for ln in result.output.splitlines()]
         assert events[0]["message"] == message
         assert events[-1]["finished"] is True
+
+    def test_a_scan_that_finds_something_shows_a_person_the_summary(
+        self, store_path, monkeypatch
+    ):
+        """The other half of the rule above: withheld from a stream, kept here.
+
+        Nothing else in this file asserts that the summary panel is ever
+        printed, so the guard that keeps it out of --json would read exactly
+        like a guard that removed it altogether, and every test would still
+        pass. This is the assertion that tells those two apart.
+        """
+        from src.nodes.discovery import DiscoveryEvent
+
+        found = InferenceNode(
+            node_id="found-pc", label="Found PC", kind=NodeKind.OLLAMA,
+            url="http://127.0.0.1:11434", reachable=True,
+            models=[ModelCapability(name="llama3.1:8b", context_length=8192)],
+        )
+
+        def fake(scope, host="", **kw):
+            yield DiscoveryEvent(
+                "done", "Found 1 computer.", node=found, finished=True
+            )
+
+        monkeypatch.setattr("src.cli._discover", fake)
+        result = CliRunner().invoke(
+            app, ["node", "scan", "--scope", "this-machine", "--yes"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "What this means when steps run" in result.output
+        # A figure with its unit, per §3.1.1 -- not a verdict about the box.
+        assert "8,192 tokens" in result.output
 
 
 class TestTheConsentPrompt:
