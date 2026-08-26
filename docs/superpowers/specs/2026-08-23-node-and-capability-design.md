@@ -77,10 +77,16 @@ The distinction that matters when writing copy:
 |---|---|
 | **A judgement about the user's setup** — forbidden | "expect it to be slow", "that should be plenty", "a limited graphics card" |
 | **A fact about their setup** — required | "about 40 words a second", "no graphics card detected", "8,192 tokens" |
-| **A fact about how this program behaves** — allowed | "steps needing more than 6,000 words stay with you", "promotion never requires a computer" |
+| **A fact about how this program behaves** — allowed | "steps needing more than 6,000 words are likely to fail on these computers", "promotion never requires a computer" |
 
 The third row is not editorialising: it is mechanical consequence, and stating
 it is the whole reason the screen exists.
+
+Note that the third row states the consequence for the **step**, not for the
+reader. An earlier draft of this table read "steps needing more than 6,000
+words stay with you", which §3.1.2 forbids: it assumes the person at the screen
+is the person who performs the step, and they may not be. §3.1.2 governs — a
+fact about how the program behaves is still subject to the ownership rule.
 
 ### 3.1.2 Never assume who owns the work, the hardware, or the network
 
