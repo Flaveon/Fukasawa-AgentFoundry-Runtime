@@ -8,6 +8,7 @@ the copy rules of the design apply here exactly as they do on screen.
 """
 
 import json
+import re
 
 import pytest
 from typer.testing import CliRunner
@@ -15,6 +16,7 @@ from typer.testing import CliRunner
 from src.cli import app
 from src.nodes.store import NodeStore
 from src.schemas.node import (
+    HostCapability,
     InferenceNode,
     ModelCapability,
     NodeKind,
@@ -22,8 +24,64 @@ from src.schemas.node import (
     ScanScope,
 )
 
-JUDGEMENT = ["slow", "fast", "good", "poor", "powerful", "weak", "adequate"]
-OWNERSHIP = ["stays with you", "your workflow", "your model", "off your hands"]
+#: The words design §3.1.1 forbids, in its own order. Every one of them
+#: characterises the reader's hardware instead of reporting a figure, and the
+#: whole point of the rule is that whether five words a second is slow depends
+#: on work this program knows nothing about.
+#:
+#: This is the spec's list and nothing else. "weak" used to sit here and does
+#: not appear in §3.1.1; a test that invents its own rules stops being
+#: evidence about the rules that exist.
+JUDGEMENT = [
+    "slow", "fast", "good", "poor", "powerful", "limited", "adequate",
+    "sufficient", "plenty", "only",
+]
+
+#: The phrases design §3.1.2 forbids. Each asserts an ownership nobody
+#: established: the person reading may be setting a machine up for somebody
+#: else, and this runtime already names a step's performer in its own data.
+#: Singular entries catch their plurals as substrings.
+OWNERSHIP = [
+    "stays with you", "your workflow", "your model", "off your hands",
+    "my network",
+]
+
+#: Copy the spec writes out and approves, which nonetheless contains a word on
+#: the JUDGEMENT list. These are removed from the output before the words are
+#: hunted for, and nothing else is.
+#:
+#: WHY THIS EXISTS, so the next reader does not delete it as clutter: §3.1.1
+#: forbids "only" as a verdict about hardware — "8 GB is only..." — and the
+#: same goes for "plenty" and "limited". It does not forbid the ordinary
+#: adverb of restriction, and the spec's own approved copy uses it, twice, to
+#: promise a person that nothing will be examined beyond what they permitted.
+#: A plain `word in output` check would fail on the exact sentences the spec
+#: endorses, and the two ways out of that — quietly dropping "only" from the
+#: list, or quietly rewriting approved copy until the test goes green — both
+#: throw away the rule instead of enforcing it.
+#:
+#: So: allow the endorsed phrase, then match what is left on word boundaries.
+#: Boundaries matter on their own. "fastest measured speed" (§3.6) is a
+#: comparison between figures, not a verdict on any of them, and \bfast\b
+#: leaves it alone while still catching "that will be fast".
+ENDORSED = [
+    'only checks this computer',   # §3.2, the empty Environment tab
+    'i check that one only',       # §3.3, the second rung of the permission
+]
+
+
+def judgements_in(output: str) -> list[str]:
+    """Every forbidden verdict in this output, ignoring copy the spec endorses."""
+    remaining = output.lower()
+    for phrase in ENDORSED:
+        remaining = remaining.replace(phrase, " ")
+    return [w for w in JUDGEMENT if re.search(rf"\b{w}\b", remaining)]
+
+
+def ownership_in(output: str) -> list[str]:
+    """Every phrase in this output that claims someone owns something."""
+    lowered = output.lower()
+    return [p for p in OWNERSHIP if p in lowered]
 
 
 @pytest.fixture()
@@ -85,6 +143,43 @@ class TestList:
         assert payload["nodes"][0]["label"] == stored
 
 
+class TestShow:
+    """One computer's card: every figure with its unit, and no verdict."""
+
+    def test_the_figures_are_rendered_in_words_a_reader_can_use(self, store_path):
+        seed(store_path, host=HostCapability(gpu_present=True,
+                                             vram_bytes=6_000_000_000,
+                                             tokens_per_second=53.0))
+        result = CliRunner().invoke(app, ["node", "show", "home-pc"])
+        assert result.exit_code == 0, result.output
+        assert "Home PC" in result.output
+        assert "about 40 words a second" in result.output
+        assert "6 GB or more" in result.output
+        assert "llama3.1:8b" in result.output
+        assert "about 6,100 words" in result.output
+
+    def test_figures_never_measured_read_as_not_sure(self, store_path):
+        """Zero is not a reading. Nothing was established, and it says so."""
+        seed(store_path)
+        result = CliRunner().invoke(app, ["node", "show", "home-pc"])
+        assert result.exit_code == 0, result.output
+        assert result.output.count("not sure") == 2
+
+    def test_a_computer_with_no_models_still_renders(self, store_path):
+        seed(store_path, models=[])
+        result = CliRunner().invoke(app, ["node", "show", "home-pc"])
+        assert result.exit_code == 0, result.output
+        assert "Home PC" in result.output
+
+    def test_asking_for_something_absent_names_what_was_asked_for(
+        self, store_path
+    ):
+        seed(store_path)
+        result = CliRunner().invoke(app, ["node", "show", "garage-pc"])
+        assert result.exit_code == 1, result.output
+        assert "garage-pc" in result.output
+
+
 class TestScan:
     def test_scanning_without_permission_is_refused_not_crashed(self, store_path):
         result = CliRunner().invoke(app, ["node", "scan", "--scope", "none", "--yes"])
@@ -137,6 +232,78 @@ class TestScan:
         events = [json.loads(ln) for ln in lines]
         assert events[0]["message"] == message
         assert events[-1]["finished"] is True
+
+
+class TestTheConsentPrompt:
+    """Nothing opens a socket until somebody has said how far to look.
+
+    That question is the whole privacy story of this feature, and every
+    other test here hands it a flag so it never appears. These drive it the
+    way a person does. The stand-in for discovery is substituted on every
+    path that would reach it: no test in this file touches a network.
+    """
+
+    @pytest.fixture()
+    def asked(self, monkeypatch):
+        """Record what discovery was asked to look at, without looking."""
+        from src.nodes.discovery import DiscoveryEvent
+
+        calls = []
+
+        def fake(scope, host="", **kw):
+            calls.append((scope, host))
+            yield DiscoveryEvent("done", "Found 1 computer.", finished=True)
+
+        monkeypatch.setattr("src.cli._discover", fake)
+        return calls
+
+    def test_the_four_choices_are_offered_in_sentences(self, store_path, asked):
+        result = CliRunner().invoke(app, ["node", "scan"], input="1\n")
+        assert "Where should I look?" in result.output
+        assert "nothing leaves this machine" in result.output
+        assert "I'll type it in" in result.output
+
+    def test_choosing_this_computer_looks_only_here(self, store_path, asked):
+        result = CliRunner().invoke(app, ["node", "scan"], input="1\n")
+        assert result.exit_code == 0, result.output
+        assert asked == [(ScanScope.THIS_MACHINE, "")]
+
+    def test_choosing_a_named_computer_asks_for_the_address(
+        self, store_path, asked
+    ):
+        result = CliRunner().invoke(app, ["node", "scan"], input="2\n10.0.0.9\n")
+        assert result.exit_code == 0, result.output
+        assert "Address of the computer" in result.output
+        assert asked == [(ScanScope.NAMED_HOST, "10.0.0.9")]
+
+    def test_choosing_the_whole_network_looks_at_nothing(self, store_path, asked):
+        """Not built yet, so nothing is examined. Covered fully elsewhere."""
+        result = CliRunner().invoke(app, ["node", "scan"], input="3\n")
+        assert result.exit_code == 1, result.output
+        assert asked == []
+
+    def test_choosing_not_to_look_looks_at_nothing(self, store_path, asked):
+        result = CliRunner().invoke(app, ["node", "scan"], input="4\n")
+        assert result.exit_code == 3, result.output
+        assert asked == []
+
+    def test_pressing_enter_takes_the_careful_route(self, store_path, asked):
+        """The default has to be the one where nothing leaves the machine."""
+        result = CliRunner().invoke(app, ["node", "scan"], input="\n")
+        assert result.exit_code == 0, result.output
+        assert asked == [(ScanScope.THIS_MACHINE, "")]
+
+    def test_an_answer_off_the_menu_takes_the_careful_route_too(
+        self, store_path, asked
+    ):
+        CliRunner().invoke(app, ["node", "scan"], input="9\n")
+        assert asked == [(ScanScope.THIS_MACHINE, "")]
+
+    def test_the_choice_is_remembered(self, store_path, asked):
+        """Answered once, so a later scan does not ask again."""
+        CliRunner().invoke(app, ["node", "scan"], input="2\n10.0.0.9\n")
+        _nodes, consent = NodeStore(store_path).load()
+        assert consent.scope is ScanScope.NAMED_HOST
 
 
 class TestSkippingThePrompts:
@@ -353,12 +520,78 @@ class TestSquareBracketsInStoredText:
 
 
 class TestCopyRules:
-    @pytest.mark.parametrize("argv", [
-        ["node", "list"],
-        ["node", "consent"],
+    """Every one of the six commands, against both rules of design §3.1.
+
+    All six, because a rule enforced on two of them is a rule two thirds
+    unenforced, and the two left out were the ones printing the most figures
+    and all of the permission copy.
+
+    The scan cases below reach discovery through a stand-in, so the words
+    checked are still the ones the product prints — the stand-in supplies the
+    stream, not the sentences.
+    """
+
+    @pytest.fixture()
+    def a_scan_that_finds_something(self, store_path, monkeypatch):
+        """A scan that reports real findings about a real computer, offline.
+
+        The lines come from discovery's own describing function, so this
+        checks product copy rather than copy invented by this test.
+        """
+        from src.nodes.discovery import DiscoveryEvent, _describe
+
+        node = InferenceNode(
+            node_id="home-pc", label="Home PC", kind=NodeKind.OLLAMA,
+            url="http://localhost:11434", reachable=True, backend_version="0.5.4",
+            models=[ModelCapability(name="llama3.1:8b", context_length=8192,
+                                    size_bytes=4_700_000_000)],
+            host=HostCapability(gpu_present=True, vram_bytes=6_000_000_000,
+                                tokens_per_second=53.0),
+        )
+
+        def fake(scope, host="", **kw):
+            for stage, message in _describe(node):
+                yield DiscoveryEvent(stage, message)
+            yield DiscoveryEvent("done", "Found one computer.", node=node,
+                                 finished=True)
+
+        monkeypatch.setattr("src.cli._discover", fake)
+
+    @pytest.mark.parametrize("argv,typed", [
+        (["node", "list"], None),
+        (["node", "show", "home-pc"], None),
+        (["node", "consent"], None),
+        (["node", "consent", "--set", "this-machine"], None),
+        (["node", "add", "--label", "Kitchen Box", "--kind", "ollama",
+          "--url", "http://10.0.0.9:11434"], None),
+        (["node", "forget", "home-pc"], None),
+        (["node", "scan", "--scope", "this-machine", "--yes"], None),
+        (["node", "scan", "--scope", "none", "--yes"], None),
+        (["node", "scan", "--scope", "local-network", "--yes"], None),
+        (["node", "scan"], "1\n"),
+        (["node", "scan"], "3\n"),
+        (["node", "scan"], "4\n"),
     ])
-    def test_no_command_judges_or_assumes_ownership(self, store_path, argv):
-        seed(store_path)
-        output = CliRunner().invoke(app, argv).output.lower()
-        assert not [w for w in JUDGEMENT if w in output]
-        assert not [w for w in OWNERSHIP if w in output]
+    def test_no_command_judges_or_assumes_ownership(
+        self, store_path, a_scan_that_finds_something, argv, typed
+    ):
+        seed(store_path, host=HostCapability(gpu_present=True,
+                                             vram_bytes=6_000_000_000,
+                                             tokens_per_second=53.0))
+        output = CliRunner().invoke(app, argv, input=typed).output
+        assert judgements_in(output) == []
+        assert ownership_in(output) == []
+
+    def test_the_endorsed_use_of_only_is_told_apart_from_the_forbidden_one(self):
+        """The allowlist has to discriminate, not just excuse the word.
+
+        Without this, an allowlist that swallowed every "only" would look
+        exactly as green as one that works.
+        """
+        assert judgements_in('"Look for it" only checks this computer.') == []
+        assert judgements_in("8 GB is only enough for small models.") == ["only"]
+
+    def test_a_comparison_between_figures_is_not_a_verdict_on_one(self):
+        """Word boundaries, so §3.6's "Fastest measured speed" stays legal."""
+        assert judgements_in("Fastest measured speed  40 words a second") == []
+        assert judgements_in("This computer is fast.") == ["fast"]
