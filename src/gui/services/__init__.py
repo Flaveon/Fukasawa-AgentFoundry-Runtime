@@ -15,6 +15,7 @@ it did when this was one file, so no view needed editing for the split.
 * `brief` — validate a workflow brief, build its agent packages (the original two)
 * `workflow` — the capture → export lifecycle
 * `step_editor` — per-field step editing, with guidance read from the rules
+* `nodes` — which computers may run agent steps, and how they were found
 
 Nothing here imports customtkinter, tkinter, or prints. If it ever does, the
 import-law test in `tests/test_gui_workflow.py` fails.
@@ -27,6 +28,19 @@ from src.gui.services.brief import (
     PackageResult,
     build_workflow,
     validate_brief_file,
+)
+from src.gui.services.nodes import (
+    EDITABLE,
+    FieldView,
+    NodeListResult,
+    NodeRowView,
+    ScanEventView,
+    add_node,
+    forget_node,
+    list_nodes,
+    save_consent,
+    scan,
+    update_field,
 )
 from src.gui.services.step_editor import (
     CHARACTERISTIC_FIELDS,
@@ -116,4 +130,16 @@ __all__ = [
     "promote_draft",
     "reload_draft",
     "validate_draft",
+    # node management
+    "EDITABLE",
+    "FieldView",
+    "NodeListResult",
+    "NodeRowView",
+    "ScanEventView",
+    "add_node",
+    "forget_node",
+    "list_nodes",
+    "save_consent",
+    "scan",
+    "update_field",
 ]
