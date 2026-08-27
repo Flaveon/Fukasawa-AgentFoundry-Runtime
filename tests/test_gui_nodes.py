@@ -182,6 +182,51 @@ class TestEditing:
         nodes, _ = store.load()
         assert nodes[0].kind is NodeKind.OLLAMA
 
+    @pytest.mark.parametrize("field_name,value", [
+        ("label", ""), ("label", "   "), ("url", ""), ("url", "   "),
+    ])
+    def test_clearing_a_name_or_address_is_refused(self, store, field_name,
+                                                   value):
+        """`add_node` refuses exactly these, and this is the likelier route.
+
+        `InferenceNode.model_config` forbids extra fields but does not
+        validate on assignment, so `setattr` ran no check at all and `save`
+        wrote whatever landed. Clearing a text entry is the most ordinary
+        thing a person does on a §3.5 card, so the asymmetry between the two
+        write paths pointed the wrong way.
+        """
+        seed(store)
+        before = store.load()[0][0]
+        result = service.update_field("home-pc", field_name, value, store)
+        assert not result.ok
+        assert result.refusal
+        after = store.load()[0][0]
+        assert getattr(after, field_name) == getattr(before, field_name)
+
+    def test_pointing_one_computer_at_another_address_is_refused(self, store):
+        """`store.py` says two computers may never share a URL.
+
+        That invariant is enforced inside `upsert`, which this path does not
+        go through. Two rows at one address survive until the next scan, which
+        merges into whichever it matches first and leaves the other a stale
+        duplicate nothing will ever refresh.
+        """
+        seed(store)
+        assert service.add_node("Kitchen Box", "ollama",
+                                "http://10.0.0.9:11434", store).ok
+        result = service.update_field("kitchen-box", "url",
+                                      "http://localhost:11434", store)
+        assert not result.ok
+        assert "Home PC" in result.refusal
+        stored = {n.node_id: n.url for n in store.load()[0]}
+        assert stored["kitchen-box"] == "http://10.0.0.9:11434"
+
+    def test_an_address_may_be_retyped_onto_the_same_computer(self, store):
+        """The guard is about a *different* computer, not about re-saving."""
+        seed(store)
+        assert service.update_field("home-pc", "url",
+                                    "http://localhost:11434", store).ok
+
     def test_a_known_kind_is_stored_as_the_enum(self, store):
         seed(store)
         assert service.update_field("home-pc", "kind", "llamacpp", store).ok
@@ -564,9 +609,13 @@ class TestCopyRules:
 
     def test_every_refusal_neither_judges_nor_assumes_ownership(self, store):
         seed(store)
+        service.add_node("Kitchen Box", "ollama", "http://10.0.0.9:11434", store)
         results = [
             service.update_field("nope", "label", "x", store),
             service.update_field("home-pc", "bogus", "x", store),
+            service.update_field("home-pc", "label", "  ", store),
+            service.update_field("kitchen-box", "url",
+                                 "http://localhost:11434", store),
             service.add_node("", "ollama", "", store),
             service.add_node("X", "tealeaves", "http://x:11434", store),
             service.forget_node("nope", store),

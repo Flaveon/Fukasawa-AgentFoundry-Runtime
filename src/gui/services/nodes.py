@@ -154,6 +154,12 @@ class ScanEventView:
 #: the six call sites cannot drift into six different words for it.
 UNUSABLE_FILE = "Cannot use what is stored"
 
+#: What both write paths say when a name or an address is blank. Shared,
+#: because `add_node` refused these from the start while `update_field` wrote
+#: them, and clearing a text entry on the §3.5 card is the likelier of the two
+#: routes to it.
+NEEDS_BOTH = "A computer needs a name and an address."
+
 
 def _store(store: Optional[NodeStore]) -> NodeStore:
     """Use the store given, else the configured one."""
@@ -342,11 +348,7 @@ def add_node(
 ) -> Outcome:
     """Add a computer by hand. Every field is marked as typed."""
     if not label.strip() or not url.strip():
-        return Outcome(
-            ok=False,
-            summary="Missing details",
-            refusal="A computer needs a name and an address.",
-        )
+        return Outcome(ok=False, summary="Missing details", refusal=NEEDS_BOTH)
     if kind not in {k.value for k in NodeKind}:
         return Outcome(
             ok=False,
@@ -411,6 +413,25 @@ def update_field(
             ok=False, summary="Unknown kind",
             refusal=f"'{value}' is not one of: {', '.join(k.value for k in NodeKind)}",
         )
+    # `InferenceNode.model_config` forbids extra fields but does not validate
+    # on assignment, so the `setattr` below runs no check and `save` writes
+    # whatever lands. These two guards are that check.
+    if field_name in ("label", "url") and not value.strip():
+        return Outcome(ok=False, summary="Missing details", refusal=NEEDS_BOTH)
+    if field_name == "url":
+        # `store.py` states the invariant -- two computers may never share a
+        # URL -- but enforces it inside `upsert`, which this path does not go
+        # through. Two rows at one address survive until the next scan, which
+        # merges into whichever it matches first and leaves the other a stale
+        # duplicate nothing will ever refresh.
+        clash = next(
+            (n for n in nodes if n.url == value and n.node_id != node_id), None
+        )
+        if clash is not None:
+            return Outcome(
+                ok=False, summary="Address already recorded",
+                refusal=f"'{clash.label}' is already recorded at that address.",
+            )
     setattr(match, field_name, NodeKind(value) if field_name == "kind" else value)
     match.provenance[field_name] = Provenance.DECLARED
     try:
