@@ -31,6 +31,9 @@ from src.gui.services.brief import (
 )
 from src.gui.services.nodes import (
     EDITABLE,
+    NOT_BUILT,
+    REFUSAL_STAGES,
+    UNUSABLE_FILE,
     FieldView,
     NodeListResult,
     NodeRowView,
@@ -132,6 +135,9 @@ __all__ = [
     "validate_draft",
     # node management
     "EDITABLE",
+    "NOT_BUILT",
+    "REFUSAL_STAGES",
+    "UNUSABLE_FILE",
     "FieldView",
     "NodeListResult",
     "NodeRowView",

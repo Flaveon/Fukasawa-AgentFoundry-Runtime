@@ -59,6 +59,23 @@ from src.schemas.node import (
 #: told me" — an honest label on an invented number.
 EDITABLE = ("label", "url", "kind")
 
+#: The stages on which ``scan()`` stops without a finding. On one of these the
+#: message *is* the answer, and the view shows it in place of findings rather
+#: than as one more row in the stream.
+#:
+#: Written down because the obvious test — ``ok=False and finished`` — is
+#: wrong, and identifies the opposite of a refusal as one. ``discover`` ends a
+#: scan that ran to completion, opened every permitted address and found
+#: nothing with exactly that shape ("Didn't find anything answering. You can
+#: type it in instead."), which is the most common outcome of a first scan.
+#: A view built on the shape cannot tell "we looked and found nothing" from
+#: "we did not look", and would put the first in a refusal treatment.
+#:
+#: ``store`` is on the list although it is not a refusal on doctrine: the file
+#: cannot be used, which stops the scan the same way and needs the same
+#: treatment. The other three decline before anything is opened.
+REFUSAL_STAGES = frozenset({"permission", "not-built", "address", "store"})
+
 #: The answer to a whole-network sweep, which the design names (§3.3) and this
 #: phase does not build. Written once so the two callers cannot drift apart.
 #:

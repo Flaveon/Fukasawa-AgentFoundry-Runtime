@@ -349,6 +349,65 @@ class TestScanning:
         assert nodes and nodes[0].url == "http://10.0.0.9:11434"
 
 
+class TestTellingARefusalFromAnAnswer:
+    """`ok=False and finished` does not identify a refusal, and never did.
+
+    `src/nodes/discovery.py` ends a scan that ran to completion, opened every
+    permitted address and found nothing with exactly that shape — which is the
+    most common outcome of a first scan, and is not a refusal. A view matching
+    on the shape would render "Didn't find anything answering" in a refusal
+    treatment and could not tell "we looked and found nothing" apart from "we
+    did not look". The stage strings already separate the two.
+    """
+
+    def test_a_scan_that_found_nothing_is_not_a_refusal(self, store):
+        """The exact event this list exists to keep out of a refusal panel."""
+        recorder = Recorder(answering=set())
+        events = list(service.scan(ScanScope.THIS_MACHINE, store=store,
+                                   fetch=recorder, post=recorder.post))
+        last = events[-1]
+        assert not last.ok and last.finished, "the shape that used to mean refusal"
+        assert last.message.startswith("Didn't find anything answering")
+        assert last.stage == "done"
+        assert last.stage not in service.REFUSAL_STAGES
+
+    def test_a_scan_that_found_something_ends_on_the_same_stage(self, store):
+        """`done` is one stage for both outcomes, so neither may be on the list."""
+        recorder = Recorder()
+        events = list(service.scan(ScanScope.THIS_MACHINE, store=store,
+                                   fetch=recorder, post=recorder.post))
+        assert events[-1].stage == "done"
+        assert events[-1].stage not in service.REFUSAL_STAGES
+
+    @pytest.mark.parametrize("scope,host", [
+        (ScanScope.NONE, ""),
+        (ScanScope.LOCAL_NETWORK, ""),
+        (ScanScope.NAMED_HOST, "  "),
+    ])
+    def test_every_stop_before_looking_is_on_the_list(self, store, scope, host):
+        recorder = Recorder()
+        events = list(service.scan(scope, host, store=store,
+                                   fetch=recorder, post=recorder.post))
+        assert recorder.asked == []
+        assert events[-1].stage in service.REFUSAL_STAGES
+
+    def test_a_file_that_cannot_be_used_is_on_the_list_too(self, tmp_path):
+        """Not a refusal on doctrine, but it stops the scan the same way."""
+        path = tmp_path / "nodes.yaml"
+        path.write_text("nodes: [unclosed\n", encoding="utf-8")
+        recorder = Recorder()
+        events = list(service.scan(ScanScope.THIS_MACHINE, store=NodeStore(path),
+                                   fetch=recorder, post=recorder.post))
+        assert events[-1].stage in service.REFUSAL_STAGES
+
+    def test_the_list_is_exported_so_the_view_matches_a_constant(self):
+        """Task 8 imports this; a retyped string drifts and nothing notices."""
+        from src.gui import services
+
+        assert services.REFUSAL_STAGES is service.REFUSAL_STAGES
+        assert services.NOT_BUILT is service.NOT_BUILT
+
+
 class TestAFileAPersonEdited:
     """A stored file that does not parse is answered, never raised.
 
