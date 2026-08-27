@@ -283,6 +283,27 @@ class TestScanning:
         nodes, _ = store.load()
         assert nodes, "a discovered computer was not saved"
 
+    def test_a_computer_found_is_written_down_once(self, store, monkeypatch):
+        """`discover` attaches the same node to six events, not one.
+
+        Upserting on each of them rewrote the whole file six times per
+        computer found. The command line collects and writes after the loop;
+        so does this. Counting `save` rather than `upsert` is deliberate —
+        `upsert` calls `load` and `save`, and it is the write that costs.
+        """
+        writes: list[int] = []
+        original = NodeStore.save
+
+        def counting(self, nodes, consent):
+            writes.append(len(nodes))
+            return original(self, nodes, consent)
+
+        monkeypatch.setattr(NodeStore, "save", counting)
+        recorder = Recorder()
+        list(service.scan(ScanScope.THIS_MACHINE, store=store,
+                          fetch=recorder, post=recorder.post))
+        assert writes == [1], writes
+
     def test_progress_reaches_the_view(self, store):
         """The tab draws a bar from these; both halves have to arrive."""
         recorder = Recorder()
@@ -326,6 +347,76 @@ class TestScanning:
         assert {h.split(":")[0] for h in recorder.hosts()} == {"10.0.0.9"}
         nodes, _ = store.load()
         assert nodes and nodes[0].url == "http://10.0.0.9:11434"
+
+
+class TestAFileAPersonEdited:
+    """A stored file that does not parse is answered, never raised.
+
+    `src/schemas/node.py` says these files are hand-editable by design, so a
+    malformed one is an expected outcome rather than an exotic one. The
+    package states the rule at `src/gui/services/workflow.py` — "a traceback
+    is not an error message" — and the Environment tab is the only route to
+    the screen that would let somebody correct the file, so a traceback there
+    is a dead end.
+    """
+
+    @pytest.fixture()
+    def unparseable(self, tmp_path) -> NodeStore:
+        """A file that is not YAML at all."""
+        path = tmp_path / "nodes.yaml"
+        path.write_text("nodes: [unclosed\n", encoding="utf-8")
+        return NodeStore(path)
+
+    @pytest.fixture()
+    def off_contract(self, tmp_path) -> NodeStore:
+        """Valid YAML that is not a computer."""
+        path = tmp_path / "nodes.yaml"
+        path.write_text("nodes:\n  home-pc:\n    kind: tealeaves\n"
+                        "    url: http://x\n", encoding="utf-8")
+        return NodeStore(path)
+
+    @pytest.fixture()
+    def unopenable(self, tmp_path) -> NodeStore:
+        """A path that exists but cannot be read as a file."""
+        path = tmp_path / "nodes.yaml"
+        path.mkdir()
+        return NodeStore(path)
+
+    @pytest.fixture(params=["unparseable", "off_contract", "unopenable"])
+    def broken(self, request) -> NodeStore:
+        return request.getfixturevalue(request.param)
+
+    def test_listing_reports_it_rather_than_raising(self, broken):
+        result = service.list_nodes(broken)
+        assert not result.ok
+        assert str(broken.path) in result.refusal
+        assert result.rows == []
+
+    @pytest.mark.parametrize("name,args", [
+        ("save_consent", (ScanScope.THIS_MACHINE, "sam")),
+        ("add_node", ("Kitchen Box", "ollama", "http://10.0.0.9:11434")),
+        ("forget_node", ("home-pc",)),
+        ("update_field", ("home-pc", "label", "Kitchen Box")),
+    ])
+    def test_every_other_entry_point_reports_it_too(self, broken, name, args):
+        result = getattr(service, name)(*args, store=broken)
+        assert not result.ok
+        assert str(broken.path) in result.refusal
+
+    def test_the_message_names_the_file_and_a_way_out_of_it(self, broken):
+        """A dead end with no exit is how a person ends up stuck on a screen."""
+        refusal = service.list_nodes(broken).refusal
+        assert "Correct that file" in refusal
+        assert judgements_in(refusal) == [], refusal
+        assert ownership_in(refusal) == [], refusal
+
+    def test_a_scan_ends_on_a_stage_the_view_can_recognise(self, broken):
+        recorder = Recorder()
+        events = list(service.scan(ScanScope.THIS_MACHINE, store=broken,
+                                   fetch=recorder, post=recorder.post))
+        assert events[-1].stage == "store"
+        assert not events[-1].ok and events[-1].finished
+        assert str(broken.path) in events[-1].message
 
 
 class TestCopyRules:

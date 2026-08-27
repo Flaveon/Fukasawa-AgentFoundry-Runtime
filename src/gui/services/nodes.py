@@ -20,10 +20,20 @@ this feature's privacy promise cannot afford.
 Every string returned here is read by a person, so design §3.1.1 and §3.1.2
 govern them: report a figure with its unit and never characterise anybody's
 hardware, and say what happens to the *step* rather than assuming who owns it.
+
+**Nothing here raises for a stored file that cannot be used.** ``nodes.yaml``
+is hand-editable by design (``src/schemas/node.py``), so a file that does not
+parse is an expected outcome rather than an exotic one. It comes back as a
+refusal, on the rule the package already states in ``workflow.py``: a
+traceback is not an error message, and this is the only screen from which
+somebody could correct the file.
 """
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterator, Optional
+
+import yaml
 
 from src.gui.services.workflow import Outcome
 from src.nodes.discovery import discover
@@ -106,9 +116,35 @@ class ScanEventView:
     total: int = 0
 
 
+#: What every entry point puts in ``Outcome.summary`` when the stored file
+#: cannot be used. One string, so the view can treat the case uniformly and
+#: the six call sites cannot drift into six different words for it.
+UNUSABLE_FILE = "Cannot use what is stored"
+
+
 def _store(store: Optional[NodeStore]) -> NodeStore:
     """Use the store given, else the configured one."""
     return store or NodeStore()
+
+
+def _unusable(path: Path, exc: Exception) -> str:
+    """Say what is wrong with the stored file, and name a way out of it.
+
+    Three failures are expected here and are told apart, because they call for
+    different repairs: the file could not be opened at all, it is not YAML, or
+    it parses but is not a computer. ``NodeStore.load`` already phrases the
+    third one and names the path, so it is passed through as written.
+    """
+    if isinstance(exc, yaml.YAMLError):
+        detail = f"{path} is not valid YAML: {exc}"
+    elif isinstance(exc, OSError):
+        detail = f"{path} could not be opened: {exc}"
+    else:
+        detail = str(exc)
+    return (
+        f"{detail}\n"
+        "Correct that file, or move it aside and record the computers again."
+    )
 
 
 def _row(node: InferenceNode) -> NodeRowView:
@@ -136,8 +172,19 @@ def _row(node: InferenceNode) -> NodeRowView:
 
 
 def list_nodes(store: Optional[NodeStore] = None) -> NodeListResult:
-    """Every computer, and what follows from having them. Never refuses."""
-    nodes, _consent = _store(store).load()
+    """Every computer, and what follows from having them.
+
+    Refuses exactly once: when the stored file cannot be read. Nothing else
+    here is a failure — no computers recorded is an ordinary answer, and the
+    panel says what still runs without one.
+    """
+    target = _store(store)
+    try:
+        nodes, _consent = target.load()
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        return NodeListResult(
+            ok=False, summary=UNUSABLE_FILE, refusal=_unusable(target.path, exc)
+        )
     summary = summarise(nodes)
     return NodeListResult(
         ok=True,
@@ -160,7 +207,12 @@ def save_consent(
     """
     if scope is ScanScope.LOCAL_NETWORK:
         return Outcome(ok=False, summary="Not built yet", refusal=NOT_BUILT)
-    _store(store).set_consent(ScanConsent.granted(scope, actor))
+    target = _store(store)
+    try:
+        target.set_consent(ScanConsent.granted(scope, actor))
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        return Outcome(ok=False, summary=UNUSABLE_FILE,
+                       refusal=_unusable(target.path, exc))
     return Outcome(ok=True, summary="Saved.")
 
 
@@ -217,9 +269,30 @@ def scan(
     if post is not None:
         kwargs["post"] = post
 
+    found: list[InferenceNode] = []
     for event in discover(scope, host, **kwargs):
-        if event.node is not None:
-            target.upsert(event.node)
+        if event.node is not None and event.node not in found:
+            found.append(event.node)
+        if event.finished and found:
+            # Written once per computer, not once per event. `discover`
+            # attaches the same node to six events (reachable, then five
+            # describing lines) and each `upsert` rewrites the whole file, so
+            # the old shape did six full load-and-dump cycles per computer.
+            # This is the shape `node scan` already uses in src/cli.py.
+            #
+            # Done BEFORE the closing event is yielded, so a scan that says it
+            # has finished has already recorded what it found.
+            try:
+                for node in found:
+                    target.upsert(node)
+            except (OSError, yaml.YAMLError, ValueError) as exc:
+                yield ScanEventView(
+                    stage="store",
+                    message=_unusable(target.path, exc),
+                    ok=False,
+                    finished=True,
+                )
+                return
         yield ScanEventView(
             stage=event.stage,
             message=event.message,
@@ -246,20 +319,31 @@ def add_node(
             summary="Unknown kind",
             refusal=f"'{kind}' is not one of: {', '.join(k.value for k in NodeKind)}",
         )
-    _store(store).upsert(InferenceNode(
-        node_id=slugify(label), label=label, kind=NodeKind(kind), url=url,
-        provenance={
-            "label": Provenance.DECLARED,
-            "url": Provenance.DECLARED,
-            "kind": Provenance.DECLARED,
-        },
-    ))
+    target = _store(store)
+    try:
+        target.upsert(InferenceNode(
+            node_id=slugify(label), label=label, kind=NodeKind(kind), url=url,
+            provenance={
+                "label": Provenance.DECLARED,
+                "url": Provenance.DECLARED,
+                "kind": Provenance.DECLARED,
+            },
+        ))
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        return Outcome(ok=False, summary=UNUSABLE_FILE,
+                       refusal=_unusable(target.path, exc))
     return Outcome(ok=True, summary=f"Added {label}.")
 
 
 def forget_node(node_id: str, store: Optional[NodeStore] = None) -> Outcome:
     """Remove a computer."""
-    if not _store(store).forget(node_id):
+    target = _store(store)
+    try:
+        removed = target.forget(node_id)
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        return Outcome(ok=False, summary=UNUSABLE_FILE,
+                       refusal=_unusable(target.path, exc))
+    if not removed:
         return Outcome(
             ok=False, summary="Not found",
             refusal=f"Nothing stored called '{node_id}'.",
@@ -277,7 +361,11 @@ def update_field(
             refusal=f"'{field_name}' cannot be edited here.",
         )
     target = _store(store)
-    nodes, consent = target.load()
+    try:
+        nodes, consent = target.load()
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        return Outcome(ok=False, summary=UNUSABLE_FILE,
+                       refusal=_unusable(target.path, exc))
     match = next((n for n in nodes if n.node_id == node_id), None)
     if match is None:
         return Outcome(
@@ -291,5 +379,9 @@ def update_field(
         )
     setattr(match, field_name, NodeKind(value) if field_name == "kind" else value)
     match.provenance[field_name] = Provenance.DECLARED
-    target.save(nodes, consent)
+    try:
+        target.save(nodes, consent)
+    except OSError as exc:
+        return Outcome(ok=False, summary=UNUSABLE_FILE,
+                       refusal=_unusable(target.path, exc))
     return Outcome(ok=True, summary="Saved.")
