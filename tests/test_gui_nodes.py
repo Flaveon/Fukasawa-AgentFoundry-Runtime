@@ -19,7 +19,6 @@ policed by one word list. A second copy would drift, and the first thing to
 drift out of it would be the awkward case the list exists to handle.
 """
 
-import pathlib
 import urllib.request
 
 import pytest
@@ -663,6 +662,10 @@ class TestAFileAPersonEdited:
         assert events[-1].stage == "store"
         assert not events[-1].ok and events[-1].finished
         assert str(broken.path) in events[-1].message
+        # The permission is written before anything is opened, so a file that
+        # cannot be used stops the scan before it reaches for an address —
+        # rather than after, with findings it has nowhere to put.
+        assert recorder.asked == []
 
 
 class TestCopyRules:
@@ -726,15 +729,10 @@ class TestCopyRules:
         assert judgements_in(text) == [], text
         assert ownership_in(text) == [], text
 
-
-class TestServicesStayTkFree:
-    def test_no_widget_import(self):
-        """Read the file through the imported module, not through the cwd.
-
-        `pathlib.Path("src/gui/services/nodes.py")` resolves only when pytest
-        happens to be run from the repository root; from anywhere else this
-        test either explodes or, worse, reads some other tree's file.
-        """
-        source = pathlib.Path(service.__file__).read_text(encoding="utf-8")
-        assert "customtkinter" not in source
-        assert "import tkinter" not in source
+# The Tk-free check for this file lives in
+# `tests/test_gui_workflow.py::TestImportLaw::test_services_never_import_widgets`.
+# It is parametrised over a glob of `src/gui/services/*.py`, so `nodes.py` is
+# already one of its cases, and it walks the AST rather than searching the
+# text — which catches `from tkinter import Tk`, an import the substring
+# check that used to sit here read straight past. Two checks of one rule
+# where the weaker one is the one being read is worse than one.
