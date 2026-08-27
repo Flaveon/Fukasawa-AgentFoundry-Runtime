@@ -33,6 +33,7 @@ from src.schemas.node import (
     ModelCapability,
     NodeKind,
     Provenance,
+    ScanConsent,
     ScanScope,
 )
 from tests.test_node_cli import judgements_in, ownership_in
@@ -317,6 +318,58 @@ class TestConsent:
         assert consent.scope is ScanScope.NONE
 
 
+class TestTheScanAndThePermissionLedger:
+    """A scan writes down the reach it acted under, the way the CLI does.
+
+    `src/nodes/discovery.py` says permission "is enforced here rather than in
+    the interface, so no caller can skip it". That is true of the scope it is
+    *passed* and says nothing about the one that was *granted*: a scan of this
+    computer on a store whose recorded permission is NONE opened five
+    addresses and left the record at NONE. `node scan` closes that by writing
+    the permission immediately before its discovery loop; this is the same
+    write at the same point, so a tab wiring the §3.3 radio straight to
+    `scan()` cannot look somewhere the record does not show.
+    """
+
+    def test_the_reach_acted_under_is_recorded(self, store):
+        seed(store)
+        assert store.load()[1].scope is ScanScope.NONE
+        recorder = Recorder()
+        list(service.scan(ScanScope.THIS_MACHINE, store=store, actor="sam",
+                          fetch=recorder, post=recorder.post))
+        _nodes, consent = store.load()
+        assert consent.scope is ScanScope.THIS_MACHINE
+        assert consent.granted_by == "sam"
+
+    def test_a_scan_that_found_nothing_still_records_the_reach(self, store):
+        """The write is about what was permitted, not about what answered."""
+        seed(store)
+        recorder = Recorder(answering=set())
+        list(service.scan(ScanScope.NAMED_HOST, "10.0.0.9", store=store,
+                          fetch=recorder, post=recorder.post))
+        assert store.load()[1].scope is ScanScope.NAMED_HOST
+
+    @pytest.mark.parametrize("scope,host", [
+        (ScanScope.NONE, ""),
+        (ScanScope.LOCAL_NETWORK, ""),
+        (ScanScope.NAMED_HOST, "  "),
+    ])
+    def test_a_scan_that_does_not_look_records_nothing(self, store, scope, host):
+        """Same order as the CLI: every stop comes before the write.
+
+        A permission nothing acts on is worse than none — `node scan` argues
+        this at its own LOCAL_NETWORK branch — and NONE recorded as a grant
+        would read back as a decision somebody made rather than the absence
+        of one.
+        """
+        seed(store)
+        store.set_consent(ScanConsent.granted(ScanScope.THIS_MACHINE, "sam"))
+        recorder = Recorder()
+        list(service.scan(scope, host, store=store,
+                          fetch=recorder, post=recorder.post))
+        assert store.load()[1].scope is ScanScope.THIS_MACHINE
+
+
 class TestScanning:
     def test_scanning_without_permission_refuses_and_opens_nothing(self, store):
         recorder = Recorder()
@@ -412,7 +465,10 @@ class TestScanning:
         recorder = Recorder()
         list(service.scan(ScanScope.THIS_MACHINE, store=store,
                           fetch=recorder, post=recorder.post))
-        assert writes == [1], writes
+        # Two writes: the permission this scan acts under, with nothing on
+        # file yet, and then the one computer it found. Six of the second
+        # would be the old shape.
+        assert writes == [0, 1], writes
 
     def test_each_finding_says_which_computer_it_belongs_to(self, store):
         """§3.4: the desktop fills a card row by row.

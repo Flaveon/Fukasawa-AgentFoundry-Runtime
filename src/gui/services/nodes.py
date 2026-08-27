@@ -259,10 +259,25 @@ def scan(
     scope: ScanScope,
     host: str = "",
     store: Optional[NodeStore] = None,
+    actor: str = "operator",
     fetch=None,
     post=None,
 ) -> Iterator[ScanEventView]:
     """Look for computers, yielding each finding, and save what is found.
+
+    ``scope`` is the reach being asked for, and it is recorded as the standing
+    permission before anything is opened — the same write ``node scan`` makes
+    at the same point. ``discover`` enforces the scope it is *passed*, which
+    is not the same as the one that was *granted*: without this write a tab
+    wiring the §3.3 radio straight to here would look at addresses the
+    permission record never showed, on the feature whose whole pitch is that
+    it does not. Every stop below comes first, so a reach that is refused is
+    never written down.
+
+    **This is a generator.** Nothing happens — no refusal, no permission
+    written, no address opened — until the first ``next()``. A caller that
+    builds the iterator and never drains it has not scanned and has not been
+    refused.
 
     ``fetch`` and ``post`` stand in for the two network verbs. Both are
     forwarded when given, so a caller — a test, or a future dry run — can see
@@ -297,6 +312,21 @@ def scan(
             stage="address",
             message="No address was given. Type the address of the computer "
                     "to look at.",
+            ok=False,
+            finished=True,
+        )
+        return
+
+    # After every stop above and before anything is opened, exactly as
+    # `node scan` orders it in src/cli.py. A reach that was refused leaves the
+    # record alone; a reach that is about to be taken is on the record before
+    # it is taken.
+    try:
+        target.set_consent(ScanConsent.granted(scope, actor))
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        yield ScanEventView(
+            stage="store",
+            message=_unusable(target.path, exc),
             ok=False,
             finished=True,
         )
