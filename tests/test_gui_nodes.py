@@ -340,6 +340,27 @@ class TestScanning:
                           fetch=recorder, post=recorder.post))
         assert writes == [1], writes
 
+    def test_each_finding_says_which_computer_it_belongs_to(self, store):
+        """§3.4: the desktop fills a card row by row.
+
+        A scan finding two computers yields one interleaved stream of prose,
+        and without this the only way to tell which card a row belongs to is
+        the order it arrived in. Ordering is not a key: a row that fails
+        costs one line rather than the whole scan, so the stream is not
+        guaranteed to be the same length per computer.
+        """
+        recorder = Recorder()
+        events = list(service.scan(ScanScope.THIS_MACHINE, store=store,
+                                   fetch=recorder, post=recorder.post))
+        described = {e.stage: e.node_id for e in events if e.node_id}
+        assert set(described) == {"reachable", "backend", "models", "biggest",
+                                  "context", "hardware"}
+        assert set(described.values()) == {"ollama-127-0-0-1-11434"}
+        # A row about no computer in particular says so, rather than
+        # inheriting whichever one came last.
+        assert [e.node_id for e in events if e.stage in ("trying", "done")] == \
+            ["", "", ""]
+
     def test_progress_reaches_the_view(self, store):
         """The tab draws a bar from these; both halves have to arrive."""
         recorder = Recorder()

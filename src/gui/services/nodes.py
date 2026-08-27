@@ -123,7 +123,22 @@ class NodeListResult(Outcome):
 
 @dataclass
 class ScanEventView:
-    """One discovery event, ready to render."""
+    """One discovery event, ready to render.
+
+    ``node_id`` says which computer this row is about, and is empty on the
+    rows that are about no computer in particular — an attempt, or the closing
+    line. §3.4 has the desktop filling a card row by row, and a scan that
+    finds two computers yields one interleaved stream, so without this the
+    only key is the order rows arrived in. Order is not a key: a stage that
+    fails costs one row rather than the whole scan, so the number of rows per
+    computer is not fixed.
+
+    It is the id ``discover`` derived from the address, which is what groups
+    the rows of one scan. It is not promised to be the id the computer ends
+    up stored under: ``NodeStore.upsert`` keeps the id an already-recorded
+    address is filed under, and gives a newcomer whose id is taken a numeric
+    suffix. Read the stored id back from ``list_nodes`` once the scan closes.
+    """
 
     stage: str
     message: str
@@ -131,6 +146,7 @@ class ScanEventView:
     finished: bool = False
     done: int = 0
     total: int = 0
+    node_id: str = ""
 
 
 #: What every entry point puts in ``Outcome.summary`` when the stored file
@@ -317,6 +333,7 @@ def scan(
             finished=event.finished,
             done=event.progress[0],
             total=event.progress[1],
+            node_id=event.node.node_id if event.node is not None else "",
         )
 
 
