@@ -102,13 +102,18 @@ that comment when you implement this.**
    computers are already recorded. Somebody with three machines looking for a
    fourth sees this same menu. "Enter desired node name and location" is wrong
    copy for them.
-2. *"Obviously we can't do evals."* **False**, and putting it on screen would
-   have been a false statement about this tool. `run_eval_case` runs against a
-   `RunLedger` and recorded run artifacts; `src/governance/` contains **zero**
-   references to nodes, inference, Ollama, or llama.cpp. Evals evaluate what
-   already happened. The true and narrower consequence is the one the summary
-   panel already states: steps whose actor is an agent cannot run. **Say nothing
-   about evals.**
+2. *"Obviously we can't do evals."* **False as a statement about today's code**,
+   and putting it on screen would be a false statement about this tool.
+   `run_eval_case` runs against a `RunLedger` and recorded run artifacts;
+   `src/governance/` contains **zero** references to nodes, inference, Ollama,
+   or llama.cpp. Evals evaluate what already happened. The true and narrower
+   consequence is the one the summary panel already states: steps whose actor is
+   an agent cannot run.
+
+   **Do not tell anybody evaluation is unavailable.** Once node-dependent checks
+   exist — see the requirement below, which the operator raised immediately after
+   this was written — the honest line is that *those particular checks report
+   skipped*, never that evaluation is off.
 
 ### 2. I5 in `src/cli.py`'s `node_add` — left open, patch already written
 
@@ -274,6 +279,34 @@ the **workflow schema**, not the node feature. It was deliberately kept out of
 M8, because folding a feature into a one-line exit-code fix is how scope becomes
 unreviewable. **It needs its own spec section and its own task.** Do not
 implement it as a side effect of anything above.
+
+**Evals should use a computer when one is given, and must still run when none
+is.** Operator requirement, stated 2026-08-27. Today `src/governance/` has no
+node awareness at all — evals only inspect what already happened. The intent is
+that checks which *could* use inference do so when a computer is recorded, and
+that the absence of one never stops an eval from running.
+
+**This extends a pattern already in the code rather than inventing one.**
+`run_eval_case` says so in its own docstring: *"Checks that need artifacts the
+caller did not provide (e.g. depth compliance without a package) come back
+SKIPPED, not silently passed — an eval that quietly ignores what it cannot see
+would be an unsupported claim about quality."* The mechanism is at
+`src/governance/evals.py:92-98` — the check runs if the input is there, and
+otherwise yields `CheckOutcome.SKIPPED` with evidence naming what was missing.
+`src/schemas/eval_case.py:241-243` carries it to the aggregate: if every check
+was skipped, the eval reports **SKIPPED**, not PASSED.
+
+So a missing computer is simply another missing input, with evidence reading
+something like `"no computer recorded"`. Build it that way and the honesty
+property comes for free — an eval can never claim a pass it did not earn, and
+never refuses to run.
+
+Two things to settle before building it: **which** check categories can
+meaningfully use inference (nothing in `CheckCategory` obviously does today), and
+whether using a recorded computer for an eval needs its own permission — the
+four-rung consent covers *scanning*, and running a model on a machine somebody
+registered is a different act from looking for it. Ask the operator; do not
+assume the scan permission covers it.
 
 **M5 — the recommended route lands on a dead end.** Both refusals point at
 "type a computer in by hand", but `summarise` gates on `reachable`
