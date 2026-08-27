@@ -301,12 +301,31 @@ something like `"no computer recorded"`. Build it that way and the honesty
 property comes for free — an eval can never claim a pass it did not earn, and
 never refuses to run.
 
-Two things to settle before building it: **which** check categories can
-meaningfully use inference (nothing in `CheckCategory` obviously does today), and
-whether using a recorded computer for an eval needs its own permission — the
-four-rung consent covers *scanning*, and running a model on a machine somebody
-registered is a different act from looking for it. Ask the operator; do not
-assume the scan permission covers it.
+One thing to settle before building it: **which** check categories can
+meaningfully use inference. Nothing in `CheckCategory` obviously does today, so
+this may want new categories rather than a retrofit of existing ones.
+
+**Using a recorded computer does NOT need its own permission.** An earlier draft
+of this handoff asked whether it should. The operator settled it, and the
+reasoning is worth keeping because it generalises:
+
+> *"Do you ask for permission whenever I ask you to run on a node on my
+> network?"*
+
+No. The request is the permission. The four-rung consent exists for
+**discovery** — the runtime reaching out to machines *nobody named*, on its own
+initiative, where there is no target and no request, only the program deciding
+to look. That is why it must ask.
+
+Registering a computer is the opposite act. In this system, recording a node
+*means* "this is a machine Fukasawa can run AI on" — the registration **is** the
+authorization. Gating its use behind a second prompt buys nothing and trains
+people to click through prompts, which is how a consent system stops meaning
+anything.
+
+**The line is: unattended reaching needs permission; directed use is already
+permitted.** Do not add consent rungs for execution. If you find yourself
+designing a prompt, first check which side of that line the action falls on.
 
 **M5 — the recommended route lands on a dead end.** Both refusals point at
 "type a computer in by hand", but `summarise` gates on `reachable`
