@@ -327,6 +327,28 @@ anything.
 permitted.** Do not add consent rungs for execution. If you find yourself
 designing a prompt, first check which side of that line the action falls on.
 
+### The governing assumption, so nobody re-derives a stricter one
+
+The operator settled the scope of this the same night, and it is deliberately
+simple:
+
+> *"If the user has access to the nodes with the appropriate permissions then
+> that grants us access, because that is what the program is designed to do —
+> work on a user's network. When we need corporate-level access, we will worry
+> about that then."*
+
+**This program runs on one person's own network.** If they can reach a machine,
+so can it. There is no second authorization layer, no per-node grant, no
+service-account model, and none of that is to be invented preemptively.
+Multi-tenant and corporate access are a later problem and will be specified
+when they are actually a problem.
+
+The one permission that exists — the four-rung scan consent — stays, because
+it is the operator's own design rule (§3.1, three rules, this is the third)
+and it guards the one act that genuinely needs it: looking for machines nobody
+named. **Do not add a second.** If a future change seems to want one, that is
+a signal to re-read this section, not to design a prompt.
+
 **M5 — the recommended route lands on a dead end.** Both refusals point at
 "type a computer in by hand", but `summarise` gates on `reachable`
 (`src/nodes/summary.py:113`) and a hand-added node defaults to `reachable=False`.
