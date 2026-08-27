@@ -275,13 +275,49 @@ class TestScanning:
         assert events[-1].finished and not events[-1].ok
 
     def test_events_are_view_shaped_and_findings_are_saved(self, store):
+        """Every stage discovery emitted, in the order it emitted them.
+
+        `assert all(hasattr(e, "message") for e in events)` used to stand
+        here. It is true by construction for any `ScanEventView` — a
+        dataclass with a `message` field — so it could not fail, whatever the
+        service did with the stream. The stage sequence can.
+        """
         recorder = Recorder()
         events = list(service.scan(ScanScope.THIS_MACHINE, store=store,
                                    fetch=recorder, post=recorder.post))
-        assert all(hasattr(e, "message") for e in events)
-        assert events[-1].finished
+        assert [e.stage for e in events] == [
+            "trying", "reachable", "backend", "models", "biggest",
+            "context", "hardware", "trying", "done",
+        ]
         nodes, _ = store.load()
         assert nodes, "a discovered computer was not saved"
+
+    def test_what_discovery_said_reaches_the_view_unaltered(self, store):
+        """`ok`, `finished` and `message` are passed through untouched.
+
+        None of the three was pinned before, and the assertions that looked
+        like they pinned them sat where they could not fail: `events[-1]
+        .finished` stays true when *every* event is forced finished, and `ok`
+        and `message` on this path were not asserted at all. Replacing any of
+        the three with a constant left all thirty-three tests passing.
+
+        A recorder that answers nothing is the case where all three vary
+        across one stream — two attempts that are ok and unfinished, then one
+        closing event that is neither — so the shape of the whole sequence is
+        what gets asserted, not the last element of it. The discovery
+        passthrough is the only path where these can vary at all; the stops
+        before looking build their own literals.
+        """
+        recorder = Recorder(answering=set())
+        events = list(service.scan(ScanScope.THIS_MACHINE, store=store,
+                                   fetch=recorder, post=recorder.post))
+        assert [e.finished for e in events] == [False, False, True]
+        assert [e.ok for e in events] == [True, True, False]
+        assert [e.message for e in events] == [
+            "Looking on port 11434...",
+            "Looking on port 8081...",
+            "Didn't find anything answering. You can type it in instead.",
+        ]
 
     def test_a_computer_found_is_written_down_once(self, store, monkeypatch):
         """`discover` attaches the same node to six events, not one.
