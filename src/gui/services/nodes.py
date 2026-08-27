@@ -357,6 +357,20 @@ def add_node(
         )
     target = _store(store)
     try:
+        # Read before writing, because `upsert` matches on URL and would
+        # merge: right for a rescan, wrong for a hand-add. Merging renamed the
+        # row already there and answered "Added <the new name>." while nothing
+        # was added and the count on the tab did not move. Say what actually
+        # happened instead, and name the computer holding the address so the
+        # person can find it.
+        stored, _consent = target.load()
+        clash = next((n for n in stored if n.url == url), None)
+        if clash is not None:
+            return Outcome(
+                ok=False, summary="Address already recorded",
+                refusal=f"Already recorded at that address as '{clash.label}'. "
+                        f"Edit that computer to change what it is called.",
+            )
         target.upsert(InferenceNode(
             node_id=slugify(label), label=label, kind=NodeKind(kind), url=url,
             provenance={

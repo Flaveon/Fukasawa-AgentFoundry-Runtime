@@ -249,6 +249,35 @@ class TestAddingByHand:
         nodes, _ = store.load()
         assert nodes == []
 
+    def test_an_address_already_recorded_says_so_instead_of_saying_yes(
+        self, store
+    ):
+        """"Added Kitchen Box." was returned while nothing was added.
+
+        `upsert` matches on URL, which is right for a rescan and wrong for a
+        hand-add: the row already there was renamed in place, so the answer
+        named a computer that had not been created and the count on the tab
+        did not move. This is worse than the id collision already recorded
+        against this service — that one makes an extra row, this one makes
+        none and still says yes.
+        """
+        seed(store)
+        result = service.add_node("Kitchen Box", "llamacpp",
+                                  "http://localhost:11434", store)
+        assert not result.ok
+        assert "Home PC" in result.refusal
+        nodes, _ = store.load()
+        assert [(n.node_id, n.label, n.kind) for n in nodes] == [
+            ("home-pc", "Home PC", NodeKind.OLLAMA)
+        ], "the computer already there was changed"
+
+    def test_a_second_address_is_still_an_ordinary_add(self, store):
+        """The guard is about the address, not about having anything stored."""
+        seed(store)
+        assert service.add_node("Kitchen Box", "ollama",
+                                "http://10.0.0.9:11434", store).ok
+        assert len(store.load()[0]) == 2
+
     def test_an_unknown_kind_is_refused(self, store):
         result = service.add_node("X", "tealeaves", "http://x:11434", store)
         assert not result.ok
