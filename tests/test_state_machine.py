@@ -120,3 +120,57 @@ class TestResume:
         capsule, run = runtime.start(brief)
         with pytest.raises(Exception):
             runtime.block_run(run, reason="stuck", next_action="")
+
+
+class TestRefusalIsLocal:
+    """The refusal path stops inside `advance`, not inside a helper.
+
+    Background: `advance` was refactored on 2026-08-05 (commit `3d3bea4`) into
+    three helpers, in a FROZEN file, with no handoff. Behaviour was preserved,
+    but the guarantee was not: the two refusal helpers raised internally and
+    were typed `-> None`, so `advance` read as though control continued past
+    them. It did not — but a later edit changing a helper to record-and-return
+    would have turned a governed refusal into an `AttributeError` on
+    `transition.evidence_required`, with `transition` still None. Not a
+    NonConformanceError, not caught by callers catching one, not recorded.
+
+    They now *return* the exception and `advance` raises it, so the stop is at
+    the call site. These tests hold that shape in place.
+    """
+
+    def test_the_refusal_helpers_return_the_error_rather_than_raising(
+        self, runtime, brief
+    ):
+        capsule, run = runtime.start(brief)
+        error = runtime._refuse_invalid_transition(
+            brief, capsule, "PUBLISHED", "evidence", run
+        )
+        assert isinstance(error, NonConformanceError), (
+            "the helper raised instead of returning; `advance` no longer owns the stop"
+        )
+
+    def test_a_helper_that_forgot_to_stop_still_cannot_slip_through(
+        self, runtime, brief, monkeypatch
+    ):
+        # The mutation the shape exists to defeat: a helper that records and
+        # returns something falsy instead of an error. With `raise` at the call
+        # site this is a TypeError at the boundary, loudly and immediately —
+        # not a wrong-typed failure five lines later.
+        monkeypatch.setattr(
+            WorkflowRuntime,
+            "_refuse_invalid_transition",
+            lambda *a, **k: None,
+        )
+        capsule, run = runtime.start(brief)
+        with pytest.raises(TypeError):
+            runtime.advance(brief, capsule, "PUBLISHED", "evidence", run=run)
+
+    def test_an_invalid_transition_still_raises_non_conformance(self, runtime, brief):
+        capsule, run = runtime.start(brief)
+        with pytest.raises(NonConformanceError):
+            runtime.advance(brief, capsule, "PUBLISHED", "evidence", run=run)
+
+    def test_missing_evidence_still_raises_non_conformance(self, runtime, brief):
+        capsule, run = runtime.start(brief)
+        with pytest.raises(NonConformanceError):
+            runtime.advance(brief, capsule, "DRAFT_READY", "", run=run)

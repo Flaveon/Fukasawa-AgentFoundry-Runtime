@@ -20,6 +20,7 @@ vibes.
 
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -40,6 +41,25 @@ class CheckOutcome(str, Enum):
     PASS = "pass"
     FAIL = "fail"
     SKIPPED = "skipped"
+
+
+class ExecutionStatus(str, Enum):
+    """Whether the evaluation machinery ran, kept separate from what it found.
+
+    This distinction is the whole reason the enum exists. "The runner crashed"
+    and "the output was judged and failed" look identical if both collapse to
+    'fail', and treating the first as evidence about the work would let a dead
+    API key manufacture a governance verdict.
+
+    COMPLETED         — the evaluation ran; ``overall`` carries the verdict.
+    EXECUTION_FAILED  — the harness broke. ``overall`` is meaningless; the
+                        evaluated work is neither proven nor disproven.
+    NOT_EXECUTED      — nothing was attempted (e.g. the backend is unavailable).
+    """
+
+    COMPLETED = "completed"
+    EXECUTION_FAILED = "execution_failed"
+    NOT_EXECUTED = "not_executed"
 
 
 class ExpectedOutputs(BaseModel):
@@ -136,6 +156,84 @@ class EvalResult(BaseModel):
         description="PASS only when every non-skipped check passed."
     )
     notes: str = Field(default="", description="Free-text observations from the eval run.")
+
+    # ---------------------------------------------------------- externally executed
+    #
+    # Populated when an execution backend produced this result instead of the
+    # in-process checks (see src/governance/smevals_adapter.py). Every field is
+    # optional with a default, so results recorded before these existed still
+    # load, and the ledger needs no migration — eval_results stores a
+    # result_json blob alongside its indexed columns.
+
+    execution_status: ExecutionStatus = Field(
+        default=ExecutionStatus.COMPLETED,
+        description=(
+            "Whether the evaluation machinery ran at all. When this is not "
+            "'completed', ``overall`` says nothing about the evaluated work — "
+            "read this field before drawing any conclusion from the verdict."
+        ),
+    )
+    executed_by: str = Field(
+        default="",
+        description=(
+            "Name of the backend that produced this result, e.g. 'smevals'. "
+            "Empty means the runtime's own in-process checks produced it."
+        ),
+    )
+    executor_version: str = Field(
+        default="",
+        description=(
+            "Version of that backend, recorded per result. External evaluation "
+            "tools move; a result that cannot say what produced it cannot be "
+            "compared against a later one."
+        ),
+    )
+    external_run_ref: str = Field(
+        default="",
+        description=(
+            "Reference to the backend's own run record — a path or id. The "
+            "runtime stores the reference, never a copy: duplicating the "
+            "artifact would create a second source of truth."
+        ),
+    )
+    score: Optional[float] = Field(
+        default=None,
+        description=(
+            "Numeric score, when the backend produced one. Advisory only: a "
+            "score never authorizes promotion, and the runtime makes no "
+            "decision from it."
+        ),
+    )
+    artifact_paths: list[str] = Field(
+        default_factory=list,
+        description="Paths to evidence produced by the run — output, stderr, grade files.",
+    )
+    non_conformance_candidates: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Findings a human might choose to record as non-conformance. "
+            "Candidates only — nothing here files a NonConformanceRecord, "
+            "because a failed check is evidence, not a governance breach."
+        ),
+    )
+    requires_human_review: bool = Field(
+        default=False,
+        description=(
+            "Set when this result needs a person to look at it before it is "
+            "used as evidence — a failed verdict, or a harness failure that "
+            "left the question unanswered."
+        ),
+    )
+
+    @property
+    def is_evidence(self) -> bool:
+        """Whether this result says anything about the evaluated work.
+
+        False when the harness failed or never ran: in those cases the verdict
+        describes our infrastructure, not the workflow, and must not be cited
+        as evidence for or against it.
+        """
+        return self.execution_status is ExecutionStatus.COMPLETED
 
     @staticmethod
     def overall_from(checks: list[EvalCheckResult]) -> CheckOutcome:

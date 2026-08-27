@@ -177,22 +177,44 @@ class WorkflowRuntime:
         )
 
         if transition is None:
-            self._handle_invalid_transition(brief, capsule, to_state, evidence, run)
+            raise self._refuse_invalid_transition(
+                brief, capsule, to_state, evidence, run
+            )
 
         if transition.evidence_required and not evidence.strip():
-            self._handle_missing_evidence(brief, capsule, to_state, transition, run)
+            raise self._refuse_missing_evidence(brief, capsule, to_state, transition, run)
 
         return self._perform_transition(brief, capsule, to_state, evidence, transition, run)
 
-    def _handle_invalid_transition(
+    def _refuse_invalid_transition(
         self,
         brief: WorkflowBrief,
         capsule: ProcessCapsule,
         to_state: str,
         evidence: str,
         run: Optional[RuntimeState],
-    ) -> None:
-        """Handle an attempted transition to an invalid state."""
+    ) -> NonConformanceError:
+        """Record an attempted transition to an invalid state, and build its error.
+
+        **Returns the exception; ``advance`` raises it.** These two facts are
+        the point of the shape:
+
+        * A helper that raised internally would leave ``advance`` reading as
+          though control continues past the call — and it does not. If anyone
+          later edited this method to record-and-return instead of stopping,
+          ``advance`` would fall through to ``transition.evidence_required``
+          with ``transition`` still ``None``, and a governed refusal would
+          silently become an ``AttributeError``: not a ``NonConformanceError``,
+          not caught by callers that catch one, and not recorded as a
+          non-conformance.
+        * Returning the error makes that impossible to get wrong. The stop is
+          visible at the call site, where the reader is, and the signature says
+          the method produces an error rather than performing a control jump.
+
+        The recording still happens here, before the return: the capsule is
+        frozen in NON_CONFORMANCE, the ledger event and the structured record
+        are written, and a tracked run is marked FAILED.
+        """
         note = (
             f"no valid transition from '{capsule.state}' to '{to_state}'. "
             f"Exception path: {brief.exception_path}"
@@ -218,17 +240,23 @@ class WorkflowRuntime:
             run.status = RunStatus.FAILED
             run.touch()
             self.ledger.save_run(run)
-        raise NonConformanceError(note)
+        return NonConformanceError(note)
 
-    def _handle_missing_evidence(
+    def _refuse_missing_evidence(
         self,
         brief: WorkflowBrief,
         capsule: ProcessCapsule,
         to_state: str,
         transition: Transition,
         run: Optional[RuntimeState],
-    ) -> None:
-        """Handle a transition missing required evidence."""
+    ) -> NonConformanceError:
+        """Record a transition refused for missing evidence, and build its error.
+
+        Returns rather than raises, for the reason given on
+        ``_refuse_invalid_transition``. The capsule deliberately stays where it
+        is and the run stays RUNNING: missing evidence is retryable, unlike an
+        invalid path.
+        """
         note = (
             f"transition '{capsule.state}' -> '{to_state}' refused: "
             f"required evidence missing ({transition.evidence_required})"
@@ -247,7 +275,7 @@ class WorkflowRuntime:
             brief, capsule, run, NonConformanceKind.MISSING_EVIDENCE,
             from_state=capsule.state, attempted_state=to_state, note=note,
         )
-        raise NonConformanceError(note)
+        return NonConformanceError(note)
 
     def _perform_transition(
         self,

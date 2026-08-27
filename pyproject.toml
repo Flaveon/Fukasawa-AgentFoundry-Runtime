@@ -28,8 +28,15 @@ build = ["pyinstaller>=6", "customtkinter>=6"]
 fukasawa = "src.cli:app"
 fukasawa-gui = "src.gui.app:main"
 
-[tool.setuptools]
-packages = ["src", "src.schemas", "src.runtime", "src.foundry", "src.governance", "src.kernel", "src.security", "src.gui"]
+[tool.setuptools.packages.find]
+# Discovered rather than listed. The hand-written list silently omitted
+# `src.gui.services` when phase 7 split that module into a package, so a
+# `pip install .` built a wheel whose GUI could not import its own service
+# layer — invisible to the test suite, which runs from the source tree, and to
+# CI, which builds through a PyInstaller spec. `tests/test_packaging.py` holds
+# the property; this makes forgetting impossible rather than merely detected.
+include = ["src*"]
+namespaces = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

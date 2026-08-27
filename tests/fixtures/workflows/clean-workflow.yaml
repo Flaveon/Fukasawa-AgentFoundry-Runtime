@@ -1,0 +1,182 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# FIXTURE — a well-formed workflow that must produce ZERO findings.
+#
+# This is the false-positive guard for the whole rule set. Every rule has a
+# chance to fire here and must stay silent: two actors hand off to each other
+# (HW-008), a gate rejects somewhere real (HW-015), a branch names its decision
+# authority (HW-004), every output is verifiable (HW-010), every observed
+# failure has a path (HW-011), and every exit condition states a criterion
+# rather than a feeling (HW-014).
+#
+# If a new rule makes this file report a finding, the rule is too aggressive —
+# fix the rule, not the fixture.
+
+schema_version: "1"
+workflow_id: expense-approval
+name: Expense Reimbursement Approval
+version: "1"
+maturity: OBSERVED
+
+purpose: Reimburse an employee expense without losing the receipt or the audit trail.
+trigger: An employee submits an expense claim with receipts attached.
+claimed_outcome: >
+  The claim is paid or declined, and each decision has a recorded approver
+  when the outcome is final.
+
+actors:
+  - employee
+  - finance-reviewer
+
+systems:
+  - expense portal
+
+artifacts:
+  - expense claim
+  - approval record
+  - payment record
+
+steps:
+  - step_id: submit-claim
+    name: Submit the claim
+    description: The employee files the claim with receipts.
+    actor: employee
+    action: File an expense claim with itemized receipts.
+    trigger: An employee has a reimbursable expense.
+    preconditions:
+      - The expense has already been incurred.
+    inputs:
+      - name: receipts
+        source: employee
+        required: true
+    outputs:
+      - name: expense claim
+        artifact_type: portal record
+        evidence_requirement: claim id exists in the expense portal
+    entry_condition: The employee has opened a new claim in the portal.
+    exit_condition: The claim is submitted when every line item has a receipt attached.
+    decision_authority: employee
+    next_steps:
+      - review-claim
+    characteristics:
+      judgment_load: LOW
+      repeatability: ROUTINE
+      determinism: MOSTLY_DETERMINISTIC
+      risk: LOW
+      reversibility: REVERSIBLE
+      data_sensitivity: INTERNAL
+
+  - step_id: review-claim
+    name: Review the claim
+    description: Finance checks each line item against policy.
+    actor: finance-reviewer
+    action: Check each line item against the expense policy and decide.
+    trigger: A claim has been submitted.
+    inputs:
+      - name: expense claim
+        source: submit-claim
+        required: true
+    outputs:
+      - name: approval record
+        artifact_type: portal decision
+        evidence_requirement: decision recorded against the claim id with the reviewer name
+    entry_condition: The reviewer has opened the submitted claim.
+    exit_condition: Review ends when every line item is marked compliant or rejected.
+    decision_authority: finance-reviewer
+    next_steps:
+      - pay-claim
+      - decline-claim
+    exception_paths:
+      - failure_mode: A receipt is missing or illegible.
+        owner: finance-reviewer
+        handling: Return the claim to the employee for a replacement receipt.
+        next_step: submit-claim
+    characteristics:
+      judgment_load: MODERATE
+      repeatability: ROUTINE
+      determinism: MOSTLY_DETERMINISTIC
+      risk: MODERATE
+      reversibility: REVERSIBLE
+      data_sensitivity: INTERNAL
+
+  - step_id: pay-claim
+    name: Pay the claim
+    description: Finance releases payment for an approved claim.
+    actor: finance-reviewer
+    action: Release payment to the employee.
+    trigger: The claim was approved at the review gate.
+    inputs:
+      - name: approval record
+        source: review-claim
+        required: true
+    outputs:
+      - name: payment record
+        artifact_type: payment reference
+        evidence_requirement: payment reference recorded against the claim id
+    entry_condition: An approval record exists for the claim.
+    exit_condition: Payment is done when the payment reference is recorded.
+    decision_authority: finance-reviewer
+    next_steps: []
+    exception_paths:
+      - failure_mode: The payment is rejected by the bank.
+        owner: finance-reviewer
+        handling: Correct the account details and release payment again.
+        next_step: pay-claim
+    characteristics:
+      judgment_load: NONE
+      repeatability: ROUTINE
+      determinism: DETERMINISTIC
+      risk: MODERATE
+      reversibility: PARTIALLY_REVERSIBLE
+      data_sensitivity: SENSITIVE
+
+  - step_id: decline-claim
+    name: Decline the claim
+    description: Finance records a declined claim with the reason.
+    actor: finance-reviewer
+    action: Record the decline and notify the employee.
+    trigger: The claim was declined at the review gate.
+    inputs:
+      - name: approval record
+        source: review-claim
+        required: true
+    outputs:
+      - name: decline notice
+        artifact_type: portal decision
+        evidence_requirement: decline reason recorded against the claim id
+    entry_condition: A decline decision exists for the claim.
+    exit_condition: The decline is final when the employee has been notified.
+    decision_authority: finance-reviewer
+    next_steps: []
+    characteristics:
+      judgment_load: LOW
+      repeatability: ROUTINE
+      determinism: DETERMINISTIC
+      risk: LOW
+      reversibility: REVERSIBLE
+      data_sensitivity: INTERNAL
+
+gates:
+  - gate_id: finance-approval
+    at_step: review-claim
+    approver: finance-reviewer
+    criteria: Every line item is compliant with the expense policy and has a receipt.
+    on_approve: pay-claim
+    on_reject: decline-claim
+
+observed_exceptions:
+  - A receipt is missing or illegible.
+  - The payment is rejected by the bank.
+
+unwritten_rules: []
+
+known_pain_points:
+  - Reviews queue up at month end.
+
+source_evidence:
+  - kind: observation
+    reference: finance walkthrough, 2026-07-25
+    note: Confirmed the two decision branches and the receipt failure path.
+
+notes: Fixture for the validator false-positive guard. Must report zero findings.

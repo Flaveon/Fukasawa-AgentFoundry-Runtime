@@ -1,0 +1,268 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# FIXTURE — a well-formed workflow that must produce ZERO findings.
+#
+# Written for the Gate C false-positive review (handoffs/reviews/
+# gate-c-false-positive-review.md), deliberately in a domain unlike the
+# expense-approval fixture and unlike the Substack pilot, so the rule set is
+# tested against workflows it was not tuned on.
+#
+# If a new or changed rule makes this file report a finding, the rule is too
+# aggressive — fix the rule, not the fixture.
+schema_version: "1"
+workflow_id: incident-response
+name: Production Incident Response
+version: "1"
+maturity: OBSERVED
+
+purpose: Restore service after a production alert and record what happened.
+trigger: A monitoring alert fires against a production service.
+claimed_outcome: >
+  Service is restored and a written incident record exists naming the cause
+  and the follow-up owner.
+
+actors:
+  - on-call engineer
+  - incident commander
+  - service owner
+
+systems:
+  - alerting system
+  - status page
+  - incident tracker
+
+artifacts:
+  - incident record
+  - status page update
+  - postmortem
+
+steps:
+  - step_id: acknowledge-alert
+    name: Acknowledge the alert
+    description: The on-call engineer accepts the page and opens an incident record.
+    actor: on-call engineer
+    action: Acknowledge the page and open an incident record.
+    trigger: A monitoring alert fires.
+    preconditions:
+      - The alert is for a production service.
+    inputs:
+      - name: alert payload
+        source: alerting system
+        required: true
+    outputs:
+      - name: incident record
+        artifact_type: tracker ticket
+        evidence_requirement: an incident id exists in the incident tracker
+    entry_condition: The page has been delivered to the on-call engineer.
+    exit_condition: The incident is acknowledged when an incident id exists and the page is silenced.
+    decision_authority: on-call engineer
+    next_steps:
+      - assess-severity
+    characteristics:
+      judgment_load: LOW
+      repeatability: ROUTINE
+      determinism: MOSTLY_DETERMINISTIC
+      risk: MODERATE
+      reversibility: REVERSIBLE
+      data_sensitivity: INTERNAL
+
+  - step_id: assess-severity
+    name: Assess severity
+    description: Decide whether this is a minor degradation or a full outage.
+    actor: on-call engineer
+    action: Classify the incident severity from the alert and dashboards.
+    trigger: An incident record has been opened.
+    preconditions:
+      - An incident id exists.
+    inputs:
+      - name: incident record
+        source: acknowledge-alert
+        required: true
+      - name: service dashboards
+        source: alerting system
+        required: true
+    outputs:
+      - name: severity classification
+        artifact_type: tracker field
+        evidence_requirement: the severity field on the incident record is set
+    entry_condition: The engineer has opened the dashboards for the affected service.
+    exit_condition: Severity is assessed when the severity field is set to one of SEV1, SEV2 or SEV3.
+    decision_authority: on-call engineer
+    next_steps:
+      - escalate-to-commander
+      - mitigate
+    exception_paths:
+      - failure_mode: dashboards are unavailable
+        owner: on-call engineer
+        handling: Classify from the alert payload alone and note the missing data on the record.
+        next_step: mitigate
+    characteristics:
+      judgment_load: MODERATE
+      repeatability: ROUTINE
+      determinism: JUDGMENT_BASED
+      risk: MODERATE
+      reversibility: REVERSIBLE
+      data_sensitivity: INTERNAL
+
+  - step_id: escalate-to-commander
+    name: Escalate to an incident commander
+    description: A SEV1 pulls in a commander who owns coordination and comms.
+    actor: on-call engineer
+    action: Page the incident commander and hand over coordination.
+    trigger: The incident was classified SEV1.
+    preconditions:
+      - The severity field is set to SEV1.
+    inputs:
+      - name: severity classification
+        source: assess-severity
+        required: true
+    outputs:
+      - name: commander handover
+        artifact_type: tracker comment
+        evidence_requirement: the incident record names the acting commander
+    entry_condition: The commander rotation has been looked up.
+    exit_condition: Escalation is complete when a named commander has acknowledged on the record.
+    decision_authority: incident commander
+    next_steps:
+      - mitigate
+    exception_paths:
+      - failure_mode: no commander acknowledges within ten minutes
+        owner: on-call engineer
+        handling: Page the secondary rotation and continue mitigating meanwhile.
+        next_step: mitigate
+    characteristics:
+      judgment_load: LOW
+      repeatability: OCCASIONAL
+      determinism: MOSTLY_DETERMINISTIC
+      risk: HIGH
+      reversibility: REVERSIBLE
+      data_sensitivity: INTERNAL
+
+  - step_id: mitigate
+    name: Mitigate
+    description: Apply a mitigation and check whether the alert clears.
+    actor: on-call engineer
+    action: Apply the mitigation indicated by the runbook.
+    trigger: Severity has been assessed.
+    preconditions:
+      - The severity field is set.
+    inputs:
+      - name: runbook
+        source: incident tracker
+        required: true
+      - name: severity classification
+        source: assess-severity
+        required: true
+    outputs:
+      - name: mitigation attempt
+        artifact_type: tracker comment
+        evidence_requirement: the record states what was changed and at what time
+    entry_condition: A runbook step has been selected.
+    exit_condition: The attempt is finished when the alert has either cleared or persisted for ten minutes.
+    decision_authority: on-call engineer
+    next_steps:
+      - verify-recovery
+    exception_paths:
+      - failure_mode: the mitigation makes the incident worse
+        owner: on-call engineer
+        handling: Roll back the change and record the rollback before trying anything else.
+        next_step: verify-recovery
+    characteristics:
+      judgment_load: MODERATE
+      repeatability: ROUTINE
+      determinism: JUDGMENT_BASED
+      risk: HIGH
+      reversibility: PARTIALLY_REVERSIBLE
+      data_sensitivity: INTERNAL
+
+  - step_id: verify-recovery
+    name: Verify recovery
+    description: Confirm the service is healthy, or go back and mitigate again.
+    actor: on-call engineer
+    action: Check the service dashboards and the original alert condition.
+    trigger: A mitigation has been attempted.
+    preconditions:
+      - At least one mitigation attempt is recorded.
+    inputs:
+      - name: mitigation attempt
+        source: mitigate
+        required: true
+      - name: service dashboards
+        source: alerting system
+        required: true
+    outputs:
+      - name: recovery check
+        artifact_type: tracker comment
+        evidence_requirement: the record states whether the alert condition still holds
+    entry_condition: At least ten minutes have passed since the mitigation.
+    exit_condition: Verification is done when the alert condition has been re-evaluated and the result recorded.
+    decision_authority: on-call engineer
+    next_steps:
+      - mitigate
+      - write-postmortem
+    characteristics:
+      judgment_load: LOW
+      repeatability: ROUTINE
+      determinism: DETERMINISTIC
+      risk: MODERATE
+      reversibility: REVERSIBLE
+      data_sensitivity: INTERNAL
+
+  - step_id: write-postmortem
+    name: Write the postmortem
+    description: The service owner writes up cause, timeline and follow-ups.
+    actor: service owner
+    action: Write the postmortem and name an owner for each follow-up action.
+    trigger: The service has recovered.
+    preconditions:
+      - The recovery check recorded that the alert condition no longer holds.
+    inputs:
+      - name: incident record
+        source: acknowledge-alert
+        required: true
+      - name: recovery check
+        source: verify-recovery
+        required: true
+    outputs:
+      - name: postmortem
+        artifact_type: document
+        evidence_requirement: a postmortem document is linked from the incident record
+    entry_condition: The incident has been marked resolved.
+    exit_condition: The postmortem is done when every follow-up action names an owner and a date.
+    decision_authority: service owner
+    next_steps: []
+    exception_paths:
+      - failure_mode: the cause is never identified
+        owner: service owner
+        handling: Record the cause as unknown with the evidence ruled out, and open a monitoring follow-up.
+    characteristics:
+      judgment_load: HIGH
+      repeatability: ROUTINE
+      determinism: JUDGMENT_BASED
+      risk: MODERATE
+      reversibility: REVERSIBLE
+      data_sensitivity: INTERNAL
+
+gates:
+  - gate_id: commander-signoff
+    at_step: verify-recovery
+    approver: incident commander
+    criteria: The alert condition no longer holds and no customer-visible impact remains.
+    on_approve: write-postmortem
+    on_reject: mitigate
+
+observed_exceptions:
+  - dashboards are unavailable
+  - no commander acknowledges within ten minutes
+  - the mitigation makes the incident worse
+  - the cause is never identified
+
+unwritten_rules: []
+known_pain_points:
+  - Severity is often revised upward after the fact.
+
+source_evidence:
+  - kind: observation
+    reference: on-call shadowing, 2026-08
+    note: Watched three incidents end to end.

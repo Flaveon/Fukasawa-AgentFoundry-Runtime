@@ -111,7 +111,11 @@ class TestBuildService:
 
 
 
-    @patch("src.gui.services.generate_packages")
+    # Patch target follows the symbol: `generate_packages` is resolved in
+    # `services.brief`'s own namespace, so patching the package's re-export
+    # would bind a name `build_workflow` never looks at. Moved when services
+    # became a package (phase 7); the test's intent is unchanged.
+    @patch("src.gui.services.brief.generate_packages")
     def test_build_refuses_with_doctrine_error(self, mock_generate, tmp_path):
         mock_generate.side_effect = BuildRefusedError("Simulated doctrine refusal")
         outcome = build_workflow(EXAMPLE_BRIEF, tmp_path / "out")

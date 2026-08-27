@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# Workflow brief: Oldowan Articles cataloging and review.
+# Models the path a submitted article (an assemblage of Oldowan-industry
+# lithic artifacts and its accompanying documentation) takes from intake to
+# publication in the research catalog. A cataloging agent extracts and
+# records metadata against a fixed schema; a human curator owns the
+# accession decision, because deciding what enters the permanent record is a
+# CONSCIOUS-depth responsibility, not a rule to automate.
+
+id: oldowan-cataloging-review
+title: Oldowan Articles Cataloging and Review
+owner: flaveon
+task_depth: GUIDED
+status: approved
+
+# The agents this workflow needs. Transition owners not listed here
+# (flaveon, the curator) are humans. Depth levels answer the Complexity Gate
+# question: what is the LOWEST reasoning level this task actually needs?
+agents:
+  - agent_name: catalog-agent
+    depth_level: 2          # local triage: extract metadata against a schema
+    responsibilities: >
+      Read a submitted Oldowan article, extract its catalog metadata
+      (accession id, site, stratigraphic context, artifact count, raw
+      material, typology), and hand a completed catalog record to curator
+      review. It records; it does not decide what is accessioned.
+    escalation_target: flaveon
+    deployment_method: file_package
+    forbidden:
+      - accessioning an article into the permanent catalog
+      - approving its own catalog record
+      - inventing a provenance the source documents do not state
+
+  - agent_name: publisher-agent
+    depth_level: 0          # rule task: write an approved record to the catalog
+    responsibilities: >
+      Publish an approved catalog record to the research catalog at its
+      assigned entry id and destination path.
+    escalation_target: flaveon
+    deployment_method: file_package
+    forbidden:
+      - editing catalog metadata
+      - publishing anything not in APPROVED state
+
+initial_state: INTAKE
+states:
+  - INTAKE
+  - CATALOGED
+  - CURATOR_REVIEW
+  - APPROVED
+  - PUBLISHED
+  - FAILED
+
+transitions:
+  # Intake -> cataloged: the agent extracts metadata and pins an accession id.
+  - from_state: INTAKE
+    to_state: CATALOGED
+    owner: catalog-agent
+    evidence_required: "accession id and the extracted metadata fields"
+
+  # Cataloged -> curator review: the completed record is submitted for a human.
+  - from_state: CATALOGED
+    to_state: CURATOR_REVIEW
+    owner: catalog-agent
+    evidence_required: "completed catalog record submitted for review"
+
+  # The accession decision is always owned by a human and always CONSCIOUS:
+  # what enters the permanent record is a matter of responsibility and
+  # meaning, so the runtime pauses at a review gate here.
+  - from_state: CURATOR_REVIEW
+    to_state: APPROVED
+    owner: curator
+    depth: CONSCIOUS
+    evidence_required: "curator accession sign-off note"
+
+  - from_state: CURATOR_REVIEW
+    to_state: FAILED
+    owner: curator
+    depth: CONSCIOUS
+    evidence_required: ""
+
+  # Approved -> published: a rule move, writing the entry to the catalog.
+  - from_state: APPROVED
+    to_state: PUBLISHED
+    owner: publisher-agent
+    evidence_required: "catalog entry id and destination path"
+
+completion_criteria: >
+  The article's catalog record is published to the research catalog at its
+  assigned entry id and destination path, a curator has signed off on the
+  accession, and the full cataloging history is recorded in the run ledger.
+
+exception_path: >
+  Stop work, leave the capsule where it is, and notify the workflow owner
+  (flaveon). Do not improvise a new path or invent provenance; add the
+  missing transition to this brief instead.

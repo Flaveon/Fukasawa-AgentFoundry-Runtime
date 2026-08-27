@@ -1,0 +1,22 @@
+# Test baseline — recorded before Human & Cooperative Workflow Runtime feature work
+# Phase 1 (contracts) gate, master handoff §15.1. Do not edit; append a new file for later baselines.
+
+Date:            2026-07-25T03:41:26Z
+Branch:          feature/human-cooperative-workflow-runtime
+Commit:          aa196037cc8c3a3ee1bae4d42d9f829b0e06b9df
+Python:          Python 3.11.15
+Package manager: uv 0.8.17 (pip-compatible; .venv created by uv venv)
+Node:            not applicable — this repository contains no TypeScript/JavaScript
+                 (verified: no .ts files, no package.json, no tsconfig.json)
+                 DoD §2.2 cross-language clauses ruled NOT APPLICABLE (review defect D1, ratified 2026-07-25)
+
+Command:         .venv/bin/python -m pytest -q
+--- output ---
+..................................................ssss.................. [ 61%]
+.............................................                            [100%]
+113 passed, 4 skipped in 7.36s
+--- end output ---
+
+Expected per master handoff §1/§15.1: 113 passed, 4 skipped — CONFIRMED.
+The 4 skips are GUI view tests that require a display; they pass under:
+  xvfb-run -a .venv/bin/python -m pytest tests/test_gui.py -q

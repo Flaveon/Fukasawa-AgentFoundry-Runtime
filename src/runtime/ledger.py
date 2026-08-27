@@ -12,14 +12,18 @@ CLI invocations. Snapshots may be updated; ledger events may not.
 """
 
 import json
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import sqlite_utils
 
+from src.schemas.cooperation import CooperationAssessment, CooperativeWorkflow
 from src.schemas.eval_case import EvalResult
+from src.schemas.findings import RiskAcceptance, ValidationReport
 from src.schemas.graph import GraphRunState
+from src.schemas.human_workflow import AccountableWorkflow, HumanWorkflowDraft
 from src.schemas.non_conformance import (
     NonConformanceRecord,
     ResolutionStatus,
@@ -32,29 +36,39 @@ from src.schemas.workflow_brief import WorkflowBrief
 #: Default database location: the current working directory.
 DEFAULT_DB_PATH = "fukasawa.db"
 
+
+def _new_id(prefix: str) -> str:
+    """Generate a short unique storage id with a readable prefix."""
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+#: Tables that record history rather than current state. Nothing in them is
+#: ever rewritten: a wrong entry is corrected by a later entry on top, never by
+#: editing the record of what was believed at the time.
+#:
+#: Workflow drafts are deliberately absent — a draft is a working document that
+#: people edit, and forbidding that would make capture impossible. Everything
+#: *derived* from a draft (a validation report, an accepted risk, a promotion,
+#: a promoted artifact) is immutable, because those are the evidence a decision
+#: was made on.
+_APPEND_ONLY_TABLES = (
+    "ledger",
+    "promotions",
+    "validation_reports",
+    "risk_acceptances",
+    "workflow_promotions",
+    "accountable_workflows",
+    "cooperation_assessments",
+    "cooperative_workflows",
+)
+
 _APPEND_ONLY_TRIGGERS = [
+    f"""
+    CREATE TRIGGER IF NOT EXISTS {table}_no_{verb}
+    BEFORE {verb.upper()} ON {table}
+    BEGIN SELECT RAISE(ABORT, '{table} is append-only: {verb}s are forbidden'); END;
     """
-    CREATE TRIGGER IF NOT EXISTS ledger_no_update
-    BEFORE UPDATE ON ledger
-    BEGIN SELECT RAISE(ABORT, 'ledger is append-only: updates are forbidden'); END;
-    """,
-    """
-    CREATE TRIGGER IF NOT EXISTS ledger_no_delete
-    BEFORE DELETE ON ledger
-    BEGIN SELECT RAISE(ABORT, 'ledger is append-only: deletes are forbidden'); END;
-    """,
-    # Governance decisions are history too: a promotion, once made, is never
-    # rewritten — a wrong promotion is corrected by a demotion event on top.
-    """
-    CREATE TRIGGER IF NOT EXISTS promotions_no_update
-    BEFORE UPDATE ON promotions
-    BEGIN SELECT RAISE(ABORT, 'promotions are append-only: updates are forbidden'); END;
-    """,
-    """
-    CREATE TRIGGER IF NOT EXISTS promotions_no_delete
-    BEFORE DELETE ON promotions
-    BEGIN SELECT RAISE(ABORT, 'promotions are append-only: deletes are forbidden'); END;
-    """,
+    for table in _APPEND_ONLY_TABLES
+    for verb in ("update", "delete")
 ]
 
 _TABLE_SCHEMAS = {
@@ -168,6 +182,125 @@ _TABLE_SCHEMAS = {
             "non_conformance_note": str,
         },
         "id",
+    ),
+    # ------------------------------------------- human & cooperative workflow
+    #
+    # A draft is a working document: editable, keyed by workflow and version.
+    # Everything below it is evidence and therefore append-only.
+    "workflow_drafts": (
+        {
+            "workflow_id": str,
+            "version": str,
+            "name": str,
+            "maturity": str,
+            "updated_at": str,
+            "draft_json": str,  # full HumanWorkflowDraft
+        },
+        ("workflow_id", "version"),
+    ),
+    # The report a promotion decision was made on, kept so the decision can be
+    # audited against the exact findings and rule set version that produced it.
+    "validation_reports": (
+        {
+            "report_id": str,
+            "workflow_id": str,
+            "workflow_version": str,
+            "rule_set_version": str,
+            "blocking_open": int,  # unresolved blocking findings at evaluation time
+            "evaluated_at": str,
+            "report_json": str,  # full ValidationReport
+        },
+        "report_id",
+    ),
+    # A human consciously accepting a non-blocking finding. Actor, timestamp
+    # and rationale are all mandatory in the contract; this is where they live.
+    "risk_acceptances": (
+        {
+            "acceptance_id": str,
+            "workflow_id": str,
+            "finding_id": str,
+            "rule_id": str,
+            "rule_version": str,
+            "accepted_by": str,
+            "accepted_at": str,
+            "rationale": str,
+        },
+        "acceptance_id",
+    ),
+    # Every maturity transition, successful or refused. A refused promotion is
+    # as much a part of the record as a granted one.
+    "workflow_promotions": (
+        {
+            "promotion_id": str,
+            "workflow_id": str,
+            "from_maturity": str,
+            "to_maturity": str,
+            "granted": int,  # 1 = promotion happened, 0 = refused
+            "promoted_by": str,
+            "promoted_at": str,
+            "rule_set_version": str,
+            "schema_version": str,
+            "report_id": str,  # the evidence cited
+            "detail": str,  # refusal reason, or what was produced
+        },
+        "promotion_id",
+    ),
+    # The promoted artifact itself. Every promotion produces a row, and earlier
+    # ones stay readable because an audit needs what was approved at the time.
+    #
+    # Keyed by maturity as well as version: a workflow climbs several steps at
+    # the same draft version, and each step is its own artifact. Keying on
+    # version alone would make the second promotion look like a duplicate of
+    # the first.
+    "accountable_workflows": (
+        {
+            "workflow_id": str,
+            "version": str,
+            "maturity": str,
+            "promoted_by": str,
+            "promoted_at": str,
+            "artifact_json": str,  # full AccountableWorkflow
+        },
+        ("workflow_id", "version", "maturity"),
+    ),
+    # Stage-4 evidence: what was recommended for each step, and what a human
+    # decided instead. Append-only with a surrogate key rather than keyed on
+    # assessment_id, because `apply_override` returns a copy carrying the SAME
+    # assessment_id — an override is a later row on top of the original, not an
+    # edit of it. `load_cooperation_assessments` therefore returns the newest
+    # row per step, and the earlier ones remain readable as the record of what
+    # the table recommended before a person overruled it.
+    "cooperation_assessments": (
+        {
+            "record_id": str,
+            "workflow_id": str,
+            "step_id": str,
+            "assessment_id": str,
+            "recommended_executor": str,
+            "effective_executor": str,
+            "safety_floor": str,
+            "overridden": int,  # 1 = a human replaced the recommendation
+            "recorded_at": str,
+            "assessment_json": str,  # full CooperationAssessment
+        },
+        "record_id",
+    ),
+    # Stage-5 artifact. Append-only for the same reason: approving a built
+    # workflow is a decision, so it lands as a new row and the unapproved build
+    # it supersedes stays visible. An audit needs to see that the assignments
+    # existed before anyone signed them.
+    "cooperative_workflows": (
+        {
+            "record_id": str,
+            "workflow_id": str,
+            "version": str,
+            "source_workflow_version": str,
+            "approved": int,  # 1 = a named human approved the assignments
+            "approved_by": str,
+            "recorded_at": str,
+            "artifact_json": str,  # full CooperativeWorkflow
+        },
+        "record_id",
     ),
 }
 
@@ -504,3 +637,352 @@ class RunLedger:
         return [
             NonConformanceRecord.model_validate_json(r["record_json"]) for r in rows
         ]
+
+    # ------------------------------------------ human & cooperative workflow
+
+    def save_workflow_draft(self, draft: HumanWorkflowDraft) -> None:
+        """Store or update an observed workflow draft.
+
+        Drafts are the one mutable thing in this group: a draft is a working
+        document people edit as they learn more, and refusing to save an
+        incomplete one would make honest capture impossible. Everything derived
+        from a draft is append-only.
+        """
+        self.db["workflow_drafts"].upsert(
+            {
+                "workflow_id": draft.workflow_id,
+                "version": draft.version,
+                "name": draft.name,
+                "maturity": draft.maturity.value,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "draft_json": draft.model_dump_json(),
+            },
+            pk=("workflow_id", "version"),
+        )
+
+    def load_workflow_draft(
+        self, workflow_id: str, version: str = ""
+    ) -> HumanWorkflowDraft:
+        """Load a draft. Without a version, returns the most recently updated.
+
+        Raises KeyError when no draft matches, so a caller cannot mistake a
+        missing workflow for an empty one. Both branches raise the same type:
+        the version-pinned lookup used to leak sqlite_utils' NotFoundError,
+        which reached the CLI as a traceback instead of a message.
+        """
+        if version:
+            try:
+                row = self.db["workflow_drafts"].get((workflow_id, version))
+            except sqlite_utils.db.NotFoundError:
+                raise KeyError(
+                    f"no draft stored for workflow '{workflow_id}' version '{version}'"
+                ) from None
+            return HumanWorkflowDraft.model_validate_json(row["draft_json"])
+        rows = list(
+            self.db["workflow_drafts"].rows_where(
+                "workflow_id = ?", [workflow_id], order_by="updated_at desc"
+            )
+        )
+        if not rows:
+            raise KeyError(f"no draft stored for workflow '{workflow_id}'")
+        return HumanWorkflowDraft.model_validate_json(rows[0]["draft_json"])
+
+    def list_workflow_drafts(self) -> list[HumanWorkflowDraft]:
+        """Every stored draft, most recently updated first."""
+        return [
+            HumanWorkflowDraft.model_validate_json(r["draft_json"])
+            for r in self.db["workflow_drafts"].rows_where(order_by="updated_at desc")
+        ]
+
+    def save_validation_report(self, report: ValidationReport) -> str:
+        """Record a validation report and return its storage id.
+
+        The id is generated here rather than carried on the contract: it is a
+        handle for citing this evaluation from a promotion, not part of what a
+        report *is*.
+        """
+        report_id = _new_id("vr")
+        self.db["validation_reports"].insert(
+            {
+                "report_id": report_id,
+                "workflow_id": report.workflow_id,
+                "workflow_version": report.workflow_version,
+                "rule_set_version": report.rule_set_version,
+                "blocking_open": len(report.unresolved_blocking),
+                "evaluated_at": report.evaluated_at.isoformat(),
+                "report_json": report.model_dump_json(),
+            }
+        )
+        return report_id
+
+    def load_validation_report(self, report_id: str) -> ValidationReport:
+        """Load a stored validation report by its storage id."""
+        row = self.db["validation_reports"].get(report_id)
+        return ValidationReport.model_validate_json(row["report_json"])
+
+    def validation_reports_for(self, workflow_id: str) -> list[ValidationReport]:
+        """Every report for a workflow, newest first."""
+        return [
+            ValidationReport.model_validate_json(r["report_json"])
+            for r in self.db["validation_reports"].rows_where(
+                "workflow_id = ?", [workflow_id], order_by="evaluated_at desc"
+            )
+        ]
+
+    def save_risk_acceptance(
+        self, workflow_id: str, acceptance: RiskAcceptance
+    ) -> str:
+        """Record a human accepting a finding as residual risk.
+
+        Actor, timestamp and rationale are mandatory in the contract, so an
+        acceptance that reaches here is always a decision on the record rather
+        than a dismissed warning.
+        """
+        acceptance_id = _new_id("ra")
+        self.db["risk_acceptances"].insert(
+            {
+                "acceptance_id": acceptance_id,
+                "workflow_id": workflow_id,
+                "finding_id": acceptance.finding_id,
+                "rule_id": acceptance.rule.rule_id,
+                "rule_version": acceptance.rule.rule_version,
+                "accepted_by": acceptance.accepted_by,
+                "accepted_at": acceptance.accepted_at.isoformat(),
+                "rationale": acceptance.rationale,
+            }
+        )
+        return acceptance_id
+
+    def risk_acceptances_for(self, workflow_id: str) -> list[dict]:
+        """Every accepted risk on a workflow, newest first."""
+        return list(
+            self.db["risk_acceptances"].rows_where(
+                "workflow_id = ?", [workflow_id], order_by="accepted_at desc"
+            )
+        )
+
+    def record_workflow_promotion(
+        self,
+        workflow_id: str,
+        from_maturity: str,
+        to_maturity: str,
+        granted: bool,
+        promoted_by: str,
+        rule_set_version: str = "",
+        schema_version: str = "",
+        report_id: str = "",
+        detail: str = "",
+    ) -> str:
+        """Append one maturity transition attempt to the audit trail.
+
+        Refusals are recorded as well as grants. A promotion that was declined,
+        and why, is part of a workflow's history — losing it would leave the
+        record showing only the attempts that succeeded.
+        """
+        promotion_id = _new_id("wpromo")
+        self.db["workflow_promotions"].insert(
+            {
+                "promotion_id": promotion_id,
+                "workflow_id": workflow_id,
+                "from_maturity": from_maturity,
+                "to_maturity": to_maturity,
+                "granted": 1 if granted else 0,
+                "promoted_by": promoted_by,
+                "promoted_at": datetime.now(timezone.utc).isoformat(),
+                "rule_set_version": rule_set_version,
+                "schema_version": schema_version,
+                "report_id": report_id,
+                "detail": detail,
+            }
+        )
+        return promotion_id
+
+    def workflow_promotions_for(self, workflow_id: str) -> list[dict]:
+        """Every transition attempt on a workflow, newest first."""
+        return list(
+            self.db["workflow_promotions"].rows_where(
+                "workflow_id = ?", [workflow_id], order_by="promoted_at desc"
+            )
+        )
+
+    def save_accountable_workflow(self, artifact: AccountableWorkflow) -> None:
+        """Store a promoted artifact. Earlier versions are never overwritten."""
+        self.db["accountable_workflows"].insert(
+            {
+                "workflow_id": artifact.workflow_id,
+                "version": artifact.version,
+                "maturity": artifact.maturity.value,
+                "promoted_by": artifact.lineage.promoted_by,
+                "promoted_at": artifact.lineage.promoted_at.isoformat(),
+                "artifact_json": artifact.model_dump_json(),
+            }
+        )
+
+    def load_accountable_workflow(
+        self, workflow_id: str, version: str = "", maturity: str = ""
+    ) -> AccountableWorkflow:
+        """Load a promoted artifact, newest first when unqualified.
+
+        A workflow usually has several artifacts at one draft version — one per
+        maturity step it climbed — so both filters are optional and narrow
+        independently.
+        """
+        where, params = ["workflow_id = ?"], [workflow_id]
+        if version:
+            where.append("version = ?")
+            params.append(version)
+        if maturity:
+            where.append("maturity = ?")
+            params.append(maturity)
+        rows = list(
+            self.db["accountable_workflows"].rows_where(
+                " and ".join(where), params, order_by="promoted_at desc"
+            )
+        )
+        if not rows:
+            raise KeyError(
+                f"no accountable workflow stored for '{workflow_id}'"
+                + (f" version '{version}'" if version else "")
+                + (f" at {maturity}" if maturity else "")
+            )
+        return AccountableWorkflow.model_validate_json(rows[0]["artifact_json"])
+
+    def has_accountable_artifact(
+        self, workflow_id: str, version: str, maturity: str
+    ) -> bool:
+        """Whether this exact version has already been promoted to this maturity."""
+        return any(
+            self.db["accountable_workflows"].rows_where(
+                "workflow_id = ? and version = ? and maturity = ?",
+                [workflow_id, version, maturity],
+            )
+        )
+
+    def accountable_workflow_versions(self, workflow_id: str) -> list[str]:
+        """Every stored version of a promoted workflow, newest first."""
+        return [
+            r["version"]
+            for r in self.db["accountable_workflows"].rows_where(
+                "workflow_id = ?", [workflow_id], order_by="promoted_at desc"
+            )
+        ]
+
+    # ------------------------------------------------- cooperation and export
+
+    def save_cooperation_assessments(
+        self, assessments: list[CooperationAssessment]
+    ) -> list[str]:
+        """Store a workflow's assessments, returning the new record ids.
+
+        Written with one `insert_all`, so an interrupted save cannot leave a
+        workflow half-assessed: SQLite applies the batch or none of it.
+
+        Saving again after an override does not overwrite anything. The new row
+        supersedes the old one for reads while the original remains as the
+        record of what the decision table recommended before a person overruled
+        it — which is the only way an override stays auditable.
+        """
+        recorded_at = datetime.now(timezone.utc).isoformat()
+        rows = [
+            {
+                "record_id": _new_id("ca"),
+                "workflow_id": a.workflow_id,
+                "step_id": a.step_id,
+                "assessment_id": a.assessment_id,
+                "recommended_executor": a.recommended_executor.value,
+                "effective_executor": a.effective_executor.value,
+                "safety_floor": a.safety_floor.value,
+                "overridden": 1 if a.override is not None else 0,
+                "recorded_at": recorded_at,
+                "assessment_json": a.model_dump_json(),
+            }
+            for a in assessments
+        ]
+        if not rows:
+            return []
+        self.db["cooperation_assessments"].insert_all(rows)
+        return [r["record_id"] for r in rows]
+
+    def load_cooperation_assessments(
+        self, workflow_id: str
+    ) -> list[CooperationAssessment]:
+        """The current assessment for each step, newest row per step winning.
+
+        Returns an empty list for a workflow that has never been assessed —
+        absence is a normal state, not an error, and the caller decides whether
+        it matters.
+        """
+        newest: dict[str, dict] = {}
+        for row in self.db["cooperation_assessments"].rows_where(
+            "workflow_id = ?", [workflow_id], order_by="recorded_at, rowid"
+        ):
+            # Ascending order means the last row seen for a step is its newest.
+            newest[row["step_id"]] = row
+        return [
+            CooperationAssessment.model_validate_json(r["assessment_json"])
+            for r in newest.values()
+        ]
+
+    def cooperation_assessment_history(self, workflow_id: str) -> list[dict]:
+        """Every assessment row ever written for a workflow, oldest first.
+
+        The audit view: shows a step's recommendation and any later override as
+        separate events, which `load_cooperation_assessments` deliberately
+        collapses.
+        """
+        return list(
+            self.db["cooperation_assessments"].rows_where(
+                "workflow_id = ?", [workflow_id], order_by="recorded_at, rowid"
+            )
+        )
+
+    def save_cooperative_workflow(self, artifact: CooperativeWorkflow) -> str:
+        """Store a built or approved cooperative workflow, returning its record id.
+
+        Never overwrites. Approving a workflow writes a second row whose
+        `approved` flag is set; the unapproved build stays readable, because an
+        audit needs to see that the assignments existed before anyone signed
+        them.
+        """
+        record_id = _new_id("cw")
+        self.db["cooperative_workflows"].insert(
+            {
+                "record_id": record_id,
+                "workflow_id": artifact.workflow_id,
+                "version": artifact.version,
+                "source_workflow_version": artifact.source_workflow_version,
+                "approved": 1 if artifact.approved else 0,
+                "approved_by": artifact.approved_by,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "artifact_json": artifact.model_dump_json(),
+            }
+        )
+        return record_id
+
+    def load_cooperative_workflow(
+        self, workflow_id: str, version: str = ""
+    ) -> CooperativeWorkflow:
+        """Load the newest cooperative workflow, optionally pinned to a version."""
+        where, params = ["workflow_id = ?"], [workflow_id]
+        if version:
+            where.append("version = ?")
+            params.append(version)
+        rows = list(
+            self.db["cooperative_workflows"].rows_where(
+                " and ".join(where), params, order_by="recorded_at desc, rowid desc"
+            )
+        )
+        if not rows:
+            raise KeyError(
+                f"no cooperative workflow stored for '{workflow_id}'"
+                + (f" version '{version}'" if version else "")
+            )
+        return CooperativeWorkflow.model_validate_json(rows[0]["artifact_json"])
+
+    def has_cooperative_workflow(self, workflow_id: str) -> bool:
+        """Whether any cooperative workflow has been built for this workflow."""
+        return any(
+            self.db["cooperative_workflows"].rows_where(
+                "workflow_id = ?", [workflow_id]
+            )
+        )

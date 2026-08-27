@@ -20,11 +20,29 @@ Commands:
     fukasawa bundle inspect <bundle>    verify a bundle's signature and hashes
     fukasawa bundle import <bundle>     verify and unpack a trusted bundle
 
+The workflow lifecycle, in the order you use it:
+
+    fukasawa workflow init <id>              write a draft skeleton to fill in
+    fukasawa workflow validate <draft>       check it against the 16 rules
+    fukasawa workflow findings <draft>       list findings without gating
+    fukasawa workflow accept-risk <draft>    record a decision on an advisory finding
+    fukasawa workflow promote <draft> --by   advance one maturity step
+    fukasawa workflow assess-cooperation <id>   recommend an executor per step
+    fukasawa workflow build-cooperative <id>    assign every step
+    fukasawa workflow export-agent-brief <id>   flatten into a runnable brief
+    fukasawa workflow status <id>            where it sits, and what is missing
+
+Every `workflow` command accepts `--json`. Their exit codes are stable:
+0 success, 1 your input was wrong, 2 understood and blocked for now,
+3 understood and refused as a matter of doctrine.
+
 All state lives in a local SQLite file (default: ./fukasawa.db). Run handoff
 files are written to ./run_handoffs/. No network calls happen anywhere in
 this program.
 """
 
+import json as jsonlib
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -37,10 +55,38 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
+from src import resources
 from src.foundry.generator import BuildRefusedError, generate_packages
 from src.foundry.validator import validate_package
+from src.foundry.workflow_export import (
+    ExportRefusedError,
+    build_cooperative_workflow,
+    export_workflow,
+    steps_kept_human,
+)
+from src.governance.cooperation import (
+    OverrideRefusedError,
+    apply_override,
+    assess_workflow,
+    steps_not_ready,
+)
 from src.governance.evals import load_eval_case, run_eval_case
 from src.governance.maturity import PromotionRefusedError, assess, promote
+from src.governance.workflow_promotion import (
+    PromotionRefusedError as WorkflowPromotionRefused,
+)
+from src.governance.workflow_promotion import (
+    RiskAcceptanceRefusedError,
+    accept_risk,
+    at_recorded_maturity,
+    reattach_acceptances,
+)
+from src.governance.workflow_promotion import promote as promote_workflow
+from src.governance.workflow_rules import validate_workflow
+from src.schemas.cooperation import ExecutorClass, SafetyFloor
+from src.schemas.findings import ValidationReport, WorkflowFinding
+from src.schemas.human_workflow import HumanWorkflowDraft, WorkflowMaturity
+from src.schemas.templates import DRAFT_SKELETON
 from src.kernel.kernel import (
     GraphRunner,
     GraphSpecError,
@@ -72,7 +118,11 @@ maturity_app = typer.Typer(help="Evidence-based maturity assessment and promotio
 graph_app = typer.Typer(help="Run workflow graphs through the orchestration kernel.")
 trust_app = typer.Typer(help="Manage signing identity and trusted keys.")
 model_app = typer.Typer(help="Inspect and test configured model endpoints.")
+node_app = typer.Typer(help="Tell Fukasawa what computers can run AI for it.")
 bundle_app = typer.Typer(help="Export and import signed, shareable workflow bundles.")
+workflow_app = typer.Typer(
+    help="Capture, validate, promote, assess and export a human workflow."
+)
 app.add_typer(nonconformance_app, name="nonconformance")
 app.add_typer(validate_app, name="validate")
 app.add_typer(runs_app, name="runs")
@@ -82,7 +132,9 @@ app.add_typer(maturity_app, name="maturity")
 app.add_typer(graph_app, name="graph")
 app.add_typer(trust_app, name="trust")
 app.add_typer(model_app, name="model")
+app.add_typer(node_app, name="node")
 app.add_typer(bundle_app, name="bundle")
+app.add_typer(workflow_app, name="workflow")
 
 console = Console()
 
@@ -461,7 +513,7 @@ def validate_brief(
     path: str = typer.Argument(..., help="Path to a workflow brief YAML file."),
 ) -> None:
     """Validate a workflow brief file, reporting problems field by field."""
-    file = Path(path)
+    file = resources.resolve(path)
     if not file.exists():
         console.print(f"[red]No such file:[/red] {path}")
         raise typer.Exit(1)
@@ -1210,7 +1262,18 @@ def bundle_import(
 
 @model_app.command("list")
 def model_list() -> None:
-    """List configured model endpoints (defaults + config file)."""
+    """List configured model endpoints, and say where to add your own.
+
+    The second half matters more than the first. This runtime is meant to be
+    handed to someone who runs their own hardware, and until now the only
+    statement of where endpoints are configured lived in one line of source:
+    a user saw two localhost defaults and nothing telling them the file
+    existed, let alone where. Printing the path — whether or not it exists yet
+    — is the difference between a configurable product and one that looks
+    hardcoded.
+    """
+    from src.security.trust import DEFAULT_TRUST_ROOT
+
     registry = _model_endpoints()
     table = Table(title="Model endpoints")
     table.add_column("Name")
@@ -1224,6 +1287,36 @@ def model_list() -> None:
         "Reference these by name in a graph's model node: "
         "[cyan]endpoint: local-ollama[/cyan]"
     )
+
+    # soft_wrap on every line carrying the path: rich wraps to terminal width by
+    # default and will happily break a long path mid-filename, producing
+    # something the operator cannot copy. A path is not prose.
+    config = DEFAULT_TRUST_ROOT / "model_endpoints.yaml"
+    if config.exists():
+        console.print("\nConfigured in:")
+        console.print(f"[cyan]{config}[/cyan]", soft_wrap=True)
+    else:
+        console.print(
+            "\nThese are the built-in defaults. To add your own inference "
+            "nodes, create:"
+        )
+        console.print(f"[cyan]{config}[/cyan]", soft_wrap=True)
+        console.print()
+        console.print(_ENDPOINT_TEMPLATE)
+    console.print(
+        "An endpoint is a name, a kind and a URL — it carries no capabilities, "
+        "so nothing yet checks whether a node can run a given step. See "
+        "'Known gaps' in the README."
+    )
+
+
+#: Shown by `model list` when no endpoint config exists yet. A template beats a
+#: path alone: the file has never existed on this machine, so there is nothing
+#: for the user to open and read the shape of.
+_ENDPOINT_TEMPLATE = """[dim]endpoints:
+  my-gpu-box:
+    kind: ollama        # ollama | llamacpp
+    url: http://192.168.1.50:11434[/dim]"""
 
 
 @model_app.command("test")
@@ -1249,6 +1342,340 @@ def model_test(
             Panel(escape(result.note), title=f"[red]{endpoint} failed[/red]", border_style="red")
         )
         raise typer.Exit(1)
+
+
+# ------------------------------------------------------------------------- node
+
+
+def _discover(scope, host="", **kwargs):
+    """Run a scan. Named so a test can replace it without a live network."""
+    from src.nodes.discovery import discover
+
+    return discover(scope, host, **kwargs)
+
+
+def _node_store():
+    """Open the store at its configured location."""
+    from src.nodes.store import NodeStore
+
+    return NodeStore()
+
+
+#: Both directions of the scope vocabulary, declared once. The CLI flag values
+#: are hyphenated; the enum values are not; the sentence is neither.
+_SCOPE_FLAGS = {
+    "none": "NONE",
+    "this-machine": "THIS_MACHINE",
+    "named-host": "NAMED_HOST",
+    "local-network": "LOCAL_NETWORK",
+}
+_SCOPE_WORDS = {
+    "NONE": "Not looking at anything",
+    "THIS_MACHINE": "Just this computer",
+    "NAMED_HOST": "One computer, named",
+    "LOCAL_NETWORK": "Every computer on this network",
+}
+
+
+def _scope_from(text: str):
+    """Turn a --scope value into a ScanScope, or exit 1 naming the choices."""
+    from src.schemas.node import ScanScope
+
+    if text not in _SCOPE_FLAGS:
+        console.print(
+            f"[red]'{escape(text)}' is not one of the choices.[/red] "
+            f"Use one of: {', '.join(_SCOPE_FLAGS)}"
+        )
+        raise typer.Exit(1)
+    return ScanScope(_SCOPE_FLAGS[text])
+
+
+def _render_summary(nodes) -> None:
+    """Print the panel: figures with units, and at most one consequence.
+
+    ``SummaryRow`` deliberately carries no ``source`` (see
+    ``src/nodes/summary.py``) — each figure on this panel is a maximum taken
+    across every computer, so a per-node provenance label would beg the
+    question "on which one?" Only the label and the value are printed.
+    """
+    from src.nodes.summary import summarise
+
+    summary = summarise(nodes)
+    console.print("\n[bold]What this means when steps run[/bold]")
+    for row in summary.rows:
+        # The first row is a list of the labels people chose, so it is their
+        # text, not ours. escape() keeps a square bracket in a label from
+        # being read as formatting and aborting the print.
+        console.print(f"  {row.label:<32} {escape(row.value)}")
+    if summary.consequence:
+        console.print(f"\n  {summary.consequence}")
+
+
+@node_app.command("scan")
+def node_scan(
+    scope: str = typer.Option(
+        "", "--scope", help="none | this-machine | named-host | local-network"
+    ),
+    host: str = typer.Option("", "--host", help="Address, for --scope named-host."),
+    label: str = typer.Option("", "--label", help="What to call what is found."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the prompts."),
+    as_json: bool = typer.Option(False, "--json", help="One event per line, as JSON."),
+) -> None:
+    """Look for computers that can run AI, and record what is found.
+
+    Nothing is examined until a permission is chosen. Findings are printed as
+    they arrive rather than in a block at the end, because a scan takes time
+    and a person watching one deserves to see it happening.
+    """
+    from src.schemas.node import ScanConsent, ScanScope
+
+    store = _node_store()
+    _nodes, existing = store.load()
+
+    if scope:
+        chosen = _scope_from(scope)
+    elif yes:
+        chosen = existing.scope
+    else:
+        console.print(
+            "\nFukasawa can run some workflow steps automatically, using AI\n"
+            "on a computer you point it at.\n"
+        )
+        console.print("[bold]Where should I look?[/bold]")
+        console.print("  1  Just this computer            nothing leaves this machine")
+        console.print("  2  A computer I'll name")
+        console.print("  3  Every computer on this network  takes about a minute; some")
+        console.print("                                     workplaces disallow this")
+        console.print("  4  Don't look — I'll type it in")
+        answer = typer.prompt("Choose", default="1")
+        chosen = {
+            "1": ScanScope.THIS_MACHINE,
+            "2": ScanScope.NAMED_HOST,
+            "3": ScanScope.LOCAL_NETWORK,
+            "4": ScanScope.NONE,
+        }.get(answer.strip(), ScanScope.THIS_MACHINE)
+
+    if chosen is ScanScope.NONE:
+        # OPEN QUESTION — for the operator, not to be guessed at here.
+        #
+        # Two different situations end up on this line. `--scope none` is a
+        # refusal of something explicitly asked for, and exit 3 is right for
+        # it; a test holds that contract. Choice 4 on the menu — "Don't look
+        # — I'll type it in" — is not a refusal of anything. It is a person
+        # taking a route this program offers, and answering it with
+        # "Refused" and a non-zero exit describes them wrongly.
+        #
+        # Telling the two paths apart in code is easy. What the chosen route
+        # should then do is not: exit 0 pointing at `node add`, or exit 3
+        # with different words, turns on whether anything is expected to read
+        # this exit code, and nobody has said. Left as one path on purpose.
+        console.print(
+            "[yellow]Refused:[/yellow] no permission to look. "
+            "Choose a different option, or add a computer with "
+            "[cyan]fukasawa node add[/cyan]."
+        )
+        raise typer.Exit(3)
+
+    if chosen is ScanScope.LOCAL_NETWORK:
+        # Sweeping a whole network is named in the design and is not built in
+        # this phase. The answer has to come before the permission is written
+        # down, below: a permission nothing can act on would be read back by
+        # every later scan and fail again, and clearing it means knowing to
+        # run a command nothing mentions.
+        #
+        # Exit 1, not the 3 used just above. Three means refused as a matter
+        # of doctrine, and nothing here is refusing anyone anything — the
+        # part being asked for does not exist yet. That is the same condition
+        # as a scope this program does not recognise, which already exits 1.
+        console.print(
+            "[yellow]Looking at every computer on this network is not "
+            "built yet.[/yellow]\n"
+            "To look at one other computer, run [cyan]fukasawa node scan "
+            "--scope named-host --host <address>[/cyan].\n"
+            "To record a computer without looking for it, run "
+            "[cyan]fukasawa node add[/cyan]."
+        )
+        raise typer.Exit(1)
+
+    if chosen is ScanScope.NAMED_HOST and not host:
+        if yes:
+            # --yes is documented as skipping the prompts, so this one cannot
+            # be asked either. Asked anyway on a closed input, it aborts
+            # mid-question and names nothing that would fix it.
+            console.print(
+                "[yellow]No address was given.[/yellow] --yes skips the "
+                "prompts, so the address has to arrive as a flag.\n"
+                "Run [cyan]fukasawa node scan --scope named-host --host "
+                "<address>[/cyan]."
+            )
+            raise typer.Exit(1)
+        host = typer.prompt("Address of the computer")
+
+    store.set_consent(ScanConsent.granted(chosen, "operator"))
+
+    # A blank line to separate the findings from the question above them --
+    # spacing for a person reading, and so not written when the reader is a
+    # program. Under --json this line is the stream's first line, and an
+    # empty first line is not an object.
+    if not as_json:
+        console.print("")
+    found = []
+    for event in _discover(chosen, host):
+        if as_json:
+            # A plain print, not console.print: Rich wraps to the window and
+            # would split a message in two. Not `_emit_json` either — that
+            # helper indents across several lines, and the design (§3.7) calls
+            # this a stream of one object per line. So: dumped flat, printed
+            # raw. NOTE: src/cli.py imports the json module as `jsonlib`.
+            print(jsonlib.dumps({
+                "stage": event.stage, "message": event.message,
+                "ok": event.ok, "finished": event.finished,
+            }))
+        else:
+            mark = "  [green]OK[/green]" if event.ok else "  [yellow]--[/yellow]"
+            # A finding quotes model names read off another computer, so the
+            # text is not ours and is escaped before it is printed.
+            console.print(f"{mark}  {escape(event.message)}")
+        if event.node is not None and event.node not in found:
+            found.append(event.node)
+
+    for node in found:
+        if label:
+            node.label = label
+        store.upsert(node)
+
+    # The summary panel is prose for a person: labelled rows, rounded word
+    # figures, and a consequence sentence. Under --json it would land inside
+    # the stream as several lines that are not objects, and only ever on a
+    # scan that FOUND something -- so a stand-in yielding no node never
+    # reaches it, and the leak hides behind the success case.
+    if found and not as_json:
+        _render_summary(store.load()[0])
+
+
+@node_app.command("list")
+def node_list(
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Show every computer Fukasawa has been told about."""
+    nodes, _consent = _node_store().load()
+    if as_json:
+        _emit_json({"nodes": [n.model_dump(mode="json") for n in nodes]})
+        return
+
+    from src.nodes.summary import human_words, source_label
+
+    for node in nodes:
+        # Label and address are both typed by a person; escape() keeps a
+        # square bracket in either from being read as formatting.
+        console.print(
+            f"\n[bold]{escape(node.label)}[/bold]  [dim]{escape(node.url)}[/dim]"
+        )
+        console.print(f"  Models it can run    {len(node.models)}")
+        if node.max_context_length:
+            console.print(
+                f"  Longest input        {human_words(node.max_context_length)}"
+                f"   [dim]{source_label(node.source_of('models'))}[/dim]"
+            )
+    _render_summary(nodes)
+
+
+@node_app.command("show")
+def node_show(node_id: str = typer.Argument(..., help="Which computer.")) -> None:
+    """Show one computer and every model it can serve."""
+    nodes, _ = _node_store().load()
+    match = next((n for n in nodes if n.node_id == node_id), None)
+    if match is None:
+        console.print(f"[red]Nothing stored called '{escape(node_id)}'.[/red]")
+        raise typer.Exit(1)
+
+    from src.nodes.summary import human_bytes, human_rate, human_words
+
+    console.print(
+        f"\n[bold]{escape(match.label)}[/bold]  [dim]{escape(match.url)}[/dim]"
+    )
+    console.print(f"  Answering            {'yes' if match.reachable else 'no'}")
+    console.print(f"  Speed                {human_rate(match.host.tokens_per_second)}")
+    console.print(f"  Graphics card        {human_bytes(match.host.vram_bytes)}")
+    for model in match.models:
+        # A model name is read off another computer, so it is escaped. Padding
+        # happens first and escaping second, so the column still lines up: the
+        # backslashes escape() adds are not printed.
+        console.print(
+            f"    {escape(f'{model.name:<28}')} {human_words(model.context_length)}"
+        )
+
+
+@node_app.command("add")
+def node_add(
+    label: str = typer.Option(..., "--label", help="What to call it."),
+    kind: str = typer.Option(..., "--kind", help="ollama | llamacpp"),
+    url: str = typer.Option(..., "--url", help="Base URL it answers on."),
+) -> None:
+    """Add a computer by hand, without looking for it."""
+    from src.schemas.node import InferenceNode, NodeKind, Provenance, slugify
+
+    if kind not in {k.value for k in NodeKind}:
+        console.print(f"[red]'{escape(kind)}' is not one of: ollama, llamacpp[/red]")
+        raise typer.Exit(1)
+
+    node = InferenceNode(
+        node_id=slugify(label), label=label, kind=NodeKind(kind), url=url,
+        provenance={
+            "label": Provenance.DECLARED,
+            "url": Provenance.DECLARED,
+            "kind": Provenance.DECLARED,
+        },
+    )
+    _node_store().upsert(node)
+    console.print(f"Added [bold]{escape(label)}[/bold].")
+
+
+@node_app.command("forget")
+def node_forget(node_id: str = typer.Argument(..., help="Which computer.")) -> None:
+    """Remove a computer."""
+    if not _node_store().forget(node_id):
+        console.print(f"[red]Nothing stored called '{escape(node_id)}'.[/red]")
+        raise typer.Exit(1)
+    console.print(f"Removed {escape(node_id)}.")
+
+
+@node_app.command("consent")
+def node_consent(
+    set_to: str = typer.Option("", "--set", help="none | this-machine | named-host | local-network"),
+) -> None:
+    """Show or change how far a scan may reach."""
+    from src.schemas.node import ScanConsent, ScanScope
+
+    store = _node_store()
+    _nodes, consent = store.load()
+    if not set_to:
+        console.print(f"Currently: {_SCOPE_WORDS[consent.scope.value]}")
+        return
+    chosen = _scope_from(set_to)
+    if chosen is ScanScope.LOCAL_NETWORK:
+        # The same answer `node scan` gives at its LOCAL_NETWORK branch, and
+        # for the reason stated there: sweeping a whole network is named in
+        # the design and is not built in this phase, so a permission granting
+        # it is one nothing can act on. Written down, it is read back by every
+        # later scan and refused again, and clearing it means knowing to run a
+        # command nothing mentions. This verb is where that permission would
+        # be written most deliberately, so the guard belongs here too.
+        #
+        # Exit 1, matching that site: nothing is being refused as a matter of
+        # doctrine, the part being asked for does not exist yet. Three is
+        # documented at the top of this file for the former.
+        console.print(
+            "[yellow]Looking at every computer on this network is not "
+            "built yet[/yellow], so that permission is not recorded.\n"
+            "To allow one other computer, run [cyan]fukasawa node consent "
+            "--set named-host[/cyan].\n"
+            "To allow this computer, run [cyan]fukasawa node consent --set "
+            "this-machine[/cyan]."
+        )
+        raise typer.Exit(1)
+    store.set_consent(ScanConsent.granted(chosen, "operator"))
+    console.print(f"Changed to: {_SCOPE_WORDS[chosen.value]}")
 
 
 # ------------------------------------------------------------------------ eval
@@ -1506,6 +1933,988 @@ def nonconformance_records(
             r.note,
         )
     console.print(table)
+
+
+# ===================================================== human & cooperative
+#
+# The lifecycle sub-app. Everything above operates on a WorkflowBrief that
+# somebody already wrote; these commands are how a brief comes to exist —
+# capture what actually happens, find the gaps, resolve accountability, decide
+# who does each step, and only then export something runnable.
+#
+# Two conventions apply here and not to the commands above, which are frozen by
+# the phase boundary: every command takes --json, and exit codes distinguish an
+# operator's mistake from the runtime's refusal. See EXIT_* below.
+
+#: Exit codes for the workflow sub-app. Stable: a script may branch on these.
+#:
+#: The distinction that matters is 1 versus 2/3. A 1 means *you* made a mistake
+#: and should fix your input. A 2 or 3 means the input was understood and the
+#: runtime declined — which is the product working, not failing.
+EXIT_OK = 0
+#: Bad path, malformed YAML, missing prerequisite, contradictory flags.
+EXIT_INPUT = 1
+#: Understood and refused for now: unresolved blocking findings, promotion not
+#: ready. Fix the workflow and the same command will succeed.
+EXIT_BLOCKED = 2
+#: Understood and refused as a matter of doctrine: an override that would cross
+#: a safety floor, an unapproved export, a gateless autonomous agent. Fixing the
+#: input is the wrong response; reconsider the request.
+EXIT_REFUSED = 3
+
+_JSON_OPTION = typer.Option(
+    False, "--json", help="Emit machine-readable JSON instead of tables."
+)
+
+#: Set per invocation by every workflow command. A CLI process handles one
+#: command, so a module global is honest here — but it is written at the top of
+#: each command rather than once, so a test harness reusing the process cannot
+#: leak the previous invocation's mode into the next.
+_json_mode = False
+
+
+def _set_json(enabled: bool) -> None:
+    """Select output mode for this invocation."""
+    global _json_mode
+    _json_mode = enabled
+
+
+def _emit_json(payload: dict) -> None:
+    """Print one JSON object on stdout, with no Rich markup anywhere in it.
+
+    Uses a plain print rather than the Rich console: Rich wraps long lines to
+    the terminal width, which would corrupt JSON for the caller parsing it.
+    """
+    print(jsonlib.dumps(payload, indent=2, sort_keys=False))
+
+
+def _problems(exc: ValidationError) -> list[dict]:
+    """Pydantic errors as plain data, for the --json error path."""
+    return [
+        {
+            "field": ".".join(str(p) for p in err["loc"]) or "(root)",
+            "problem": err["msg"],
+        }
+        for err in exc.errors()
+    ]
+
+
+def _fail_input(message: str) -> None:
+    """Report an operator mistake and exit 1. Never raises past the boundary."""
+    if _json_mode:
+        _emit_json({"ok": False, "error": "input", "message": message})
+    else:
+        console.print(f"[red]Error:[/red] {escape(message)}")
+    raise typer.Exit(EXIT_INPUT)
+
+
+def _fail_refused(message: str, *, error: str) -> None:
+    """Report a doctrine refusal and exit 3.
+
+    Refusal messages are written to be read by the person who hit them, so they
+    are printed whole rather than summarized.
+    """
+    if _json_mode:
+        _emit_json({"ok": False, "error": error, "message": message})
+    else:
+        console.print(f"[red]Refused:[/red] {escape(message)}")
+    raise typer.Exit(EXIT_REFUSED)
+
+
+def _report_kept_human(step_ids: list[str]) -> None:
+    """Say which steps stayed with a person, and never treat it as a shortfall.
+
+    An operator who exports a workflow and reads only "2 packages generated"
+    has learned nothing about the six steps still on their desk. That silence
+    is the failure mode this product exists to prevent, so the count is always
+    reported — including when it is zero.
+    """
+    if step_ids:
+        console.print(
+            f"\n[bold]{len(step_ids)} step(s) stay with a person:[/bold] "
+            f"{', '.join(step_ids)}"
+        )
+    else:
+        console.print("\n[bold]No steps stay with a person.[/bold]")
+
+
+def _load_draft_file(path: str) -> HumanWorkflowDraft:
+    """Read a workflow draft from YAML, exiting cleanly on a bad file.
+
+    Never raises past the CLI boundary: a missing file and a malformed one are
+    both ordinary operator mistakes, and a traceback is not an error message.
+    """
+    # resolve() prefers the operator's working directory and falls back to the
+    # copy bundled in the PyInstaller binary, so every documented example path
+    # works identically from a checkout and from the executable.
+    file = resources.resolve(path)
+    if not file.exists():
+        _fail_input(f"No such file: {path}")
+    try:
+        raw = yaml.safe_load(file.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        _fail_input(f"{path} is not valid YAML: {exc}")
+    if not isinstance(raw, dict):
+        _fail_input(f"{path} does not contain a workflow draft (expected a mapping).")
+    try:
+        return HumanWorkflowDraft.model_validate(raw)
+    except ValidationError as exc:
+        if _json_mode:
+            _emit_json({"ok": False, "error": "invalid_draft", "problems": _problems(exc)})
+        else:
+            _print_validation_error(exc, subject=path)
+        raise typer.Exit(EXIT_INPUT)
+
+
+def _finding_row(finding: WorkflowFinding) -> dict:
+    """One finding as plain data, for --json and for table rendering alike."""
+    return {
+        "finding_id": finding.finding_id,
+        "rule_id": finding.rule.rule_id,
+        "rule_version": finding.rule.rule_version,
+        "type": finding.finding_type.value,
+        "severity": finding.severity.value,
+        "blocking": finding.blocking,
+        "message": finding.message,
+        "step_id": finding.location.step_id or "",
+        "gate_id": finding.location.gate_id or "",
+        "field": finding.location.field or "",
+        "remediation": finding.remediation,
+        "accepted": finding.acceptance is not None,
+    }
+
+
+def _print_findings(report: ValidationReport) -> None:
+    """Render a validation report as a table, blocking findings first."""
+    if not report.findings:
+        console.print(f"[green]No findings[/green] for '{report.workflow_id}'.")
+        return
+    table = Table(
+        title=f"{report.workflow_id} — {len(report.findings)} finding(s), "
+        f"rule set v{report.rule_set_version}"
+    )
+    for col in ("Rule", "Policy", "Where", "Problem", "Remediation"):
+        table.add_column(col)
+    ordered = sorted(report.findings, key=lambda f: (not f.blocking, f.rule.rule_id))
+    for f in ordered:
+        if f.acceptance is not None:
+            policy = "[dim]accepted[/dim]"
+        elif f.blocking:
+            policy = "[red]blocking[/red]"
+        else:
+            policy = "[yellow]advisory[/yellow]"
+        where = f.location.step_id or f.location.gate_id or "(workflow)"
+        if f.location.field:
+            where += f".{f.location.field}"
+        table.add_row(
+            f.rule.rule_id, policy, escape(where), escape(f.message), escape(f.remediation)
+        )
+    console.print(table)
+
+
+@workflow_app.command("init")
+def workflow_init(
+    workflow_id: str = typer.Argument(..., help="Slug for the new workflow, e.g. weekly-report."),
+    out: str = typer.Option("", "--out", help="Where to write it. Defaults to <workflow_id>.yaml."),
+    name: str = typer.Option("", "--name", help="Human-readable name. Defaults to the slug."),
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing file."),
+    json_out: bool = _JSON_OPTION,
+) -> None:
+    """Write a workflow draft skeleton to fill in by hand.
+
+    The skeleton is a valid but deliberately incomplete draft: it saves and
+    reloads, and `workflow validate` will tell you exactly what is missing.
+    That order is the point — capture what happens first, discover the gaps
+    second. A tool that refused to record an incomplete process would make
+    honest capture impossible.
+    """
+    _set_json(json_out)
+    if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", workflow_id):
+        _fail_input(
+            f"'{workflow_id}' is not a valid workflow id. Use lowercase words "
+            f"separated by hyphens, e.g. weekly-report."
+        )
+    target = Path(out) if out else Path(f"{workflow_id}.yaml")
+    if target.exists() and not force:
+        _fail_input(f"{target} already exists. Pass --force to overwrite it.")
+
+    skeleton = DRAFT_SKELETON.format(
+        workflow_id=workflow_id, name=name or workflow_id.replace("-", " ").title()
+    )
+    try:
+        target.write_text(skeleton, encoding="utf-8")
+    except OSError as exc:
+        _fail_input(f"Could not write {target}: {exc}")
+
+    if _json_mode:
+        _emit_json({"ok": True, "workflow_id": workflow_id, "path": str(target)})
+        return
+    console.print(f"Wrote draft skeleton: [cyan]{target}[/cyan]")
+    console.print(
+        "\nFill in the [bold]trigger[/bold], [bold]claimed_outcome[/bold], and each "
+        "step's [bold]actor[/bold] and [bold]outputs[/bold] — those are what the "
+        "blocking rules check first. Record what actually happens, gaps "
+        "included.\n"
+        f"Then run: [cyan]fukasawa workflow validate {target}[/cyan]"
+    )
+
+
+@workflow_app.command("validate")
+def workflow_validate(
+    path: str = typer.Argument(..., help="Path to a workflow draft YAML file."),
+    db: str = _DB_OPTION,
+    save: bool = typer.Option(
+        False, "--save", help="Store the draft and its report in the ledger."
+    ),
+    json_out: bool = _JSON_OPTION,
+) -> None:
+    """Check a draft against the 16 deterministic rules.
+
+    Exits 2 when an unresolved blocking finding remains — that blocks promotion
+    to ACCOUNTABLE, and nothing else. It never blocks saving: `--save` stores
+    the draft either way, because a workflow is allowed to be a mess while you
+    are still writing down what it is.
+    """
+    _set_json(json_out)
+    draft = _load_draft_file(path)
+    ledger = RunLedger(db)
+    report = validate_workflow(draft)
+    # Validation is stateless, so a finding a human already accepted comes back
+    # looking unaccepted. Re-attach before reporting, or the operator is shown a
+    # decision they made as though they had not made it.
+    reattach_acceptances(report, ledger)
+
+    if save:
+        ledger.save_workflow_draft(draft)
+        ledger.save_validation_report(report)
+
+    blocking = [f for f in report.unresolved_blocking]
+    if _json_mode:
+        _emit_json(
+            {
+                "ok": report.promotion_ready,
+                "workflow_id": report.workflow_id,
+                "rule_set_version": report.rule_set_version,
+                "promotion_ready": report.promotion_ready,
+                "findings": [_finding_row(f) for f in report.findings],
+                "unresolved_blocking": [f.finding_id for f in blocking],
+                "saved": save,
+            }
+        )
+    else:
+        _print_findings(report)
+        if save:
+            console.print(f"Draft and report saved to [cyan]{db}[/cyan].")
+        if report.promotion_ready:
+            console.print(
+                f"\n[green]Promotion ready.[/green] Next: "
+                f"[cyan]fukasawa workflow promote {path} --by <your name>[/cyan]"
+            )
+        else:
+            console.print(
+                f"\n[red]{len(blocking)} unresolved blocking finding(s).[/red] "
+                f"Fix them in {path}, then validate again."
+            )
+    if not report.promotion_ready:
+        raise typer.Exit(EXIT_BLOCKED)
+
+
+@workflow_app.command("findings")
+def workflow_findings(
+    path: str = typer.Argument(..., help="Path to a workflow draft YAML file."),
+    rule: str = typer.Option("", "--rule", help="Show only this rule id, e.g. HW-004."),
+    blocking_only: bool = typer.Option(
+        False, "--blocking-only", help="Hide advisory findings."
+    ),
+    json_out: bool = _JSON_OPTION,
+) -> None:
+    """List a draft's findings without judging whether it may be promoted.
+
+    Always exits 0 when the draft loads. `validate` is the gate; this is the
+    lens. Separating them means a script can read findings without having to
+    treat their existence as a failure.
+    """
+    _set_json(json_out)
+    draft = _load_draft_file(path)
+    report = validate_workflow(draft, rule_ids=[rule] if rule else None)
+    findings = [f for f in report.findings if not blocking_only or f.blocking]
+
+    if _json_mode:
+        _emit_json(
+            {
+                "ok": True,
+                "workflow_id": report.workflow_id,
+                "count": len(findings),
+                "findings": [_finding_row(f) for f in findings],
+            }
+        )
+        return
+    if rule and not findings:
+        console.print(f"No findings for rule [bold]{rule}[/bold] in '{report.workflow_id}'.")
+        return
+    filtered = report.model_copy(update={"findings": findings})
+    _print_findings(filtered)
+
+
+@workflow_app.command("accept-risk")
+def workflow_accept_risk(
+    path: str = typer.Argument(..., help="Path to a workflow draft YAML file."),
+    finding: str = typer.Option(
+        ..., "--finding", help="Finding id to accept, e.g. 'HW-013:workflow'."
+    ),
+    by: str = typer.Option(..., "--by", help="Who is accepting it (self-attested)."),
+    why: str = typer.Option(..., "--why", help="Why this risk is acceptable."),
+    db: str = _DB_OPTION,
+) -> None:
+    """Consciously accept an advisory finding as residual risk.
+
+    Accepting records a decision; it does not unlock anything. Advisory findings
+    never gated promotion, so this changes no outcome — what it changes is
+    whether the reason is on the record. HW-013 and HW-014 are the heuristic
+    pair, and "we know about this and it is fine" is a different statement from
+    silence.
+
+    A **blocking** finding cannot be accepted and exits 3. Waiving one would
+    turn the promotion gate into a formality.
+    """
+    _set_json(False)
+    draft = _load_draft_file(path)
+    ledger = RunLedger(db)
+    report = validate_workflow(draft)
+    reattach_acceptances(report, ledger)
+
+    try:
+        acceptance = accept_risk(
+            ledger,
+            draft.workflow_id,
+            report,
+            finding_id=finding,
+            accepted_by=by,
+            rationale=why,
+        )
+    except RiskAcceptanceRefusedError as exc:
+        # An unknown finding id is the operator mistyping; a blocking finding is
+        # doctrine refusing. Different codes, because the fixes differ.
+        known = {f.finding_id for f in report.findings}
+        if finding not in known:
+            _fail_input(
+                f"{exc}. Findings in this draft: "
+                f"{', '.join(sorted(known)) or '(none)'}"
+            )
+        _fail_refused(str(exc), error="acceptance_refused")
+
+    ledger.save_workflow_draft(draft)
+    ledger.save_validation_report(report)
+    console.print(
+        f"[green]Accepted[/green] {acceptance.rule.rule_id} "
+        f"([cyan]{acceptance.finding_id}[/cyan]) as residual risk."
+    )
+    console.print(f"Recorded by {acceptance.accepted_by}: {escape(acceptance.rationale)}")
+    console.print(
+        "\n[dim]This records a decision. It does not change whether the "
+        "workflow may be promoted — advisory findings never blocked it.[/dim]"
+    )
+
+
+@workflow_app.command("promote")
+def workflow_promote(
+    path: str = typer.Argument(..., help="Path to a workflow draft YAML file."),
+    by: str = typer.Option(..., "--by", help="Who is promoting this (self-attested)."),
+    db: str = _DB_OPTION,
+    exception_policy: str = typer.Option(
+        "", "--exception-policy", help="What happens when no path matches."
+    ),
+    json_out: bool = _JSON_OPTION,
+) -> None:
+    """Advance a draft one step up the maturity ladder.
+
+    Exits 2 when findings block the step and 3 when the transition itself is
+    refused. Both are the runtime working; neither is a crash.
+    """
+    _set_json(json_out)
+    draft = _load_draft_file(path)
+    ledger = RunLedger(db)
+    draft, lifted_note = at_recorded_maturity(draft, ledger)
+    if lifted_note and not _json_mode:
+        console.print(f"[dim]{escape(lifted_note)}[/dim]")
+    report = validate_workflow(draft)
+    # Without this the promoted artifact's accepted_risks is always empty: the
+    # acceptances are in the ledger, and validation has no memory of them.
+    reattach_acceptances(report, ledger)
+    assessments = ledger.load_cooperation_assessments(draft.workflow_id)
+
+    if report.unresolved_blocking:
+        if _json_mode:
+            _emit_json(
+                {
+                    "ok": False,
+                    "error": "blocking_findings",
+                    "workflow_id": draft.workflow_id,
+                    "unresolved_blocking": [
+                        _finding_row(f) for f in report.unresolved_blocking
+                    ],
+                }
+            )
+        else:
+            console.print(
+                f"[red]Cannot promote:[/red] "
+                f"{len(report.unresolved_blocking)} unresolved blocking finding(s)."
+            )
+            _print_findings(report)
+        raise typer.Exit(EXIT_BLOCKED)
+
+    try:
+        outcome = promote_workflow(
+            ledger,
+            draft,
+            report,
+            promoted_by=by,
+            exception_policy=exception_policy,
+            assessments=assessments,
+        )
+    except WorkflowPromotionRefused as exc:
+        _fail_refused(str(exc), error="promotion_refused")
+
+    if _json_mode:
+        _emit_json(
+            {
+                "ok": True,
+                "workflow_id": outcome.workflow_id,
+                "from_maturity": outcome.from_maturity.value,
+                "to_maturity": outcome.to_maturity.value,
+                "promotion_id": outcome.promotion_id,
+                "artifact_stored": outcome.artifact is not None,
+            }
+        )
+        return
+    console.print(
+        f"[green]Promoted[/green] '{outcome.workflow_id}': "
+        f"{outcome.from_maturity.value} → [bold]{outcome.to_maturity.value}[/bold]"
+    )
+    console.print(f"Recorded as promotion [cyan]{outcome.promotion_id}[/cyan] in {db}.")
+    if outcome.to_maturity is WorkflowMaturity.ACCOUNTABLE:
+        console.print(
+            f"\nNext: [cyan]fukasawa workflow assess-cooperation "
+            f"{outcome.workflow_id}[/cyan]"
+        )
+
+
+@workflow_app.command("assess-cooperation")
+def workflow_assess_cooperation(
+    workflow_id: str = typer.Argument(..., help="A workflow already promoted to ACCOUNTABLE."),
+    db: str = _DB_OPTION,
+    override: list[str] = typer.Option(
+        [],
+        "--override",
+        help="Override one step: STEP_ID=EXECUTOR_CLASS. Repeatable. Requires --by and --why.",
+    ),
+    by: str = typer.Option("", "--by", help="Who is overriding (required with --override)."),
+    why: str = typer.Option("", "--why", help="Why the recommendation is wrong for this step."),
+    json_out: bool = _JSON_OPTION,
+) -> None:
+    """Recommend an executor for every step, and record any human override.
+
+    No model is involved. The same workflow always yields the same
+    recommendations, so you can predict the output before running it.
+
+    An override is refused (exit 3) when it would move a step that hit a safety
+    floor toward greater autonomy. A human may always move work toward human
+    control; the reverse is doctrine, not preference.
+    """
+    _set_json(json_out)
+    ledger = RunLedger(db)
+    try:
+        workflow = ledger.load_accountable_workflow(workflow_id)
+    except KeyError:
+        _fail_input(
+            f"No accountable workflow stored for '{workflow_id}'. "
+            f"Promote a draft to ACCOUNTABLE first."
+        )
+
+    systems: list[str] = []
+    try:
+        systems = ledger.load_workflow_draft(workflow_id).systems
+    except KeyError:
+        # No stored draft: report no tools rather than inventing them.
+        pass
+
+    assessments = assess_workflow(workflow, systems=systems)
+    by_step = {a.step_id: a for a in assessments}
+
+    # Re-assessing must not quietly discard a decision a person already made.
+    # The recommendation is recomputed from the table every time, but a stored
+    # override is carried forward unless this invocation replaces it: the
+    # override is the human's judgment, and losing it while it still sits in
+    # the history would mean it stopped governing without anyone being told.
+    replacing = {spec.partition("=")[0] for spec in override}
+    carried: list[str] = []
+    for stored in ledger.load_cooperation_assessments(workflow_id):
+        if stored.override is None or stored.step_id in replacing:
+            continue
+        if stored.step_id not in by_step:
+            continue  # the step is gone from the workflow; nothing to carry.
+        try:
+            by_step[stored.step_id] = apply_override(
+                by_step[stored.step_id],
+                stored.override.overridden_to,
+                actor=stored.override.actor,
+                rationale=stored.override.rationale,
+            )
+            carried.append(stored.step_id)
+        except OverrideRefusedError as exc:
+            # The step's characteristics changed and the old override would now
+            # cross a floor. Refusing is correct — and saying so is the point.
+            _fail_refused(
+                f"'{stored.step_id}' has a recorded override to "
+                f"{stored.override.overridden_to.value} that is no longer "
+                f"permitted: {exc} Re-run with an explicit --override for this "
+                f"step to replace that decision.",
+                error="stored_override_now_refused",
+            )
+
+    if override and not (by.strip() and why.strip()):
+        _fail_input(
+            "--override requires both --by and --why. An override without a "
+            "named actor and a reason is indistinguishable from a mis-click, "
+            "and this decision governs who may act unsupervised."
+        )
+    for spec in override:
+        step_id, _, target = spec.partition("=")
+        if not target:
+            _fail_input(f"--override expects STEP_ID=EXECUTOR_CLASS, got '{spec}'.")
+        if step_id not in by_step:
+            _fail_input(
+                f"'{step_id}' is not a step in '{workflow_id}'. "
+                f"Steps are: {', '.join(sorted(by_step))}"
+            )
+        try:
+            target_class = ExecutorClass(target)
+        except ValueError:
+            _fail_input(
+                f"'{target}' is not an executor class. Valid values: "
+                f"{', '.join(e.value for e in ExecutorClass)}"
+            )
+        try:
+            by_step[step_id] = apply_override(
+                by_step[step_id], target_class, actor=by, rationale=why
+            )
+        except OverrideRefusedError as exc:
+            _fail_refused(str(exc), error="override_refused")
+
+    ordered = [by_step[s.step_id] for s in workflow.steps]
+    ledger.save_cooperation_assessments(ordered)
+
+    rows = [
+        {
+            "step_id": a.step_id,
+            "recommended_executor": a.recommended_executor.value,
+            "effective_executor": a.effective_executor.value,
+            "safety_floor": a.safety_floor.value,
+            "supervision_mode": a.supervision_mode.value,
+            "automation_readiness": a.automation_readiness.value,
+            "overridden": a.override is not None,
+            "rationale": a.rationale,
+        }
+        for a in ordered
+    ]
+    if _json_mode:
+        _emit_json({"ok": True, "workflow_id": workflow_id, "assessments": rows})
+        return
+
+    table = Table(title=f"Cooperation assessment — {workflow_id}")
+    for col in ("Step", "Executor", "Floor", "Supervision", "Readiness"):
+        table.add_column(col)
+    for a in ordered:
+        executor = a.effective_executor.value
+        if a.override is not None:
+            executor = f"[cyan]{executor}[/cyan] (overridden)"
+        table.add_row(
+            a.step_id,
+            executor,
+            "-" if a.safety_floor is SafetyFloor.NONE else f"[yellow]{a.safety_floor.value}[/yellow]",
+            a.supervision_mode.value,
+            a.automation_readiness.value,
+        )
+    console.print(table)
+    console.print(f"Saved {len(ordered)} assessment(s) to [cyan]{db}[/cyan].")
+    if carried:
+        console.print(
+            f"[dim]Carried forward {len(carried)} existing override(s): "
+            f"{', '.join(carried)}.[/dim]"
+        )
+    not_ready = [a.step_id for a in steps_not_ready(ordered)]
+    if not_ready:
+        console.print(
+            f"\n[yellow]{len(not_ready)} step(s) are NOT_READY_FOR_AUTOMATION:[/yellow] "
+            f"{', '.join(not_ready)}\n"
+            f"That is a legitimate answer, not a failure — but promotion to "
+            f"COOPERATION_READY will refuse while it stands."
+        )
+    console.print(
+        f"\nNext: [cyan]fukasawa workflow build-cooperative {workflow_id} "
+        f"--approve-by <your name>[/cyan]"
+    )
+
+
+@workflow_app.command("build-cooperative")
+def workflow_build_cooperative(
+    workflow_id: str = typer.Argument(..., help="A workflow with stored assessments."),
+    db: str = _DB_OPTION,
+    approve_by: str = typer.Option(
+        "", "--approve-by", help="Approve the assignments as this person. Omit to build unapproved."
+    ),
+    json_out: bool = _JSON_OPTION,
+) -> None:
+    """Assign every step to an executor, from the stored assessments.
+
+    Reads each assessment's *effective* executor, so a recorded override
+    governs and the decision table's recommendation does not.
+
+    Approval is a separate human act. Building without `--approve-by` is
+    useful — you can read the assignments before signing them — but export
+    refuses an unapproved workflow.
+    """
+    _set_json(json_out)
+    ledger = RunLedger(db)
+    try:
+        workflow = ledger.load_accountable_workflow(workflow_id)
+    except KeyError:
+        _fail_input(f"No accountable workflow stored for '{workflow_id}'.")
+
+    assessments = ledger.load_cooperation_assessments(workflow_id)
+    if not assessments:
+        _fail_input(
+            f"No cooperation assessments stored for '{workflow_id}'. "
+            f"Run: fukasawa workflow assess-cooperation {workflow_id}"
+        )
+
+    try:
+        cooperative = build_cooperative_workflow(
+            workflow, assessments, approved_by=approve_by
+        )
+    except ExportRefusedError as exc:
+        _fail_refused(str(exc), error="build_refused")
+
+    ledger.save_cooperative_workflow(cooperative)
+    kept_human = steps_kept_human(cooperative)
+    rows = [
+        {
+            "step_id": a.step_id,
+            "executor_class": a.executor_class.value,
+            "executor_identity": a.executor_identity,
+            "human_owner": a.human_owner,
+            "escalation_target": a.escalation_target,
+            "approval_gate": a.approval_gate,
+            "fallback_executor": a.fallback_executor.value,
+        }
+        for a in cooperative.assignments
+    ]
+    if _json_mode:
+        _emit_json(
+            {
+                "ok": True,
+                "workflow_id": workflow_id,
+                "approved": cooperative.approved,
+                "approved_by": cooperative.approved_by,
+                "assignments": rows,
+                "required_agent_packages": cooperative.required_agent_packages,
+                "steps_kept_human": kept_human,
+            }
+        )
+        return
+
+    table = Table(title=f"Cooperative workflow — {workflow_id}")
+    for col in ("Step", "Executor class", "Performed by", "Accountable human", "Escalates to"):
+        table.add_column(col)
+    for a in cooperative.assignments:
+        table.add_row(
+            a.step_id,
+            a.executor_class.value,
+            a.executor_identity or "[dim](unassigned)[/dim]",
+            a.human_owner,
+            a.escalation_target,
+        )
+    console.print(table)
+    console.print(
+        f"\nAgent packages required: "
+        f"{', '.join(cooperative.required_agent_packages) or '[dim]none[/dim]'}"
+    )
+    _report_kept_human(kept_human)
+    if cooperative.approved:
+        console.print(
+            f"\n[green]Approved[/green] by {cooperative.approved_by}. Next: "
+            f"[cyan]fukasawa workflow export-agent-brief {workflow_id}[/cyan]"
+        )
+    else:
+        console.print(
+            "\n[yellow]Not approved.[/yellow] Export refuses an unapproved "
+            "workflow — rerun with --approve-by <your name> when the "
+            "assignments above are right."
+        )
+
+
+@workflow_app.command("export-agent-brief")
+def workflow_export_agent_brief(
+    workflow_id: str = typer.Argument(..., help="A workflow with an approved cooperative build."),
+    db: str = _DB_OPTION,
+    out: str = typer.Option("", "--out", help="Write the brief here as YAML."),
+    packages: str = typer.Option(
+        "", "--packages", help="Also generate agent packages into this directory."
+    ),
+    workspace: Optional[str] = typer.Option(
+        None,
+        "--workspace",
+        help="Target workspace root. Numbered directories trigger C-Pax path injection.",
+    ),
+    paths_file: Optional[str] = typer.Option(
+        None,
+        "--paths-file",
+        help="YAML file of workspace paths for non-C-Pax targets (context, tasks_ready, ...).",
+    ),
+    json_out: bool = _JSON_OPTION,
+) -> None:
+    """Flatten the approved workflow into a runnable WorkflowBrief.
+
+    Each step becomes a state; each declared edge becomes a transition owned by
+    that step's executor. Steps needing a human to authorize each execution are
+    split in two, with a real waiting state between the agent's work and the
+    person's decision.
+
+    Exits 3 when doctrine refuses the export — an unapproved workflow, or a
+    BOUNDED_AUTONOMOUS_AGENT step with no approval gate.
+    """
+    _set_json(json_out)
+    ledger = RunLedger(db)
+    try:
+        workflow = ledger.load_accountable_workflow(workflow_id)
+    except KeyError:
+        _fail_input(f"No accountable workflow stored for '{workflow_id}'.")
+    try:
+        cooperative = ledger.load_cooperative_workflow(workflow_id)
+    except KeyError:
+        _fail_input(
+            f"No cooperative workflow stored for '{workflow_id}'. "
+            f"Run: fukasawa workflow build-cooperative {workflow_id} --approve-by <name>"
+        )
+
+    try:
+        brief = export_workflow(cooperative, workflow)
+    except ExportRefusedError as exc:
+        _fail_refused(str(exc), error="export_refused")
+
+    ledger.save_workflow(brief)
+    written = ""
+    if out:
+        try:
+            Path(out).write_text(
+                yaml.safe_dump(brief.model_dump(mode="json"), sort_keys=False, width=100),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            _fail_input(f"Could not write {out}: {exc}")
+        written = out
+
+    built: list[str] = []
+    if packages:
+        explicit_paths = None
+        if paths_file:
+            try:
+                explicit_paths = yaml.safe_load(
+                    Path(paths_file).read_text(encoding="utf-8")
+                )
+            except (OSError, yaml.YAMLError) as exc:
+                _fail_input(f"Could not read {paths_file}: {exc}")
+        try:
+            dirs, _report = generate_packages(
+                brief, packages, workspace_root=workspace, explicit_paths=explicit_paths
+            )
+        except BuildRefusedError as exc:
+            _fail_refused(str(exc), error="build_refused")
+        built = [d.name for d in dirs]
+
+    kept_human = steps_kept_human(cooperative)
+    if _json_mode:
+        _emit_json(
+            {
+                "ok": True,
+                "workflow_id": brief.id,
+                "states": brief.states,
+                "transitions": len(brief.transitions),
+                "agents": [
+                    {"agent_name": a.agent_name, "depth_level": a.depth_level}
+                    for a in brief.agents
+                ],
+                "task_depth": brief.task_depth.value,
+                "status": brief.status.value,
+                "written": written,
+                "packages_built": built,
+                "steps_kept_human": kept_human,
+            }
+        )
+        return
+
+    console.print(
+        f"[green]Exported[/green] '{brief.id}': {len(brief.states)} states, "
+        f"{len(brief.transitions)} transitions, {len(brief.agents)} agent(s)."
+    )
+    if brief.agents:
+        table = Table(title="Declared agents")
+        for col in ("Agent", "Depth level", "Escalates to"):
+            table.add_column(col)
+        for a in brief.agents:
+            table.add_row(a.agent_name, str(a.depth_level), a.escalation_target)
+        console.print(table)
+    _report_kept_human(kept_human)
+    console.print(f"\nBrief saved to the ledger at [cyan]{db}[/cyan].")
+    if written:
+        console.print(f"Brief written to [cyan]{written}[/cyan].")
+    if built:
+        console.print(f"Agent packages generated: {', '.join(built)}")
+    console.print(
+        f"\nNext: [cyan]fukasawa run[/cyan] the exported brief, or "
+        f"[cyan]fukasawa workflow status {brief.id}[/cyan]"
+    )
+
+
+@workflow_app.command("status")
+def workflow_status(
+    workflow_id: str = typer.Argument(..., help="Workflow id to report on."),
+    db: str = _DB_OPTION,
+    json_out: bool = _JSON_OPTION,
+) -> None:
+    """Show where a workflow sits in the lifecycle, and what is missing.
+
+    The one command safe to run when you have lost track. It never refuses:
+    an absent stage is reported as absent, because "nothing here yet" is the
+    answer to the question rather than an error.
+    """
+    _set_json(json_out)
+    ledger = RunLedger(db)
+    stages: list[dict] = []
+
+    try:
+        draft = ledger.load_workflow_draft(workflow_id)
+    except KeyError:
+        draft = None
+    stages.append(
+        {
+            "stage": "draft",
+            "present": draft is not None,
+            "detail": f"version {draft.version}, {draft.maturity.value}" if draft else "",
+        }
+    )
+
+    accountable = None
+    try:
+        accountable = ledger.load_accountable_workflow(workflow_id)
+    except KeyError:
+        pass
+    stages.append(
+        {
+            "stage": "accountable",
+            "present": accountable is not None,
+            "detail": (
+                f"version {accountable.version}, {accountable.maturity.value}, "
+                f"{len(accountable.steps)} steps"
+                if accountable
+                else ""
+            ),
+        }
+    )
+
+    assessments = ledger.load_cooperation_assessments(workflow_id)
+    not_ready = [a.step_id for a in steps_not_ready(assessments)]
+    overridden = [a.step_id for a in assessments if a.override is not None]
+    stages.append(
+        {
+            "stage": "assessed",
+            "present": bool(assessments),
+            "detail": (
+                f"{len(assessments)} step(s); {len(overridden)} overridden; "
+                f"{len(not_ready)} not ready"
+                if assessments
+                else ""
+            ),
+        }
+    )
+
+    cooperative = None
+    try:
+        cooperative = ledger.load_cooperative_workflow(workflow_id)
+    except KeyError:
+        pass
+    stages.append(
+        {
+            "stage": "cooperative",
+            "present": cooperative is not None,
+            "detail": (
+                (
+                    f"approved by {cooperative.approved_by}"
+                    if cooperative.approved
+                    else "built, NOT approved"
+                )
+                if cooperative
+                else ""
+            ),
+        }
+    )
+
+    exported = None
+    try:
+        exported = ledger.load_workflow(workflow_id)
+    except Exception:
+        pass
+    stages.append(
+        {
+            "stage": "exported",
+            "present": exported is not None,
+            "detail": (
+                f"{len(exported.states)} states, {len(exported.agents)} agent(s), "
+                f"status {exported.status.value}"
+                if exported
+                else ""
+            ),
+        }
+    )
+
+    runs = ledger.list_runs(workflow_id) if exported is not None else []
+    stages.append(
+        {
+            "stage": "runs",
+            "present": bool(runs),
+            "detail": f"{len(runs)} run(s)" if runs else "",
+        }
+    )
+
+    if _json_mode:
+        _emit_json(
+            {
+                "ok": True,
+                "workflow_id": workflow_id,
+                "stages": stages,
+                "steps_not_ready": not_ready,
+                "steps_overridden": overridden,
+            }
+        )
+        return
+
+    table = Table(title=f"Lifecycle — {workflow_id}")
+    for col in ("Stage", "Present", "Detail"):
+        table.add_column(col)
+    for s in stages:
+        table.add_row(
+            s["stage"],
+            "[green]yes[/green]" if s["present"] else "[dim]no[/dim]",
+            s["detail"] or "[dim]—[/dim]",
+        )
+    console.print(table)
+    if not any(s["present"] for s in stages):
+        console.print(
+            f"\nNothing stored for '{workflow_id}'. Start with: "
+            f"[cyan]fukasawa workflow init {workflow_id}[/cyan]"
+        )
+    if not_ready:
+        console.print(f"\n[yellow]Not ready for automation:[/yellow] {', '.join(not_ready)}")
 
 
 if __name__ == "__main__":

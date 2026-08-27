@@ -1,0 +1,390 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# PILOT - stage 3: the promoted AccountableWorkflow.
+#
+# Produced by promoting repaired-workflow.yaml, not by editing it. The source
+# draft is untouched and still readable; this is a separate artifact, which is
+# what makes the promotion auditable.
+#
+# It carries no states or transitions on purpose. The steps ARE the states, and
+# flattening into a runnable WorkflowBrief happens at export (phase 5), after
+# cooperation assessment has read the per-step attributes it needs.
+#
+# lineage records what it came from and the exact rule set and schema versions
+# the decision was made under. accepted_risks carries the advisory findings a
+# human consciously accepted, each with actor, timestamp and rationale.
+
+schema_version: '1'
+workflow_id: substack-publication
+name: ConcordiaPax Substack Article Production
+version: '1'
+maturity: ACCOUNTABLE
+purpose: 'Turn a ConcordiaPax idea into a published Substack article with artwork and distribution, without
+  losing scope control or publishing something nobody signed off on.
+
+  '
+trigger: 'An idea worth writing about surfaces — usually from a conversation, an incident at work, or
+  a half-finished note in the backlog.
+
+  '
+owners:
+- operator
+- research-helper
+steps:
+- step_id: capture-idea
+  name: Capture the idea
+  description: 'Write the idea into a note before it evaporates. Almost always happens in the middle of
+    doing something else.
+
+    '
+  actor: operator
+  action: Write an idea note with the core claim and why it matters.
+  trigger: An idea surfaces.
+  preconditions: []
+  inputs:
+  - name: the thought itself
+    source: operator
+    required: true
+  outputs:
+  - name: idea note
+    artifact_type: markdown note
+    evidence_requirement: note exists in the vault with a title and a claim
+  entry_condition: The idea has been said out loud or written down somewhere.
+  exit_condition: A note exists with at least a claim and a reason it matters.
+  decision_authority: operator
+  next_steps:
+  - scope-check
+  exception_paths: []
+  characteristics:
+    judgment_load: MODERATE
+    repeatability: ROUTINE
+    determinism: JUDGMENT_BASED
+    risk: LOW
+    reversibility: REVERSIBLE
+    data_sensitivity: INTERNAL
+  notes: ''
+- step_id: scope-check
+  name: Decide whether this is one article
+  description: 'The recurring failure: an idea that is really three articles, or really a software project
+    wearing an article costume. This is where scope is supposed to be controlled, and the criteria live
+    only in the operator''s head.
+
+    '
+  actor: operator
+  action: Decide whether the idea fits one article, needs splitting, or is not an article at all.
+  trigger: An idea note exists.
+  preconditions:
+  - The idea note has a stated claim.
+  inputs:
+  - name: idea note
+    source: capture-idea
+    required: true
+  outputs:
+  - name: scope decision
+    artifact_type: markdown note
+    evidence_requirement: scope decision recorded in the idea note with a reason
+  entry_condition: The operator has read the note again with fresh eyes.
+  exit_condition: Scope is settled when the note states one claim and one audience.
+  decision_authority: operator
+  next_steps:
+  - deep-research
+  - draft-article
+  exception_paths:
+  - failure_mode: The idea is actually three articles.
+    owner: operator
+    handling: Split the note into separate idea notes and pick one.
+    next_step: capture-idea
+  characteristics:
+    judgment_load: HIGH
+    repeatability: ROUTINE
+    determinism: JUDGMENT_BASED
+    risk: MODERATE
+    reversibility: REVERSIBLE
+    data_sensitivity: INTERNAL
+  notes: ''
+- step_id: deep-research
+  name: Research the parts that need evidence
+  description: 'Sometimes a quick source check. Sometimes it turns into building a tool or reading a spec
+    for two days — the hidden dependency that silently blows the schedule. Nobody owns the decision to
+    stop.
+
+    '
+  actor: research-helper
+  action: Gather sources and verify claims that need support.
+  trigger: The scope decision says evidence is needed.
+  preconditions: []
+  inputs:
+  - name: idea note
+    source: capture-idea
+    required: true
+  - name: open questions
+    source: scope-check
+    required: true
+  outputs:
+  - name: source list
+    artifact_type: markdown notes
+    evidence_requirement: links or citations for each supported claim
+  entry_condition: Open questions have been written down.
+  exit_condition: Every claim that needs a source has one.
+  decision_authority: operator
+  next_steps:
+  - draft-article
+  exception_paths:
+  - failure_mode: Research turns into a software or research project of its own.
+    owner: operator
+    handling: Stop research, split the software work into its own backlog item, and draft with what exists.
+    next_step: draft-article
+  characteristics:
+    judgment_load: MODERATE
+    repeatability: OCCASIONAL
+    determinism: MOSTLY_DETERMINISTIC
+    risk: MODERATE
+    reversibility: REVERSIBLE
+    data_sensitivity: PUBLIC
+  notes: ''
+- step_id: draft-article
+  name: Write the draft
+  description: The actual writing, usually in two or three sittings.
+  actor: operator
+  action: Write the article from the outline and sources.
+  trigger: Scope is settled and any needed research exists.
+  preconditions: []
+  inputs:
+  - name: idea note
+    source: capture-idea
+    required: true
+  - name: source list
+    source: deep-research
+    required: false
+  outputs:
+  - name: draft
+    artifact_type: markdown document
+    evidence_requirement: draft file with a word count
+  entry_condition: An outline or a strong opening exists.
+  exit_condition: The draft is ready when every claim has a source and the piece has been read end to
+    end once.
+  decision_authority: operator
+  next_steps:
+  - request-artwork
+  exception_paths: []
+  characteristics:
+    judgment_load: HIGH
+    repeatability: ROUTINE
+    determinism: JUDGMENT_BASED
+    risk: LOW
+    reversibility: REVERSIBLE
+    data_sensitivity: INTERNAL
+  notes: ''
+- step_id: request-artwork
+  name: Get the header image
+  description: 'A separate handoff to whoever makes the artwork. In practice this is a message with no
+    attached brief, and the reply is a file dropped somewhere — the handoff nobody wrote down.
+
+    '
+  actor: operator
+  action: Ask for a header image for the article.
+  trigger: A draft exists that is close to final.
+  preconditions: []
+  inputs:
+  - name: draft
+    source: draft-article
+    required: true
+  outputs:
+  - name: artwork request
+    artifact_type: artwork brief
+    evidence_requirement: brief sent with the draft title, angle and target date
+  entry_condition: The draft is stable enough to illustrate.
+  exit_condition: Artwork has been asked for.
+  decision_authority: operator
+  next_steps:
+  - review-and-approve
+  exception_paths:
+  - failure_mode: Artwork never arrives and the post goes out with no header image.
+    owner: operator
+    handling: Publish with the standard fallback header rather than delaying the post.
+    next_step: review-and-approve
+  characteristics:
+    judgment_load: LOW
+    repeatability: ROUTINE
+    determinism: MOSTLY_DETERMINISTIC
+    risk: LOW
+    reversibility: REVERSIBLE
+    data_sensitivity: PUBLIC
+  notes: ''
+- step_id: review-and-approve
+  name: Final read and approval
+  description: 'The last human checkpoint before anything is public. Scope control and publication authority
+    both really live here, even though the workflow never says so.
+
+    '
+  actor: operator
+  action: Read the draft end to end and decide whether it goes out.
+  trigger: Draft and artwork are both in hand.
+  preconditions: []
+  inputs:
+  - name: draft
+    source: draft-article
+    required: true
+  - name: header image
+    source: request-artwork
+    required: false
+  outputs:
+  - name: approval decision
+    artifact_type: decision
+    evidence_requirement: a stated go/no-go with the reason
+  entry_condition: The draft has been read once without editing.
+  exit_condition: The operator has said yes or no.
+  decision_authority: operator
+  next_steps:
+  - publish-post
+  exception_paths:
+  - failure_mode: The draft is not good enough yet.
+    owner: operator
+    handling: Send it back for another pass.
+    next_step: draft-article
+  characteristics:
+    judgment_load: HIGH
+    repeatability: ROUTINE
+    determinism: JUDGMENT_BASED
+    risk: HIGH
+    reversibility: IRREVERSIBLE
+    data_sensitivity: INTERNAL
+  notes: ''
+- step_id: publish-post
+  name: Publish to Substack
+  description: 'Paste into Substack, set the header image, send. Who actually owns this has never been
+    written down — in practice whoever is at the keyboard.
+
+    '
+  actor: operator
+  action: Publish the post and send it to subscribers.
+  trigger: The article was approved.
+  preconditions: []
+  inputs:
+  - name: approved draft
+    source: review-and-approve
+    required: true
+  - name: header image
+    source: request-artwork
+    required: true
+  outputs:
+  - name: published post
+    artifact_type: substack post
+    evidence_requirement: live post URL
+  entry_condition: Approval has been given.
+  exit_condition: The post is live and the email has gone out.
+  decision_authority: operator
+  next_steps:
+  - archive-notes
+  exception_paths:
+  - failure_mode: Substack rejects the formatting or the image.
+    owner: operator
+    handling: Fix the formatting and retry.
+    next_step: publish-post
+  characteristics:
+    judgment_load: LOW
+    repeatability: ROUTINE
+    determinism: MOSTLY_DETERMINISTIC
+    risk: HIGH
+    reversibility: IRREVERSIBLE
+    data_sensitivity: PUBLIC
+  notes: ''
+- step_id: archive-notes
+  name: Archive the working notes
+  description: 'Meant to happen after publication, but nothing points here — in practice it only happens
+    when the vault gets messy enough to notice.
+
+    '
+  actor: operator
+  action: Move working notes into the archive folder.
+  trigger: The post is live.
+  preconditions: []
+  inputs: []
+  outputs:
+  - name: archived notes
+    artifact_type: folder
+    evidence_requirement: notes present under the archive path
+  entry_condition: The post is published.
+  exit_condition: Working notes are out of the active folder.
+  decision_authority: operator
+  next_steps: []
+  exception_paths: []
+  characteristics:
+    judgment_load: NONE
+    repeatability: ROUTINE
+    determinism: DETERMINISTIC
+    risk: LOW
+    reversibility: REVERSIBLE
+    data_sensitivity: INTERNAL
+  notes: ''
+gates:
+- gate_id: publication-approval
+  at_step: review-and-approve
+  approver: operator
+  criteria: Scope is one article, every claim has a source, and the operator has read it end to end.
+  on_approve: publish-post
+  on_reject: draft-article
+completion_contract: The post is live on Substack with a header image, the subscriber email has gone out,
+  and the working notes are archived.
+exception_policy: Stop, leave the work where it is, and tell the operator. Do not improvise a new path;
+  add the missing step to this workflow.
+accepted_risks:
+- finding_id: HW-013:unwritten_rules/Artwork is optional in practice, even th
+  rule:
+    rule_id: HW-013
+    rule_version: '1'
+  accepted_by: flaveon
+  accepted_at: '2026-08-06T20:07:59.355334Z'
+  rationale: Recorded knowledge that is real but not worth encoding as process; revisit if it causes a
+    miss.
+- finding_id: HW-013:unwritten_rules/If the operator is unsure about a claim,
+  rule:
+    rule_id: HW-013
+    rule_version: '1'
+  accepted_by: flaveon
+  accepted_at: '2026-08-06T20:07:59.356610Z'
+  rationale: Recorded knowledge that is real but not worth encoding as process; revisit if it causes a
+    miss.
+- finding_id: HW-013:unwritten_rules/Never publish two long articles in the s
+  rule:
+    rule_id: HW-013
+    rule_version: '1'
+  accepted_by: flaveon
+  accepted_at: '2026-08-06T20:07:59.357743Z'
+  rationale: Recorded knowledge that is real but not worth encoding as process; revisit if it causes a
+    miss.
+- finding_id: 'HW-013:unwritten_rules/The operator always does the final read '
+  rule:
+    rule_id: HW-013
+    rule_version: '1'
+  accepted_by: flaveon
+  accepted_at: '2026-08-06T20:07:59.358802Z'
+  rationale: Recorded knowledge that is real but not worth encoding as process; revisit if it causes a
+    miss.
+- finding_id: HW-013:request-artwork/description/description/nobody wrote
+  rule:
+    rule_id: HW-013
+    rule_version: '1'
+  accepted_by: flaveon
+  accepted_at: '2026-08-06T20:07:59.359920Z'
+  rationale: Recorded knowledge that is real but not worth encoding as process; revisit if it causes a
+    miss.
+- finding_id: HW-013:scope-check/description/description/in the operator's head
+  rule:
+    rule_id: HW-013
+    rule_version: '1'
+  accepted_by: flaveon
+  accepted_at: '2026-08-06T20:07:59.360889Z'
+  rationale: Recorded knowledge that is real but not worth encoding as process; revisit if it causes a
+    miss.
+lineage:
+  source_workflow_id: substack-publication
+  source_version: '1'
+  from_maturity: MAPPED
+  to_maturity: ACCOUNTABLE
+  promoted_by: flaveon
+  promoted_at: '2026-08-06T20:07:59.395310Z'
+  rule_set_version: '1'
+  schema_version: '1'
+notes: ''

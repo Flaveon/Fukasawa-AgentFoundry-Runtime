@@ -1,0 +1,512 @@
+{
+  "findings": [
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-002:steps/terminal",
+      "finding_type": "STRUCTURE",
+      "location": {
+        "detail": "",
+        "field": "steps",
+        "gate_id": "",
+        "step_id": "",
+        "workflow_id": "substack-publication"
+      },
+      "message": "no reachable step ends the workflow \u2014 every reachable step leads somewhere else, so the work never terminates",
+      "remediation": "Give the final step an empty next_steps list, or add the step that completes the work.",
+      "rule": {
+        "rule_id": "HW-002",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    },
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-003:publish-post/actor",
+      "finding_type": "ACCOUNTABILITY",
+      "location": {
+        "detail": "",
+        "field": "actor",
+        "gate_id": "",
+        "step_id": "publish-post",
+        "workflow_id": "substack-publication"
+      },
+      "message": "step 'publish-post' has no actor \u2014 nobody is named as performing it",
+      "remediation": "Name the person, role, or system that performs this step.",
+      "rule": {
+        "rule_id": "HW-003",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    },
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-004:publish-post/decision_authority",
+      "finding_type": "ACCOUNTABILITY",
+      "location": {
+        "detail": "",
+        "field": "decision_authority",
+        "gate_id": "",
+        "step_id": "publish-post",
+        "workflow_id": "substack-publication"
+      },
+      "message": "step 'publish-post' makes a decision but names no decision authority",
+      "remediation": "Name the specific person or role with authority to decide here.",
+      "rule": {
+        "rule_id": "HW-004",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    },
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-005:publish-post/next_steps/promote-post",
+      "finding_type": "STRUCTURE",
+      "location": {
+        "detail": "promote-post",
+        "field": "next_steps",
+        "gate_id": "",
+        "step_id": "publish-post",
+        "workflow_id": "substack-publication"
+      },
+      "message": "step 'publish-post' points to 'promote-post', which is not a declared step",
+      "remediation": "Add the missing step, or correct the reference to an existing one.",
+      "rule": {
+        "rule_id": "HW-005",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    },
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-006:archive-notes/next_steps",
+      "finding_type": "STRUCTURE",
+      "location": {
+        "detail": "",
+        "field": "next_steps",
+        "gate_id": "",
+        "step_id": "archive-notes",
+        "workflow_id": "substack-publication"
+      },
+      "message": "step 'archive-notes' cannot be reached from the entry step \u2014 nothing routes to it",
+      "remediation": "Route to this step from where it really happens, or remove it.",
+      "rule": {
+        "rule_id": "HW-006",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    },
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-008:scope-check/outputs/deep-research",
+      "finding_type": "INFORMATION",
+      "location": {
+        "detail": "deep-research",
+        "field": "outputs",
+        "gate_id": "",
+        "step_id": "scope-check",
+        "workflow_id": "substack-publication"
+      },
+      "message": "work passes from 'operator' at step 'scope-check' to 'research-helper' at step 'deep-research' with no verifiable artifact handed over",
+      "remediation": "Give the upstream step an output with an artifact type and an evidence requirement, so the receiver knows what they are getting.",
+      "rule": {
+        "rule_id": "HW-008",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    },
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-009:deep-research/inputs.source/open questions",
+      "finding_type": "INFORMATION",
+      "location": {
+        "detail": "open questions",
+        "field": "inputs.source",
+        "gate_id": "",
+        "step_id": "deep-research",
+        "workflow_id": "substack-publication"
+      },
+      "message": "required input 'open questions' on step 'deep-research' has no source",
+      "remediation": "Name the actor, system, or upstream step this input comes from.",
+      "rule": {
+        "rule_id": "HW-009",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    },
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-010:request-artwork/outputs.artifact_type/artwork request/type",
+      "finding_type": "INFORMATION",
+      "location": {
+        "detail": "artwork request",
+        "field": "outputs.artifact_type",
+        "gate_id": "",
+        "step_id": "request-artwork",
+        "workflow_id": "substack-publication"
+      },
+      "message": "output 'artwork request' on step 'request-artwork' has no artifact type \u2014 there is no saying what is produced",
+      "remediation": "State what kind of thing this output is.",
+      "rule": {
+        "rule_id": "HW-010",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    },
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-010:request-artwork/outputs.evidence_requirement/artwork request/evidence",
+      "finding_type": "INFORMATION",
+      "location": {
+        "detail": "artwork request",
+        "field": "outputs.evidence_requirement",
+        "gate_id": "",
+        "step_id": "request-artwork",
+        "workflow_id": "substack-publication"
+      },
+      "message": "output 'artwork request' on step 'request-artwork' has no evidence requirement \u2014 nothing proves it was produced",
+      "remediation": "State what must exist to prove this output was really produced.",
+      "rule": {
+        "rule_id": "HW-010",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    },
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-010:scope-check/outputs.artifact_type/scope decision/type",
+      "finding_type": "INFORMATION",
+      "location": {
+        "detail": "scope decision",
+        "field": "outputs.artifact_type",
+        "gate_id": "",
+        "step_id": "scope-check",
+        "workflow_id": "substack-publication"
+      },
+      "message": "output 'scope decision' on step 'scope-check' has no artifact type \u2014 there is no saying what is produced",
+      "remediation": "State what kind of thing this output is.",
+      "rule": {
+        "rule_id": "HW-010",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    },
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-010:scope-check/outputs.evidence_requirement/scope decision/evidence",
+      "finding_type": "INFORMATION",
+      "location": {
+        "detail": "scope decision",
+        "field": "outputs.evidence_requirement",
+        "gate_id": "",
+        "step_id": "scope-check",
+        "workflow_id": "substack-publication"
+      },
+      "message": "output 'scope decision' on step 'scope-check' has no evidence requirement \u2014 nothing proves it was produced",
+      "remediation": "State what must exist to prove this output was really produced.",
+      "rule": {
+        "rule_id": "HW-010",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    },
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-011:observed_exceptions/Artwork never arrives and the post goes ",
+      "finding_type": "RESILIENCE",
+      "location": {
+        "detail": "Artwork never arrives and the post goes out with no header image.",
+        "field": "observed_exceptions",
+        "gate_id": "",
+        "step_id": "",
+        "workflow_id": "substack-publication"
+      },
+      "message": "observed failure 'Artwork never arrives and the post goes out with no header image.' has no exception path on any step \u2014 it happens in practice and the workflow has no answer for it",
+      "remediation": "Add an exception path for this failure on the step where it occurs, with an owner and what is done.",
+      "rule": {
+        "rule_id": "HW-011",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    },
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-012:deep-research/exception_paths.owner/Research turns into a software or resear",
+      "finding_type": "RESILIENCE",
+      "location": {
+        "detail": "Research turns into a software or research project of its own.",
+        "field": "exception_paths.owner",
+        "gate_id": "",
+        "step_id": "deep-research",
+        "workflow_id": "substack-publication"
+      },
+      "message": "failure 'Research turns into a software or research project of its own.' on step 'deep-research' has no owner",
+      "remediation": "Name the specific person or role who handles this failure.",
+      "rule": {
+        "rule_id": "HW-012",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    },
+    {
+      "acceptance": null,
+      "blocking": false,
+      "finding_id": "HW-013:unwritten_rules/Artwork is optional in practice, even th",
+      "finding_type": "REASONING_LOAD",
+      "location": {
+        "detail": "Artwork is optional in practice, even though the workflow implies it is required.",
+        "field": "unwritten_rules",
+        "gate_id": "",
+        "step_id": "",
+        "workflow_id": "substack-publication"
+      },
+      "message": "the workflow depends on an unwritten rule: 'Artwork is optional in practice, even though the workflow implies it is required.'",
+      "remediation": "Write the rule into the step it governs, or accept it as a known residual risk with a rationale.",
+      "rule": {
+        "rule_id": "HW-013",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "WARNING"
+    },
+    {
+      "acceptance": null,
+      "blocking": false,
+      "finding_id": "HW-013:unwritten_rules/If the operator is unsure about a claim,",
+      "finding_type": "REASONING_LOAD",
+      "location": {
+        "detail": "If the operator is unsure about a claim, cut it rather than hedge it.",
+        "field": "unwritten_rules",
+        "gate_id": "",
+        "step_id": "",
+        "workflow_id": "substack-publication"
+      },
+      "message": "the workflow depends on an unwritten rule: 'If the operator is unsure about a claim, cut it rather than hedge it.'",
+      "remediation": "Write the rule into the step it governs, or accept it as a known residual risk with a rationale.",
+      "rule": {
+        "rule_id": "HW-013",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "WARNING"
+    },
+    {
+      "acceptance": null,
+      "blocking": false,
+      "finding_id": "HW-013:unwritten_rules/Never publish two long articles in the s",
+      "finding_type": "REASONING_LOAD",
+      "location": {
+        "detail": "Never publish two long articles in the same week.",
+        "field": "unwritten_rules",
+        "gate_id": "",
+        "step_id": "",
+        "workflow_id": "substack-publication"
+      },
+      "message": "the workflow depends on an unwritten rule: 'Never publish two long articles in the same week.'",
+      "remediation": "Write the rule into the step it governs, or accept it as a known residual risk with a rationale.",
+      "rule": {
+        "rule_id": "HW-013",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "WARNING"
+    },
+    {
+      "acceptance": null,
+      "blocking": false,
+      "finding_id": "HW-013:unwritten_rules/The operator always does the final read ",
+      "finding_type": "REASONING_LOAD",
+      "location": {
+        "detail": "The operator always does the final read on a real screen, never on a phone.",
+        "field": "unwritten_rules",
+        "gate_id": "",
+        "step_id": "",
+        "workflow_id": "substack-publication"
+      },
+      "message": "the workflow depends on an unwritten rule: 'The operator always does the final read on a real screen, never on a phone.'",
+      "remediation": "Write the rule into the step it governs, or accept it as a known residual risk with a rationale.",
+      "rule": {
+        "rule_id": "HW-013",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "WARNING"
+    },
+    {
+      "acceptance": null,
+      "blocking": false,
+      "finding_id": "HW-013:request-artwork/description/description/nobody wrote",
+      "finding_type": "REASONING_LOAD",
+      "location": {
+        "detail": "nobody wrote",
+        "field": "description",
+        "gate_id": "",
+        "step_id": "request-artwork",
+        "workflow_id": "substack-publication"
+      },
+      "message": "step 'request-artwork' relies on knowledge held in memory ('nobody wrote')",
+      "remediation": "Write the rule into the step it governs, or accept it as a known residual risk with a rationale.",
+      "rule": {
+        "rule_id": "HW-013",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "WARNING"
+    },
+    {
+      "acceptance": null,
+      "blocking": false,
+      "finding_id": "HW-013:scope-check/description/description/in the operator's head",
+      "finding_type": "REASONING_LOAD",
+      "location": {
+        "detail": "in the operator's head",
+        "field": "description",
+        "gate_id": "",
+        "step_id": "scope-check",
+        "workflow_id": "substack-publication"
+      },
+      "message": "step 'scope-check' relies on knowledge held in memory ('in the operator's head')",
+      "remediation": "Write the rule into the step it governs, or accept it as a known residual risk with a rationale.",
+      "rule": {
+        "rule_id": "HW-013",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "WARNING"
+    },
+    {
+      "acceptance": null,
+      "blocking": false,
+      "finding_id": "HW-014:claimed_outcome/ready",
+      "finding_type": "INFORMATION",
+      "location": {
+        "detail": "The article is ready and goes out to subscribers.",
+        "field": "claimed_outcome",
+        "gate_id": "",
+        "step_id": "",
+        "workflow_id": "substack-publication"
+      },
+      "message": "'claimed_outcome' describes a state as 'ready' without saying how it is judged",
+      "remediation": "Replace the term with a checkable condition, or state the criteria used to judge it.",
+      "rule": {
+        "rule_id": "HW-014",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "WARNING"
+    },
+    {
+      "acceptance": null,
+      "blocking": false,
+      "finding_id": "HW-014:publication-approval/criteria/empty",
+      "finding_type": "INFORMATION",
+      "location": {
+        "detail": "",
+        "field": "criteria",
+        "gate_id": "publication-approval",
+        "step_id": "",
+        "workflow_id": "substack-publication"
+      },
+      "message": "gate 'publication-approval' states no criteria \u2014 the approver has nothing written to judge against",
+      "remediation": "Replace the term with a checkable condition, or state the criteria used to judge it.",
+      "rule": {
+        "rule_id": "HW-014",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "WARNING"
+    },
+    {
+      "acceptance": null,
+      "blocking": false,
+      "finding_id": "HW-014:draft-article/exit_condition/reads as",
+      "finding_type": "INFORMATION",
+      "location": {
+        "detail": "The draft reads as ready.",
+        "field": "exit_condition",
+        "gate_id": "",
+        "step_id": "draft-article",
+        "workflow_id": "substack-publication"
+      },
+      "message": "'exit_condition' describes a state as 'reads as', 'ready' without saying how it is judged",
+      "remediation": "Replace the term with a checkable condition, or state the criteria used to judge it.",
+      "rule": {
+        "rule_id": "HW-014",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "WARNING"
+    },
+    {
+      "acceptance": null,
+      "blocking": false,
+      "finding_id": "HW-014:scope-check/exit_condition/feels",
+      "finding_type": "INFORMATION",
+      "location": {
+        "detail": "It feels like one coherent article.",
+        "field": "exit_condition",
+        "gate_id": "",
+        "step_id": "scope-check",
+        "workflow_id": "substack-publication"
+      },
+      "message": "'exit_condition' describes a state as 'feels' without saying how it is judged",
+      "remediation": "Replace the term with a checkable condition, or state the criteria used to judge it.",
+      "rule": {
+        "rule_id": "HW-014",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "WARNING"
+    },
+    {
+      "acceptance": null,
+      "blocking": true,
+      "finding_id": "HW-015:publication-approval/on_reject",
+      "finding_type": "RESILIENCE",
+      "location": {
+        "detail": "",
+        "field": "on_reject",
+        "gate_id": "publication-approval",
+        "step_id": "",
+        "workflow_id": "substack-publication"
+      },
+      "message": "gate 'publication-approval' has no rejection path \u2014 nothing says what happens when the approver says no",
+      "remediation": "State where work goes when this gate rejects \u2014 the step it returns to, or the action taken.",
+      "rule": {
+        "rule_id": "HW-015",
+        "rule_version": "1"
+      },
+      "schema_version": "1",
+      "severity": "ERROR"
+    }
+  ],
+  "rule_set_version": "1",
+  "schema_version": "1",
+  "workflow_id": "substack-publication",
+  "workflow_version": "1"
+}

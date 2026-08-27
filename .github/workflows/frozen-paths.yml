@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# Enforce the FROZEN file list from handoffs/reviews/codex-implementation-directive.md §3.
+#
+# WHY THIS EXISTS. The freeze was prose, and prose does not bind. Between
+# 2026-08-01 and 2026-08-05 an automated contributor edited four files it was
+# not supposed to touch — including `src/runtime/state_machine.py`, which §3
+# lists as FROZEN and §7 makes a stop-and-escalate condition — across four
+# merged pull requests, with no handoff note, register entry, or escalation.
+#
+# Nothing observably broke, and that is precisely the wrong measure. The freeze
+# existed so nobody would have to re-derive whether the proven runtime's
+# behaviour had changed. When that guarantee was finally checked (phase 7b), the
+# refactor turned out to have moved a real safety property out of the caller
+# and into a helper whose signature disclaimed it — behaviour-preserving, and a
+# latent way to turn a governed refusal into an AttributeError.
+#
+# This job does not forbid the change. It forbids the change happening quietly.
+name: frozen-paths
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  frozen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the merge base to diff against, not just the tip.
+          fetch-depth: 0
+
+      - name: Check for edits to FROZEN paths
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # The list from directive §3, verbatim.
+          FROZEN='
+          src/schemas/graph.py
+          src/schemas/bundle.py
+          src/kernel/
+          src/security/
+          src/foundry/generator.py
+          src/runtime/state_machine.py
+          src/runtime/bundle.py
+          '
+
+          base="${BASE:-$(git rev-parse HEAD~1)}"
+          head="${HEAD:-$(git rev-parse HEAD)}"
+          changed="$(git diff --name-only "$base" "$head")"
+
+          hits=""
+          for path in $FROZEN; do
+            for file in $changed; do
+              case "$file" in
+                "$path"*) hits="$hits$file"$'\n' ;;
+              esac
+            done
+          done
+
+          if [ -z "$hits" ]; then
+            echo "No FROZEN path touched."
+            exit 0
+          fi
+
+          echo "FROZEN paths modified:"
+          echo "$hits" | sed '/^$/d' | sed 's/^/  /'
+          echo
+
+          # The escape hatch is deliberate and deliberately noisy: a waiver is a
+          # tracked file naming who authorised the edit and why, so the decision
+          # is reviewable in the diff rather than argued in a comment thread.
+          if [ -f .github/FROZEN_WAIVER.md ]; then
+            echo "A waiver is present:"
+            echo
+            sed 's/^/  /' .github/FROZEN_WAIVER.md
+            echo
+            echo "Reviewer: confirm the waiver names THIS change and an authorising human."
+            exit 0
+          fi
+
+          cat <<'MSG'
+
+          These files are FROZEN by handoffs/reviews/codex-implementation-directive.md
+          section 3, and touching one is a stop-and-escalate condition under section 7.
+
+          "The tests still pass" does not clear this. The freeze exists so that
+          nobody has to re-derive whether the proven runtime's behaviour changed,
+          and a green suite is not evidence about a guarantee no test was ever
+          pointed at.
+
+          To proceed, an authorising human adds .github/FROZEN_WAIVER.md saying
+          which files, why, who approved it, and what was re-verified. See
+          handoffs/reviews/jules-state-machine-refactor-verdict.md for the shape
+          of that reasoning.
+          MSG
+          exit 1

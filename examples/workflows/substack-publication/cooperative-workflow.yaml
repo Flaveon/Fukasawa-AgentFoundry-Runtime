@@ -1,0 +1,132 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# PILOT - stage 5a: cooperative workflow, one assignment per step.
+#
+# Built from accountable-workflow.yaml plus cooperation-assessment.yaml. Each
+# assignment reads that step's EFFECTIVE executor, so the operator's recorded
+# override governs and the decision table's recommendation does not - see
+# request-artwork, which the table put on a supervised agent and the operator
+# kept human.
+#
+# Every assignment names a human_owner and an escalation_target, including the
+# fully automated ones. Automation moves the work, never the accountability.
+#
+# approved_by is a human act. Without it the export refuses: nothing reaches
+# the Agent Foundry path unless a named person approved these assignments.
+
+schema_version: '1'
+workflow_id: substack-publication
+name: ConcordiaPax Substack Article Production
+version: '1'
+source_workflow_version: '1'
+assignments:
+- step_id: capture-idea
+  executor_class: HUMAN_LED_AI_ASSISTED
+  executor_identity: operator
+  human_owner: operator
+  approval_gate: ''
+  escalation_target: research-helper
+  allowed_tools: []
+  prohibited_actions: []
+  evidence_output: note exists in the vault with a title and a claim
+  fallback_executor: HUMAN_ONLY
+  runtime_requirements: []
+- step_id: scope-check
+  executor_class: HUMAN_ONLY
+  executor_identity: operator
+  human_owner: operator
+  approval_gate: ''
+  escalation_target: research-helper
+  allowed_tools: []
+  prohibited_actions: []
+  evidence_output: scope decision recorded in the idea note with a reason
+  fallback_executor: HUMAN_ONLY
+  runtime_requirements: []
+- step_id: deep-research
+  executor_class: HUMAN_LED_AI_ASSISTED
+  executor_identity: research-helper
+  human_owner: research-helper
+  approval_gate: ''
+  escalation_target: operator
+  allowed_tools: []
+  prohibited_actions: []
+  evidence_output: links or citations for each supported claim
+  fallback_executor: HUMAN_ONLY
+  runtime_requirements: []
+- step_id: draft-article
+  executor_class: HUMAN_ONLY
+  executor_identity: operator
+  human_owner: operator
+  approval_gate: ''
+  escalation_target: research-helper
+  allowed_tools: []
+  prohibited_actions: []
+  evidence_output: draft file with a word count
+  fallback_executor: HUMAN_ONLY
+  runtime_requirements: []
+- step_id: request-artwork
+  executor_class: HUMAN_LED_AI_ASSISTED
+  executor_identity: operator
+  human_owner: operator
+  approval_gate: ''
+  escalation_target: research-helper
+  allowed_tools: []
+  prohibited_actions: []
+  evidence_output: brief sent with the draft title, angle and target date
+  fallback_executor: HUMAN_ONLY
+  runtime_requirements: []
+- step_id: review-and-approve
+  executor_class: HUMAN_ONLY
+  executor_identity: operator
+  human_owner: operator
+  approval_gate: publication-approval
+  escalation_target: research-helper
+  allowed_tools: []
+  prohibited_actions: []
+  evidence_output: a stated go/no-go with the reason
+  fallback_executor: HUMAN_ONLY
+  runtime_requirements: []
+- step_id: publish-post
+  executor_class: AGENT_PREPARED_HUMAN_APPROVED
+  executor_identity: publish-post-agent
+  human_owner: operator
+  approval_gate: ''
+  escalation_target: research-helper
+  allowed_tools: []
+  prohibited_actions:
+  - reason above the declared depth level
+  - improvise a path when no transition matches — escalate instead
+  - let this step take effect before the approval gate records a decision
+  evidence_output: live post URL
+  fallback_executor: HUMAN_ONLY
+  runtime_requirements: []
+- step_id: archive-notes
+  executor_class: DETERMINISTIC_AUTOMATION
+  executor_identity: archive-notes-agent
+  human_owner: operator
+  approval_gate: ''
+  escalation_target: research-helper
+  allowed_tools: []
+  prohibited_actions:
+  - reason above the declared depth level
+  - improvise a path when no transition matches — escalate instead
+  - substitute judgment for the rule when the rule does not fit — escalate
+  evidence_output: notes present under the archive path
+  fallback_executor: HUMAN_ONLY
+  runtime_requirements: []
+assessment_ids:
+- ca-aa01b488
+- ca-fc8ff153
+- ca-f878a65b
+- ca-9c92ceee
+- ca-e023a805
+- ca-66807119
+- ca-9d91adc8
+- ca-a5fc9450
+required_agent_packages:
+- archive-notes-agent
+- publish-post-agent
+deployment_constraints: []
+approved_by: flaveon
+notes: ''

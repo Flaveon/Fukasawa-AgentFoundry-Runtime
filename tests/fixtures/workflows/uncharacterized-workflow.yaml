@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# FIXTURE — an adversarial sparse capture: barely anything filled in, and no
+# step characterized at all.
+#
+# This is what a real first interview produces. It exists because the phase-1
+# completion note flagged the risk: the pilot's steps are fully characterized
+# only because they were characterized by hand, while genuine captures arrive
+# mostly UNKNOWN. The validator must stay useful and must not crash on it, and
+# cooperation assessment (phase 4) must refuse to call any of this automatable.
+#
+# Placeholders are used deliberately: "TBD" is treated as undefined, not as a
+# value, so filling a field with nothing does not buy a passing grade.
+
+schema_version: "1"
+workflow_id: sparse-intake
+name: Something About Onboarding
+version: "1"
+maturity: OBSERVED
+
+purpose: TBD
+trigger: ""
+claimed_outcome: The new person is ready.
+
+actors:
+  - someone
+
+steps:
+  - step_id: first-bit
+    name: The first part
+    actor: someone
+    action: TBD
+    outputs:
+      - name: a thing
+        artifact_type: ""
+        evidence_requirement: ""
+    exit_condition: When it looks done.
+    decision_authority: ""
+    next_steps:
+      - second-bit
+    exception_paths:
+      - failure_mode: It goes wrong somehow.
+        owner: ""
+        handling: ""
+
+  - step_id: second-bit
+    name: The other part
+    actor: ""
+    action: Finish up.
+    inputs:
+      - name: whatever came out of the first part
+        source: ""
+        required: true
+    next_steps: []
+
+gates:
+  - gate_id: someone-signs-off
+    at_step: second-bit
+    approver: whoever
+    criteria: ""
+    on_reject: ""
+
+observed_exceptions:
+  - Sometimes the laptop is not ready and everything stalls.
+
+unwritten_rules:
+  - Everyone knows you have to ask Dave first.
+
+known_pain_points:
+  - Nobody can say when onboarding is actually finished.
+
+notes: >
+  Sparse-capture fixture. Every step's characteristics are absent, so they
+  default to UNKNOWN — which must resolve toward human control downstream.

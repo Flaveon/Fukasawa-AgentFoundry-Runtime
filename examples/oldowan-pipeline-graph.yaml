@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# Pipeline graph: the Oldowan Articles cataloging workflow, orchestrated.
+# Deterministic nodes check preconditions and write the catalog record;
+# agent nodes do bounded cataloging work through adapters; the curator's
+# accession decision stays a human gate — the kernel pauses there and cannot
+# accession its own record.
+#
+# Run variables (pass with --var):
+#   workdir    — directory containing submission.md, where catalog-record.json is produced
+#   destdir    — catalog destination directory
+#   accession  — the accession id to assign (e.g. OLD-EG10-0473)
+
+graph_id: oldowan-pipeline-graph
+workflow: oldowan-cataloging-review
+description: >
+  Orchestrates intake -> cataloged -> curator review -> published. The
+  curator accession decision is CONSCIOUS-depth work and always pauses for a
+  human; nothing enters the permanent catalog without a human sign-off.
+
+nodes:
+  # Precondition: the submitted article must exist before anything runs.
+  - node_id: check-submission
+    kind: deterministic
+    adapter: filesystem
+    params:
+      op: exists
+      path: "{workdir}/submission.md"
+    next: extract-metadata
+
+  # catalog-agent's work, bounded to producing the catalog record.
+  - node_id: extract-metadata
+    kind: agent
+    adapter: shell
+    params:
+      command: "cp '{workdir}/submission.md' '{workdir}/catalog-record.json' && wc -l < '{workdir}/catalog-record.json'"
+      cwd: "{workdir}"
+    produces_transition:
+      to_state: CATALOGED
+      evidence_template: "accession {accession}; catalog record at {workdir}/catalog-record.json ({stdout} lines of metadata)"
+    retry:
+      max_attempts: 2
+    next: submit-review
+
+  - node_id: submit-review
+    kind: agent
+    adapter: shell
+    params:
+      command: "wc -l < '{workdir}/catalog-record.json'"
+      cwd: "{workdir}"
+    produces_transition:
+      to_state: CURATOR_REVIEW
+      evidence_template: "catalog record {accession} submitted for review ({stdout} fields present)"
+    next: curator-gate
+
+  # The CONSCIOUS decision. The kernel pauses; the curator decides.
+  - node_id: curator-gate
+    kind: human_gate
+    gate_reason: >
+      Accession is a CONSCIOUS-depth decision: what enters the permanent
+      catalog is a matter of responsibility and meaning. The runtime cannot
+      accession its own record.
+    produces_transition:
+      to_state: APPROVED
+    next: publish
+
+  # publisher-agent's rule task: write the approved entry, report the path.
+  - node_id: publish
+    kind: agent
+    adapter: shell
+    params:
+      command: "mkdir -p '{destdir}' && cp '{workdir}/catalog-record.json' '{destdir}/{accession}.json' && echo '{destdir}/{accession}.json'"
+    produces_transition:
+      to_state: PUBLISHED
+      evidence_template: "catalog entry {accession} at {stdout}"
+    retry:
+      max_attempts: 2
+    next: null
