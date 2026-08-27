@@ -1645,7 +1645,7 @@ def node_consent(
     set_to: str = typer.Option("", "--set", help="none | this-machine | named-host | local-network"),
 ) -> None:
     """Show or change how far a scan may reach."""
-    from src.schemas.node import ScanConsent
+    from src.schemas.node import ScanConsent, ScanScope
 
     store = _node_store()
     _nodes, consent = store.load()
@@ -1653,6 +1653,27 @@ def node_consent(
         console.print(f"Currently: {_SCOPE_WORDS[consent.scope.value]}")
         return
     chosen = _scope_from(set_to)
+    if chosen is ScanScope.LOCAL_NETWORK:
+        # The same answer `node scan` gives at its LOCAL_NETWORK branch, and
+        # for the reason stated there: sweeping a whole network is named in
+        # the design and is not built in this phase, so a permission granting
+        # it is one nothing can act on. Written down, it is read back by every
+        # later scan and refused again, and clearing it means knowing to run a
+        # command nothing mentions. This verb is where that permission would
+        # be written most deliberately, so the guard belongs here too.
+        #
+        # Exit 1, matching that site: nothing is being refused as a matter of
+        # doctrine, the part being asked for does not exist yet. Three is
+        # documented at the top of this file for the former.
+        console.print(
+            "[yellow]Looking at every computer on this network is not "
+            "built yet[/yellow], so that permission is not recorded.\n"
+            "To allow one other computer, run [cyan]fukasawa node consent "
+            "--set named-host[/cyan].\n"
+            "To allow this computer, run [cyan]fukasawa node consent --set "
+            "this-machine[/cyan]."
+        )
+        raise typer.Exit(1)
     store.set_consent(ScanConsent.granted(chosen, "operator"))
     console.print(f"Changed to: {_SCOPE_WORDS[chosen.value]}")
 

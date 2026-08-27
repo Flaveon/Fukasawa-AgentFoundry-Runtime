@@ -477,6 +477,39 @@ class TestConsent:
         _nodes, consent = NodeStore(store_path).load()
         assert consent.scope is ScanScope.NONE
 
+    def test_the_whole_network_permission_is_answered_not_recorded(
+        self, store_path
+    ):
+        """`node scan` already refuses this reach. Granting it did not.
+
+        Without this guard `node consent --set local-network` exited 0 and
+        wrote the permission down, after which every scan read it back and
+        hit the wall `node scan` puts up — and clearing it meant knowing to
+        run a command nothing mentions. The two verbs have to agree, or the
+        screen says the reach was granted while nothing acts on it.
+
+        Exit 1, matching the `node scan` branch and for the reason stated
+        there: nothing is being refused as a matter of doctrine, the sweep
+        has not been written. src/cli.py documents 3 for the former.
+        """
+        seed(store_path)
+        result = CliRunner().invoke(
+            app, ["node", "consent", "--set", "local-network"]
+        )
+        assert result.exit_code == 1, result.output
+        assert "not built yet" in result.output
+        _nodes, consent = NodeStore(store_path).load()
+        assert consent.scope is ScanScope.THIS_MACHINE
+
+    def test_the_answer_names_a_permission_that_does_work(self, store_path):
+        """A dead end with no exit is how a person ends up stuck."""
+        seed(store_path)
+        output = CliRunner().invoke(
+            app, ["node", "consent", "--set", "local-network"]
+        ).output
+        assert "named-host" in output
+        assert "this-machine" in output
+
 
 class TestSquareBracketsInStoredText:
     """Text that arrives from outside is text, never formatting.
@@ -607,6 +640,7 @@ class TestCopyRules:
         (["node", "show", "home-pc"], None),
         (["node", "consent"], None),
         (["node", "consent", "--set", "this-machine"], None),
+        (["node", "consent", "--set", "local-network"], None),
         (["node", "add", "--label", "Kitchen Box", "--kind", "ollama",
           "--url", "http://10.0.0.9:11434"], None),
         (["node", "forget", "home-pc"], None),
