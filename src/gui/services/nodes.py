@@ -27,6 +27,18 @@ parse is an expected outcome rather than an exotic one. It comes back as a
 refusal, on the rule the package already states in ``workflow.py``: a
 traceback is not an error message, and this is the only screen from which
 somebody could correct the file.
+
+**One writer at a time — a constraint on the tab, not a promise from here.**
+``scan()`` writes on the phase-7 worker thread while ``update_field`` reads,
+mutates and rewrites the whole file on the UI thread. There is no lock and no
+mtime check, and ``NodeStore.save`` is a plain ``write_text``, so two writers
+interleaving lose one of the two edits outright and a crash mid-write leaves
+a truncated file. **The tab must not offer editing while a scan is running**:
+disable the card's fields for the duration, or hold the edit until the
+scan's closing event arrives. Making the store safe for concurrent writers
+is a change to the store, which this phase does not own — recorded here
+rather than fixed, so the next person to wire a screen to these functions
+knows the rule before finding out the hard way.
 """
 
 from dataclasses import dataclass, field
