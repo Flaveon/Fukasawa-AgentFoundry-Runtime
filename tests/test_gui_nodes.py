@@ -14,7 +14,7 @@ to answer. The Task 4 review found a fake blind to POST for precisely this
 reason. An ``AssertionError`` is not an ``OSError`` and is not swallowed.
 
 **The copy rules are imported, not re-stated.** ``judgements_in`` and
-``ownership_in`` come from ``tests/test_node_cli.py`` so the two front ends are
+``ownership_in`` come from ``tests/copy_rules.py`` so the two front ends are
 policed by one word list. A second copy would drift, and the first thing to
 drift out of it would be the awkward case the list exists to handle.
 """
@@ -35,7 +35,7 @@ from src.schemas.node import (
     ScanConsent,
     ScanScope,
 )
-from tests.test_node_cli import judgements_in, ownership_in
+from tests.copy_rules import judgements_in, ownership_in
 
 #: Every address ``THIS_MACHINE`` is allowed to reach. Anything else appearing
 #: in a recorder's log is a scan that went further than it was permitted. Taken

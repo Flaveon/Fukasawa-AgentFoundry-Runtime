@@ -155,9 +155,9 @@ available. See below.
 Fold in two things while you are there:
 
 - The M8 flow above, as actual fields in the tab.
-- Move the copy-rule helpers to `tests/copy_rules.py`. They currently live in
-  `tests/test_node_cli.py` and are imported by `tests/test_gui_nodes.py`, so
-  that module is loaded under two names. **Task 8 would be the third importer.**
+- ~~Move the copy-rule helpers to `tests/copy_rules.py`.~~ **Done 2026-09-11**,
+  and it turned out to matter more than tidiness — see "CI was red" below.
+  Task 8 imports `from tests.copy_rules import judgements_in, ownership_in`.
 
 Task 8 must also honour a constraint written into
 `src/gui/services/nodes.py`'s module docstring: **do not offer editing while a
@@ -245,6 +245,17 @@ PYTHONPATH=$PWD .venv/bin/python script.py
 
 Running the suite is safe: `.venv/bin/python -m pytest -q`. About 40 tests are
 display-gated and skip in a plain run; that is expected, not a problem.
+
+**CI was red on `main` from PR #19 through #22 (2026-08-27 to 2026-09-11), and
+every local run was green.** CI runs the bare `pytest` script; everybody locally
+ran `python -m pytest`. Only `-m` puts the repository root on the import path,
+so `tests/test_gui_nodes.py`'s `from tests.test_node_cli import …` (Task 7,
+`b8541f7`) imported locally and failed collection in CI — the suite never ran
+there at all. Every "907 passed" in this file was true only on one machine.
+Fixed in PR #23 with `pythonpath = ["."]` in `pyproject.toml`, which makes the
+two invocations agree, and the helpers moved to `tests/copy_rules.py`.
+**Before calling a phase green, read CI, not the terminal** —
+`gh pr checks <n>`, or reproduce it: `xvfb-run -a .venv/bin/pytest -q`.
 
 **`.superpowers/` is gitignored repo-wide** (`.gitignore:14`). Every plan
 artifact — the ledger, all briefs, all reports, all review packages — lived on
