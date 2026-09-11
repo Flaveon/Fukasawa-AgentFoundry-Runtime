@@ -181,7 +181,7 @@ wanted, and phase 10a built its first half. See *Known limitations*.
 
 ```bash
 uv venv --python 3.12 .venv && uv pip install -e '.[dev,gui]'
-xvfb-run -a .venv/bin/pytest -q     # CI's own command
+GITHUB_ACTIONS=true xvfb-run -a .venv/bin/pytest -q   # as CI runs it
 .venv/bin/python -m pytest -q       # no display: the view tests skip
 ```
 

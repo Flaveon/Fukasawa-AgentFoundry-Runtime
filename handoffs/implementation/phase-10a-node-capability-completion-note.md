@@ -47,7 +47,7 @@ it as reviewed clean until that review has happened.
 ## Tests run and results
 
 ```
-xvfb-run -a .venv/bin/pytest -q      # CI's own command
+GITHUB_ACTIONS=true xvfb-run -a .venv/bin/pytest -q   # as CI runs it
 1045 passed, 2 skipped
 
 .venv/bin/python -m pytest -q        # no display
@@ -117,6 +117,13 @@ looked at under Xvfb, which found four defects no test had.
   `python -m pytest` resolved imports differently, so the suite never ran in
   CI while every local run passed. Fixed (`pythonpath = ["."]`). Rule since:
   read CI, not the terminal.
+- **Nine CLI tests fail if colour is forced** (`FORCE_COLOR=1`) — they assert
+  on plain text the program's console would then colour. CI does not force
+  it, so they pass there; a future change to CI that did would turn them red
+  at once. Eight are this phase's (`tests/test_node_cli.py`), one older
+  (`tests/test_workflow_cli.py`). Found while diagnosing PR #25's first CI
+  failure; not fixed here. The fix is to run the CLI in tests with colour
+  explicitly off, not to loosen the assertions.
 - **The operator's LAN addresses are in the public history.** Commit `93e4d64`
   (Phase 5B) put them in the default endpoint config; `9d49d56` removed them.
   The tree is clean — the new doctrine test says so — but the history is not.
@@ -146,6 +153,7 @@ looked at under Xvfb, which found four defects no test had.
 `handoffs/reviews/node-and-capability/` (the ledger, and the Task 8 and Task 9
 briefs, each listing what the plan got wrong).
 
-Run `xvfb-run -a .venv/bin/pytest -q` — CI's command — and read CI after
-pushing. A worktree needs its own venv, and plain `python script.py` still
+Run `GITHUB_ACTIONS=true xvfb-run -a .venv/bin/pytest -q` — as CI runs it;
+without the variable, Typer's help text is not coloured and one class of CI
+failure cannot appear — and read CI after pushing. A worktree needs its own venv, and plain `python script.py` still
 imports the main checkout's `src`; use `PYTHONPATH=$PWD`.

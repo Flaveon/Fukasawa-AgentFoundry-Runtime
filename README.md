@@ -117,7 +117,7 @@ by name in a graph (`endpoint: kitchen-box`) and never by address. See
 ### Tests
 
 ```bash
-xvfb-run -a .venv/bin/pytest -q     # exactly what CI runs
+GITHUB_ACTIONS=true xvfb-run -a .venv/bin/pytest -q   # as CI runs it
 .venv/bin/python -m pytest -q       # no display: the view tests skip
 ```
 

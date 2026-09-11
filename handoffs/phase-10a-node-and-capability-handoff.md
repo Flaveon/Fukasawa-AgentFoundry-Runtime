@@ -283,7 +283,12 @@ there at all. Every "907 passed" in this file was true only on one machine.
 Fixed in PR #23 with `pythonpath = ["."]` in `pyproject.toml`, which makes the
 two invocations agree, and the helpers moved to `tests/copy_rules.py`.
 **Before calling a phase green, read CI, not the terminal** —
-`gh pr checks <n>`, or reproduce it: `xvfb-run -a .venv/bin/pytest -q`.
+`gh pr checks <n>`, or reproduce it:
+`GITHUB_ACTIONS=true xvfb-run -a .venv/bin/pytest -q`. **The variable is
+part of the reproduction:** Typer colours help text when it is set, and PR
+#25's first push failed in CI on a test that searched `--help` for `--kind`
+and found `-`, a colour code, `-kind`. Without the variable that failure
+cannot appear locally.
 
 **`.superpowers/` is gitignored repo-wide** (`.gitignore:14`). Every plan
 artifact — the ledger, all briefs, all reports, all review packages — lived on
