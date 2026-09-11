@@ -21,7 +21,7 @@ an error or silent truncation, and both fail the step.
 
 from dataclasses import dataclass, field
 
-from src.schemas.node import InferenceNode, Provenance
+from src.schemas.node import InferenceNode, NodeKind, Provenance
 
 #: Words per token for English prose. A rough but stable convention, used so a
 #: reader who has never heard of a token still gets a figure they can act on.
@@ -88,6 +88,82 @@ def human_bytes(count: int) -> str:
     return f"{count // 1_000_000_000} GB or more"
 
 
+def never_contacted(node: InferenceNode) -> bool:
+    """Whether nothing has ever looked at this computer (typed in, unchecked)."""
+    return not node.reachable and node.last_probed_at is None
+
+
+def model_count(node: InferenceNode) -> str:
+    """How many models it serves -- or "not sure" when nothing has looked.
+
+    ``len(models)`` is 0 for a computer typed in and never contacted, and
+    printing "0" there claims it runs nothing, which nobody established.
+    """
+    if never_contacted(node):
+        return UNKNOWN
+    return str(len(node.models))
+
+
+def status_of(node: InferenceNode) -> str:
+    """Whether a computer answered, in the three states the panel tells apart.
+
+    ``reachable`` is false both for a computer nobody has looked at and for
+    one that was looked at and stayed silent; ``last_probed_at`` is what
+    separates them (design §3.6, M5 option C).
+    """
+    if node.reachable:
+        return "Answering when last checked"
+    if never_contacted(node):
+        return "Not checked yet"
+    return "Not answering when last checked"
+
+
+# ------------------------------------------------------------ typing it in
+#
+# Design §3.8's words, held once. The terminal and the desktop both walk a
+# person through saving a computer without looking at it, and §3.7 requires
+# the same words on both, so neither front end writes these itself.
+
+#: What each program is called on screen, in the order it is offered.
+KIND_WORDS = {NodeKind.OLLAMA: "Ollama", NodeKind.LLAMACPP: "llama.cpp"}
+
+#: Said after saving, before anything has contacted the computer.
+NOT_CONTACTED = "Nothing has contacted it, so what it can run is not known yet."
+
+#: The separate question that has to come before any contact. Typing an
+#: address is not permission to contact it (M8).
+MAY_I_CONTACT = (
+    "May I contact it now to see what it can run? Nothing else is contacted."
+)
+
+
+def nothing_answered(url: str) -> str:
+    """The closing line of a check on one recorded computer that stayed silent.
+
+    Discovery's own closing line for finding nothing suggests typing a
+    computer in, which is wrong here: this one is already recorded, often
+    because it was just typed in.
+    """
+    return f"Nothing answered at {url}."
+
+
+def typed_in_opening(labels: list[str]) -> tuple[str, str]:
+    """The two opening lines, which differ by whether anything is recorded.
+
+    The route is reachable however many computers are saved, so somebody
+    adding a fourth must not be told they have none.
+    """
+    if labels:
+        return (
+            f"Recorded so far: {', '.join(labels)}.",
+            "Tell me about another one and I'll save it with them.",
+        )
+    return (
+        "No computers are recorded yet.",
+        "Tell me about one and I'll save it.",
+    )
+
+
 @dataclass
 class SummaryRow:
     """One line of the panel: what it is, and the figure.
@@ -128,7 +204,7 @@ def summarise(nodes: list[InferenceNode]) -> Summary:
       count.
     """
     usable = [n for n in nodes if n.reachable]
-    unchecked = [n for n in nodes if not n.reachable and n.last_probed_at is None]
+    unchecked = [n for n in nodes if never_contacted(n)]
 
     if not usable and not unchecked:
         return Summary(

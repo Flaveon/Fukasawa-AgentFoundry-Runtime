@@ -63,6 +63,13 @@ def _normalise(host: str) -> str:
     return f"http://{host}"
 
 
+def _kind_words(kind: NodeKind) -> str:
+    """What a program is called on screen. Imported late, as `human_words` is."""
+    from src.nodes.summary import KIND_WORDS
+
+    return KIND_WORDS[kind]
+
+
 def _names_a_port(base: str) -> bool:
     """Whether a base URL from ``_normalise`` already says which port to use."""
     return ":" in base.split("//", 1)[1]
@@ -190,7 +197,9 @@ def discover(
         netloc = base_url.split("//", 1)[1]
         node = InferenceNode(
             node_id=slugify(f"{result.kind.value}-{netloc}"),
-            label=f"{result.kind.value} on {'this computer' if '127.0.0.1' in base_url else host}".strip(),
+            # The program's own name ("Ollama", not "ollama"): this label is
+            # the heading of a card a person reads (§3.5), not an identifier.
+            label=f"{_kind_words(result.kind)} on {'this computer' if '127.0.0.1' in base_url else host}".strip(),
             kind=result.kind,
             url=base_url,
             is_local="127.0.0.1" in base_url,

@@ -1253,3 +1253,380 @@ class TestVisibleVersionBar:
         tab.run_promote()
         tab.refresh_stages()
         assert "ACCOUNTABLE" in tab.version_bar.cget("text")
+
+
+# ------------------------------------------------------- the Environment tab
+#
+# Task 8. Display-gated like every view test here, and on the same shared
+# window. Every test points the tab at a store in tmp_path and at a stand-in
+# network, so none reads a real home directory and none opens a socket --
+# `urlopen` is also made to explode, which catches a stand-in the view forgot
+# to pass through.
+
+
+class _Net:
+    """A fetcher and poster that record every URL, answer as Ollama, and can block.
+
+    ``gate``, when given, holds every request until it is set. That is how a
+    test catches a look **in flight**: the first line is on screen and the
+    scan has not finished. A stand-in that answered at once could not tell a
+    tab that streams findings from one that shows them all at the end, and
+    could not show what the tab refuses while a look is still writing.
+    """
+
+    def __init__(self, answering=(), gate=None):
+        self.asked: list[str] = []
+        self.answering = set(answering)
+        self.gate = gate
+
+    def _answer(self, url: str) -> dict:
+        self.asked.append(url)
+        if self.gate is not None:
+            self.gate.wait(5)
+        if not any(host in url for host in self.answering):
+            raise OSError("connection refused")
+        if url.endswith("/api/version"):
+            return {"version": "0.5.4"}
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1:8b", "size": 1,
+                                "details": {"family": "llama"}}]}
+        if url.endswith("/api/ps"):
+            return {"models": []}
+        return {"model_info": {"llama.context_length": 8192}, "capabilities": []}
+
+    def __call__(self, url: str, timeout: float = 0.0) -> dict:
+        """GET."""
+        return self._answer(url)
+
+    def post(self, url: str, payload: dict, timeout: float = 0.0) -> dict:
+        """POST, recorded in the same list, as ``/api/show`` is a POST."""
+        return self._answer(url)
+
+    def hosts(self) -> set[str]:
+        """Every host:port attempted, by either verb."""
+        return {u.split("//", 1)[1].split("/", 1)[0] for u in self.asked}
+
+
+def _pump(tab, until, timeout: float = 5.0) -> bool:
+    """Drain the tab's queue until ``until()`` holds. Never spins ``update()``.
+
+    See ``_wait_for`` above for why: a tight ``update()`` loop segfaulted Tk
+    under Xvfb, and draining exercises the real worker → queue → drain path.
+    """
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        tab.drain()
+        if until():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+@pytest.fixture()
+def env(app_window, tmp_path, monkeypatch):
+    """The Environment tab on a fresh store, and a network nothing answers on."""
+    import urllib.request
+
+    from src.nodes.store import NodeStore
+
+    def explode(*_args, **_kwargs):
+        raise AssertionError("a view test opened a socket")
+
+    monkeypatch.setattr(urllib.request, "urlopen", explode)
+    tab = app_window.environment_tab
+    tab.store = NodeStore(tmp_path / "nodes.yaml")
+    net = _Net()
+    tab.fetch, tab.post = net, net.post
+    tab.net = net
+    tab._editing = tab._forget_armed = ""
+    tab.refresh()
+    yield tab
+    # Never leave a look running into the next test. `tab.net`, not `net`: a
+    # test may have swapped in a gated stand-in, and releasing the original
+    # one instead leaves the worker blocked -- the tab then stays busy and
+    # rightly refuses everything the next test asks of it.
+    if tab.net.gate is not None:
+        tab.net.gate.set()
+    assert _pump(tab, lambda: not tab.busy), "a look outlived its test"
+    tab.on_looks_right()
+    tab._editing = tab._forget_armed = ""
+    tab._show_pane("home")
+    tab.store = tab.fetch = tab.post = None
+
+
+def _use_net(tab, **kw) -> "_Net":
+    """Swap in a different stand-in network for one test."""
+    net = _Net(**kw)
+    tab.fetch, tab.post, tab.net = net, net.post, net
+    return net
+
+
+def _seed(tab) -> None:
+    """One computer, found by a look, at this machine's usual address."""
+    from src.schemas.node import InferenceNode, ModelCapability, NodeKind
+
+    tab.store.upsert(InferenceNode(
+        node_id="home-pc", label="Home PC", kind=NodeKind.OLLAMA,
+        url="http://localhost:11434", reachable=True,
+        models=[ModelCapability(name="llama3.1:8b", context_length=8192)],
+    ))
+    tab.refresh()
+
+
+class TestEnvironmentTab:
+    """Design §3.2–§3.6 and §3.8, on the desktop."""
+
+    def test_it_is_mounted_as_its_own_tab(self, app_window):
+        assert app_window.tabs.tab("Environment") is not None
+        assert hasattr(app_window, "environment_tab")
+
+    def test_building_it_reads_nothing(self, app_window, monkeypatch):
+        """The window builds every tab at start-up; the store is somebody's file."""
+        import customtkinter as ctk
+
+        from src.gui.environment_views import EnvironmentTab
+
+        def refuse(*_a, **_k):
+            raise AssertionError("the tab read the store while being built")
+
+        monkeypatch.setattr(services, "list_nodes", refuse)
+        holder = ctk.CTkFrame(app_window)
+        try:
+            EnvironmentTab(holder)
+        finally:
+            holder.destroy()
+
+    def test_opening_it_reads_what_is_recorded(self, env, app_window):
+        _seed(env)
+        env.render(services.NodeListResult(ok=True, summary=""))
+        app_window.tabs.set("Environment")
+        try:
+            app_window._on_tab_change()
+            assert env.cards() == ["Home PC"]
+        finally:
+            app_window.tabs.set("Workflow")
+
+    def test_with_nothing_recorded_it_invites_a_look(self, env):
+        shown = env.shown()
+        assert "Is something like Ollama or llama.cpp running?" in shown
+        assert "Look for it" in shown and "I'll type it in" in shown
+        assert '"Look for it" only checks this computer' in shown
+        assert "No step can be assigned to an agent." in shown
+
+    def test_looking_asks_first_and_opens_nothing(self, env):
+        env.on_look()
+        assert env.shown_pane == "permission"
+        shown = env.shown()
+        for _scope, title, detail in services.SCAN_CHOICES:
+            assert title in shown and detail in shown
+        assert env.scope_var.get() == services.ScanScope.THIS_MACHINE.value
+        assert env.net.asked == []
+
+    def test_findings_arrive_one_at_a_time(self, env):
+        """§3.4. The first line is on screen while the look is still running."""
+        import threading
+
+        gate = threading.Event()
+        net = _use_net(env, answering={"127.0.0.1:11434"}, gate=gate)
+        env.on_look()
+        env.on_permission_look()
+        assert _pump(env, lambda: "Looking on port" in env.shown())
+        assert env.busy, "the look finished before the first line was checked"
+        assert "Found" not in env.shown()
+        gate.set()
+        assert _pump(env, lambda: not env.busy)
+        assert env.cards() == ["Ollama on this computer"]
+        assert net.hosts() <= {"127.0.0.1:11434", "127.0.0.1:8081"}
+
+    def test_nothing_is_written_while_a_look_runs(self, env):
+        """The store has no lock (services/nodes.py), so the tab must not write.
+
+        Caught mid-look. The card edit is opened BEFORE the look starts, then
+        saved during it -- the whole-file rewrite the rule exists for.
+
+        What is compared is the computers, not the file's bytes: the look
+        itself writes the file, recording the permission it acts under (I6),
+        and that write is the look's, not the tab's.
+        """
+        import threading
+
+        _seed(env)
+        env.on_change("home-pc")
+        env._edit_entries["label"].delete(0, "end")
+        env._edit_entries["label"].insert(0, "Renamed")
+
+        def computers():
+            return [(n.node_id, n.label) for n in env.store.load()[0]]
+
+        gate = threading.Event()
+        _use_net(env, gate=gate)
+        env.on_check("home-pc")
+        assert _pump(env, lambda: "Looking on port" in env.shown())
+        assert env.busy
+
+        env.on_save_change("home-pc")
+        env.on_forget("home-pc")
+        env.on_forget("home-pc")
+        assert computers() == [("home-pc", "Home PC")]
+        env.on_add()
+        assert env.shown_pane == "home", "the typed-in pane opened mid-look"
+        assert "Still looking" in env.shown()
+        buttons = [w for w in env._busy_widgets if w.winfo_exists()]
+        assert buttons and all(w.cget("state") == "disabled" for w in buttons)
+        gate.set()
+        assert _pump(env, lambda: not env.busy)
+
+    def test_a_look_records_the_permission_it_acted_under(self, env):
+        env.on_look()
+        env.on_permission_look()
+        assert _pump(env, lambda: not env.busy)
+        assert env.store.load()[1].scope is services.ScanScope.THIS_MACHINE
+
+    def test_dont_look_goes_to_typing_and_opens_nothing(self, env):
+        env.on_look()
+        env.scope_var.set(services.ScanScope.NONE.value)
+        env.on_permission_look()
+        assert env.shown_pane == "typed"
+        assert env.net.asked == []
+        assert env.store.load()[1].scope is services.ScanScope.NONE
+
+    def test_the_whole_network_is_answered_not_attempted(self, env):
+        env.on_look()
+        env.scope_var.set(services.ScanScope.LOCAL_NETWORK.value)
+        env.on_permission_look()
+        assert _pump(env, lambda: not env.busy)
+        assert services.NOT_BUILT in env.shown()
+        assert env.net.asked == []
+
+    def test_naming_a_computer_without_an_address_is_answered(self, env):
+        env.on_look()
+        env.scope_var.set(services.ScanScope.NAMED_HOST.value)
+        env.on_permission_look()
+        assert _pump(env, lambda: not env.busy)
+        assert "No address was given" in env.shown()
+        assert env.net.asked == []
+
+    def test_typing_one_in_saves_it_unchecked_and_then_asks(self, env):
+        """§3.8: saved first, contacted only after a separate yes."""
+        env.on_add()
+        env.fill_typed("Kitchen Box", "10.0.0.9")
+        env.on_save_typed()
+        shown = env.shown()
+        assert "Saved Kitchen Box at http://10.0.0.9:11434." in shown
+        assert services.NOT_CONTACTED in shown
+        assert services.MAY_I_CONTACT in shown
+        assert env.net.asked == []
+        stored = env.store.load()[0][0]
+        assert (stored.label, stored.reachable) == ("Kitchen Box", False)
+
+    def test_the_opening_differs_by_what_is_recorded(self, env):
+        env.on_add()
+        assert "No computers are recorded yet." in env.shown()
+        _seed(env)
+        env.on_add()
+        assert "Recorded so far: Home PC." in env.shown()
+        assert "No computers are recorded yet." not in env.shown()
+
+    def test_not_now_leaves_it_counted_as_unchecked(self, env):
+        """M5 option C on the desktop: listed, and named as unchecked."""
+        env.on_add()
+        env.fill_typed("Kitchen Box", "10.0.0.9")
+        env.on_save_typed()
+        env.on_not_now()
+        assert env.shown_pane == "home"
+        shown = env.shown()
+        assert "Kitchen Box (not checked yet)" in shown
+        assert "Not checked yet" in shown
+        assert env.net.asked == []
+
+    def test_an_earlier_looks_findings_do_not_outlive_it(self, env):
+        """Found by looking at screenshots, not by a test: after a look, then
+        typing a computer in and choosing Not now, the first look's findings
+        were still on screen above the cards, describing none of it."""
+        env.on_look()
+        env.on_permission_look()
+        assert _pump(env, lambda: not env.busy)
+        assert "Looking on port" in env.shown()
+        env.on_add()
+        env.fill_typed("Kitchen Box", "10.0.0.9")
+        env.on_save_typed()
+        env.on_not_now()
+        assert "Looking on port" not in env.shown()
+
+    def test_check_it_looks_at_that_computer_and_fills_it_in(self, env):
+        net = _use_net(env, answering={"10.0.0.9:11434"})
+        env.on_add()
+        env.fill_typed("Kitchen Box", "10.0.0.9")
+        env.on_save_typed()
+        env.on_check_typed()
+        assert _pump(env, lambda: not env.busy)
+        assert net.hosts() == {"10.0.0.9:11434"}
+        assert env.cards() == ["Kitchen Box"]
+        assert "Answering when last checked" in env.shown()
+
+    def test_check_it_when_nothing_answers(self, env):
+        """Stamped as looked at, and told in words that fit a typed-in computer."""
+        env.on_add()
+        env.fill_typed("Kitchen Box", "10.0.0.9")
+        env.on_save_typed()
+        env.on_check_typed()
+        assert _pump(env, lambda: not env.busy)
+        shown = env.shown()
+        assert "Nothing answered at http://10.0.0.9:11434." in shown
+        assert "type it in instead" not in shown
+        assert "Not answering when last checked" in shown
+        assert "(not checked yet)" not in shown
+
+    def test_an_address_already_recorded_is_named(self, env):
+        _seed(env)
+        env.on_add()
+        env.fill_typed("Kitchen Box", "localhost")
+        env.on_save_typed()
+        assert "Home PC" in env.shown()
+        assert len(env.store.load()[0]) == 1
+
+    def test_a_change_is_saved_as_something_you_told_me(self, env):
+        _seed(env)
+        env.on_change("home-pc")
+        env._edit_entries["label"].delete(0, "end")
+        env._edit_entries["label"].insert(0, "Garage")
+        env.on_save_change("home-pc")
+        stored = env.store.load()[0][0]
+        assert stored.label == "Garage"
+        assert stored.source_of("label").value == "DECLARED"
+        assert env.cards() == ["Garage"]
+
+    def test_forgetting_takes_a_second_press(self, env):
+        _seed(env)
+        env.on_forget("home-pc")
+        assert env.cards() == ["Home PC"]
+        assert "Press again to forget it" in env.shown()
+        env.on_forget("home-pc")
+        assert env.store.load()[0] == []
+
+    def test_every_screen_obeys_both_copy_rules(self, env):
+        """§3.1.1 and §3.1.2, over every screen this tab can show."""
+        from tests.copy_rules import judgements_in, ownership_in
+
+        screens = [env.shown()]
+        env.on_look()
+        screens.append(env.shown())
+        env.on_add()
+        screens.append(env.shown())
+        env.fill_typed("Kitchen Box", "10.0.0.9")
+        env.on_save_typed()
+        screens.append(env.shown())
+        _use_net(env, answering={"10.0.0.9:11434"})
+        env.on_check_typed()
+        _pump(env, lambda: not env.busy)
+        screens.append(env.shown())
+        _seed(env)
+        env.on_change("home-pc")
+        screens.append(env.shown())
+        for text in screens:
+            assert judgements_in(text) == [], text
+            assert ownership_in(text) == [], text
+            for word in ("endpoint", "provenance", "capability", "vram", "scope"):
+                assert word not in text.lower(), (word, text)

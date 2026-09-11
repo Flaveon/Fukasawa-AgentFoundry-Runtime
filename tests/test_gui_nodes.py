@@ -249,6 +249,148 @@ class TestEditing:
         assert nodes[0].kind is NodeKind.LLAMACPP
 
 
+class TestWhatTheEnvironmentTabNeeds:
+    """Task 8's additions: the §3.3 choices, §3.8's typed-in route, and a check.
+
+    The view may import nothing but these services (ADR-007 §2), so every
+    word and every decision the tab shows is settled here and tested here.
+    """
+
+    def test_the_four_choices_are_the_designs_in_its_order(self):
+        assert [scope for scope, _t, _d in service.SCAN_CHOICES] == [
+            ScanScope.THIS_MACHINE, ScanScope.NAMED_HOST,
+            ScanScope.LOCAL_NETWORK, ScanScope.NONE,
+        ]
+        assert [title for _s, title, _d in service.SCAN_CHOICES] == [
+            "Just this computer", "A computer I'll name",
+            "Every computer on this network", "Don't look at anything",
+        ]
+
+    def test_the_choices_obey_both_copy_rules(self):
+        for _scope, title, detail in service.SCAN_CHOICES:
+            assert judgements_in(f"{title} {detail}") == [], title
+            assert ownership_in(f"{title} {detail}") == [], title
+
+    def test_a_bare_address_is_saved_the_way_the_terminal_saves_it(self, store):
+        """§3.8: one reading of what a person typed, on both front ends."""
+        result = service.add_node("Kitchen Box", "llamacpp", "10.0.0.9", store)
+        assert result.ok, result.refusal
+        assert (result.node_id, result.url) == ("kitchen-box", "http://10.0.0.9:8081")
+        assert store.load()[0][0].url == "http://10.0.0.9:8081"
+
+    def test_the_address_is_read_before_it_is_compared(self, store):
+        """``localhost`` and ``http://localhost:11434`` are one computer.
+
+        Compared as typed, the two would pass the check as different
+        addresses and a second row would be saved for a computer already
+        recorded -- the collision I5 closed, reopened by a shorter spelling.
+        """
+        seed(store)
+        result = service.add_node("Kitchen Box", "ollama", "localhost", store)
+        assert not result.ok
+        assert "Home PC" in result.refusal
+        assert len(store.load()[0]) == 1
+
+    def test_a_computer_typed_in_reads_as_not_checked_yet(self, store):
+        service.add_node("Kitchen Box", "ollama", "10.0.0.9", store)
+        assert service.list_nodes(store).rows[0].status == "Not checked yet"
+
+    def test_a_check_that_reaches_it_fills_in_the_typed_record(self, store):
+        """And does NOT stamp it silent -- the success half of the stamp test.
+
+        A stamp that fired on every look would still pass the silent test
+        below; this is the one that says it only fires when nothing answered.
+        """
+        added = service.add_node("Kitchen Box", "ollama", "10.0.0.9", store)
+        recorder = Recorder(answering={"10.0.0.9:11434"})
+        list(service.check_node(added.node_id, store, fetch=recorder,
+                                post=recorder.post))
+        nodes, _ = store.load()
+        assert len(nodes) == 1
+        assert (nodes[0].node_id, nodes[0].label) == ("kitchen-box", "Kitchen Box")
+        assert nodes[0].reachable is True
+        assert [m.name for m in nodes[0].models] == ["llama3.1:8b"]
+        assert service.list_nodes(store).rows[0].status == (
+            "Answering when last checked"
+        )
+
+    def test_a_check_touches_that_address_and_nothing_else(self, store):
+        added = service.add_node("Kitchen Box", "ollama", "10.0.0.9", store)
+        recorder = Recorder(answering={"10.0.0.9:11434"})
+        list(service.check_node(added.node_id, store, fetch=recorder,
+                                post=recorder.post))
+        assert recorder.hosts() == {"10.0.0.9:11434"}, recorder.asked
+
+    def test_a_check_records_the_permission_it_looked_under(self, store):
+        """The same rule `scan()` keeps (I6), inherited rather than re-made."""
+        added = service.add_node("Kitchen Box", "ollama", "10.0.0.9", store)
+        recorder = Recorder(answering=set())
+        list(service.check_node(added.node_id, store, fetch=recorder,
+                                post=recorder.post))
+        assert store.load()[1].scope is ScanScope.NAMED_HOST
+
+    def test_a_check_that_finds_nothing_is_recorded_as_a_look(self, store):
+        """M5 option C: silent after a look is not "not checked yet"."""
+        added = service.add_node("Kitchen Box", "ollama", "10.0.0.9", store)
+        recorder = Recorder(answering=set())
+        list(service.check_node(added.node_id, store, fetch=recorder,
+                                post=recorder.post))
+        nodes, _ = store.load()
+        assert nodes[0].reachable is False
+        assert nodes[0].last_probed_at is not None
+        result = service.list_nodes(store)
+        assert result.rows[0].status == "Not answering when last checked"
+        assert dict(result.summary_rows)["Agent steps can run on"] == "nothing yet"
+
+    def test_the_look_is_recorded_before_it_says_it_has_finished(self, store):
+        """``scan()``'s promise, kept by the wrapper too.
+
+        The view refreshes the cards on the closing event. Stamped after it,
+        the refresh would show "not checked yet" for a computer just checked.
+        """
+        added = service.add_node("Kitchen Box", "ollama", "10.0.0.9", store)
+        recorder = Recorder(answering=set())
+        for event in service.check_node(added.node_id, store, fetch=recorder,
+                                        post=recorder.post):
+            if event.finished:
+                assert store.load()[0][0].last_probed_at is not None
+                break
+        else:
+            pytest.fail("the check never closed")
+
+    def test_a_silent_check_says_so_in_words_that_fit(self, store):
+        """Not discovery's "You can type it in instead" -- it already was."""
+        added = service.add_node("Kitchen Box", "ollama", "10.0.0.9", store)
+        recorder = Recorder(answering=set())
+        last = list(service.check_node(added.node_id, store, fetch=recorder,
+                                       post=recorder.post))[-1]
+        assert last.message == "Nothing answered at http://10.0.0.9:11434."
+
+    def test_an_address_edited_on_a_card_is_read_like_a_typed_one(self, store):
+        """The card is the other place a person types an address (§3.8)."""
+        seed(store)
+        service.add_node("Kitchen Box", "ollama", "10.0.0.9", store)
+        assert service.update_field("kitchen-box", "url", "10.0.0.5", store).ok
+        urls = {n.node_id: n.url for n in store.load()[0]}
+        assert urls["kitchen-box"] == "http://10.0.0.5:11434"
+
+    def test_an_edited_address_collides_however_it_is_spelled(self, store):
+        seed(store)
+        service.add_node("Kitchen Box", "ollama", "10.0.0.9", store)
+        result = service.update_field("kitchen-box", "url", "localhost", store)
+        assert not result.ok
+        assert "Home PC" in result.refusal
+
+    def test_checking_something_not_stored_is_answered_not_looked_for(self, store):
+        recorder = Recorder()
+        events = list(service.check_node("nope", store, fetch=recorder,
+                                         post=recorder.post))
+        assert [(e.stage, e.finished) for e in events] == [("missing", True)]
+        assert "nope" in events[0].message
+        assert events[0].stage in service.REFUSAL_STAGES
+        assert recorder.asked == []
+
+
 class TestAddingByHand:
     def test_a_typed_computer_is_stored_and_marked_as_typed(self, store):
         assert service.add_node("Kitchen Box", "ollama",

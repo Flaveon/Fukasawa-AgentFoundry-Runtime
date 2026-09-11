@@ -142,6 +142,31 @@ class NodeStore:
         self.save(remaining, consent)
         return True
 
+    def mark_silent(self, url: str) -> bool:
+        """Record that the computer at this address was looked at and did not answer.
+
+        Discovery saves only what answers, so a look that found nothing
+        changes no record. That was harmless until the summary panel began
+        counting computers nobody has looked at (design §3.6, M5 option C):
+        without this, a computer checked and found silent would go on reading
+        "not checked yet", and be counted, after it was checked.
+
+        Two facts change: it is not answering, and when that was learned.
+        Everything else -- what the person typed, and the last models and
+        figures a look did find -- is left as it was. False when nothing is
+        stored at that address.
+        """
+        from datetime import datetime, timezone
+
+        nodes, consent = self.load()
+        for node in nodes:
+            if node.url == url:
+                node.reachable = False
+                node.last_probed_at = datetime.now(timezone.utc)
+                self.save(nodes, consent)
+                return True
+        return False
+
     def set_consent(self, consent: ScanConsent) -> None:
         """Record a new standing permission, leaving the computers alone."""
         nodes, _ = self.load()

@@ -41,8 +41,8 @@ anywhere in this branch.
 | 5 storage + registry | complete, reviewed clean |
 | 6 CLI `node` sub-app | complete, reviewed, fixed — **fix commits never reviewed** |
 | 7 GUI service layer | complete, reviewed, fixed — **fix commits never reviewed** |
-| 8 Environment tab | not started |
-| 9 doctrine tests, docs, phase note | not started |
+| 8 Environment tab | complete 2026-09-11 — **not independently reviewed**; brief at `reviews/node-and-capability/task-8-brief.md` |
+| 9 doctrine tests, docs, phase note | not started — **start here** |
 
 Then a final whole-branch review, which the plan already calls for.
 
@@ -71,8 +71,8 @@ fix commits have had no independent pass.
 > Engine support beyond Ollama and llama.cpp is planned in **design §10.1**,
 > unscheduled. 13 guards mutation-checked red. Like Tasks 6 and 7's
 > fix rounds, this has had **no independent review**; add it to the final
-> whole-branch review. **Start at item 3.** Items 1 and 2 are kept below as
-> the record of what was ruled.
+> whole-branch review. Items 1 and 2 are kept below as the record of what
+> was ruled. **Item 3, Task 8, is done too (2026-09-11) — start at Task 9.**
 
 Three things are ready to go, in the order I would do them.
 
@@ -147,6 +147,29 @@ happened.
 This is the natural companion to M8 — same file, and both are §3.7 parity.
 
 ### 3. Task 8, the Environment tab
+
+> **2026-09-11 — done, not reviewed.** Checked against source first, as this
+> section asks: the plan's Task 8 text had nine defects, recorded in
+> `reviews/node-and-capability/task-8-brief.md` — among them batching findings
+> instead of streaming them, a view import the import law forbids, and a test
+> reading the tester's real `~/.fukasawa`. Built on the corrected brief; §8 of
+> the design has an "as built" note. Screenshots under Xvfb found four more
+> things no test had: a stale findings log, a lower-case "ollama" card
+> heading, an address box detached from its choice, and "Models it can run 0"
+> for a computer nothing had contacted. All fixed, each with a test.
+>
+> **Open question for the operator:** a "Check again" on one recorded computer
+> goes through `scan()`, so it records *one named computer* as the standing
+> permission (Task 7's I6 rule), replacing whatever was there — someone who
+> chose "just this computer" and then checks their kitchen box has changed
+> their standing answer without being asked. The CLI's typed-in check does
+> the same. It is consistent, and it may not be what anybody wants; the
+> operator's "directed use needs no second permission" ruling suggests a
+> check on a recorded computer should perhaps not write the permission at
+> all. Not changed without a ruling.
+>
+> **Next: Task 9**, then the final whole-branch review, which now also covers
+> M8/I5/M5 and Task 8.
 
 **Before dispatching anybody, check the plan's Task 8 section against the
 current source.** This is not optional diligence, it is the highest-value hour
