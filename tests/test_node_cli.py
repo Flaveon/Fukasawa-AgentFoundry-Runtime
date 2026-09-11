@@ -328,8 +328,14 @@ class TestTheConsentPrompt:
         assert asked == []
 
     def test_choosing_not_to_look_looks_at_nothing(self, store_path, asked):
-        result = CliRunner().invoke(app, ["node", "scan"], input="4\n")
-        assert result.exit_code == 3, result.output
+        """A route this program offers, taken: success, and nothing contacted.
+
+        Covered fully in TestTypingItIn. This one holds the menu's side of it.
+        """
+        result = CliRunner().invoke(
+            app, ["node", "scan"], input="4\nKitchen Box\n10.0.0.9\n1\nn\n"
+        )
+        assert result.exit_code == 0, result.output
         assert asked == []
 
     def test_pressing_enter_takes_the_careful_route(self, store_path, asked):
@@ -349,6 +355,267 @@ class TestTheConsentPrompt:
         CliRunner().invoke(app, ["node", "scan"], input="2\n10.0.0.9\n")
         _nodes, consent = NodeStore(store_path).load()
         assert consent.scope is ScanScope.NAMED_HOST
+
+
+class TestTypingItIn:
+    """Menu choice 4, "Don't look — I'll type it in", as the operator ruled it.
+
+    Four rulings (M8, handoffs/phase-10a-node-and-capability-handoff.md):
+    success rather than "Refused"; a name and an address asked for and saved;
+    typing an address is NOT permission to contact it; and the opening copy
+    differs by whether anything is recorded yet.
+
+    The permission ruling is the one worth guarding hardest, so every test
+    here substitutes discovery with a recorder and says what it was asked to
+    look at. "Nothing was contacted" is checked as an empty recording, not
+    inferred from an exit code.
+    """
+
+    TYPED = "4\nKitchen Box\n10.0.0.9\n1\n"
+
+    @pytest.fixture()
+    def looked_at(self, monkeypatch):
+        """Record every look, and answer one at 10.0.0.9 with a real finding.
+
+        The finding carries a DIFFERENT id and name from the ones typed —
+        what discovery really produces, since it names what it finds after
+        the address. A stand-in reusing the typed name could not tell a merge
+        into the typed record from a second record that happens to match.
+        """
+        from src.nodes.discovery import DiscoveryEvent
+
+        calls = []
+
+        def fake(scope, host="", **kw):
+            calls.append((scope, host))
+            if host == "http://10.0.0.9:11434":
+                node = InferenceNode(
+                    node_id="ollama-10-0-0-9-11434", label="Ollama on 10.0.0.9",
+                    kind=NodeKind.OLLAMA, url=host, reachable=True,
+                    models=[ModelCapability(name="llama3.1:8b",
+                                            context_length=8192)],
+                )
+                yield DiscoveryEvent("done", "Found 1 computer.", node=node,
+                                     finished=True)
+            else:
+                yield DiscoveryEvent("done", "Found 0 computers.", finished=True)
+
+        monkeypatch.setattr("src.cli._discover", fake)
+        return calls
+
+    def test_declining_the_check_contacts_nothing_and_succeeds(
+        self, store_path, looked_at
+    ):
+        result = CliRunner().invoke(app, ["node", "scan"], input=self.TYPED + "n\n")
+        assert result.exit_code == 0, result.output
+        assert looked_at == []
+        assert "Refused" not in result.output
+
+    def test_the_check_is_not_assumed(self, store_path, looked_at):
+        """Pressing Enter at the question takes the answer that contacts nothing.
+
+        Typing an address is not permission to contact it, so the default
+        cannot be yes. Deleting ``default=False`` makes this red.
+        """
+        result = CliRunner().invoke(app, ["node", "scan"], input=self.TYPED + "\n")
+        assert result.exit_code == 0, result.output
+        assert looked_at == []
+
+    def test_what_was_typed_is_saved_unchecked(self, store_path, looked_at):
+        CliRunner().invoke(app, ["node", "scan"], input=self.TYPED + "n\n")
+        nodes, _ = NodeStore(store_path).load()
+        assert [(n.node_id, n.label, n.kind, n.url) for n in nodes] == [
+            ("kitchen-box", "Kitchen Box", NodeKind.OLLAMA,
+             "http://10.0.0.9:11434"),
+        ]
+        assert nodes[0].reachable is False
+        for field in ("label", "url", "kind"):
+            assert nodes[0].source_of(field).value == "DECLARED", field
+
+    def test_a_bare_address_gets_the_port_of_the_program_named(
+        self, store_path, looked_at
+    ):
+        CliRunner().invoke(
+            app, ["node", "scan"], input="4\nKitchen Box\n10.0.0.9\n2\nn\n"
+        )
+        nodes, _ = NodeStore(store_path).load()
+        assert (nodes[0].kind, nodes[0].url) == (
+            NodeKind.LLAMACPP, "http://10.0.0.9:8081"
+        )
+
+    def test_an_answer_off_the_list_is_asked_again_not_guessed(
+        self, store_path, looked_at
+    ):
+        """There is no careful default for which program is running.
+
+        A guess would be saved as something the person told us, and nothing
+        would ever contact the computer to correct it.
+        """
+        result = CliRunner().invoke(
+            app, ["node", "scan"], input="4\nKitchen Box\n10.0.0.9\n7\n2\nn\n"
+        )
+        assert result.exit_code == 0, result.output
+        assert "Choose 1 or 2" in result.output
+        nodes, _ = NodeStore(store_path).load()
+        assert nodes[0].kind is NodeKind.LLAMACPP
+
+    def test_a_name_given_as_a_flag_is_offered_as_the_answer(
+        self, store_path, looked_at
+    ):
+        CliRunner().invoke(
+            app, ["node", "scan", "--label", "Garage"],
+            input="4\n\n10.0.0.9\n1\nn\n",
+        )
+        nodes, _ = NodeStore(store_path).load()
+        assert nodes[0].label == "Garage"
+
+    def test_declining_leaves_the_permission_on_file_alone(
+        self, store_path, looked_at
+    ):
+        """Nothing was looked at, so no permission to look was acted under."""
+        seed(store_path)
+        CliRunner().invoke(app, ["node", "scan"], input=self.TYPED + "n\n")
+        _nodes, consent = NodeStore(store_path).load()
+        assert consent.scope is ScanScope.THIS_MACHINE
+
+    def test_saying_yes_looks_at_that_one_address_and_nothing_else(
+        self, store_path, looked_at
+    ):
+        result = CliRunner().invoke(app, ["node", "scan"], input=self.TYPED + "y\n")
+        assert result.exit_code == 0, result.output
+        assert looked_at == [(ScanScope.NAMED_HOST, "http://10.0.0.9:11434")]
+
+    def test_saying_yes_records_the_permission_it_looked_under(
+        self, store_path, looked_at
+    ):
+        """The same rule `node scan` keeps (I6): the record says what was done."""
+        seed(store_path)
+        CliRunner().invoke(app, ["node", "scan"], input=self.TYPED + "y\n")
+        _nodes, consent = NodeStore(store_path).load()
+        assert consent.scope is ScanScope.NAMED_HOST
+
+    def test_what_is_found_fills_in_the_record_that_was_typed(
+        self, store_path, looked_at
+    ):
+        """One computer, keeping what the person typed, gaining what was found.
+
+        Two failure shapes are ruled out: a second row for the same computer,
+        and the typed name overwritten by the one discovery made up.
+        """
+        result = CliRunner().invoke(app, ["node", "scan"], input=self.TYPED + "y\n")
+        nodes, _ = NodeStore(store_path).load()
+        assert len(nodes) == 1
+        assert (nodes[0].node_id, nodes[0].label) == ("kitchen-box", "Kitchen Box")
+        assert nodes[0].reachable is True
+        assert [m.name for m in nodes[0].models] == ["llama3.1:8b"]
+        assert "What this means when steps run" in result.output
+
+    def test_when_nothing_answers_the_computer_stays_saved(
+        self, store_path, looked_at
+    ):
+        result = CliRunner().invoke(
+            app, ["node", "scan"], input="4\nKitchen Box\n10.0.0.8\n1\ny\n"
+        )
+        assert result.exit_code == 0, result.output
+        assert "is still saved" in result.output
+        nodes, _ = NodeStore(store_path).load()
+        assert [n.label for n in nodes] == ["Kitchen Box"]
+
+    def test_a_computer_listed_unchecked_says_so(self, store_path, looked_at):
+        """M5, option C: typed in and not looked at, it is counted, as unchecked."""
+        runner = CliRunner()
+        runner.invoke(app, ["node", "scan"], input=self.TYPED + "n\n")
+        result = runner.invoke(app, ["node", "list"])
+        assert "Kitchen Box (not checked yet)" in result.output
+        assert "No step can be assigned" not in result.output
+
+    def test_a_look_that_finds_nothing_is_recorded_as_a_look(
+        self, store_path, looked_at
+    ):
+        """Discovery saves only what answers, so the record has to be stamped.
+
+        Without it the record would still read "not checked yet" after it was
+        checked -- and under M5 option C an unchecked computer is counted.
+        What the person typed survives the stamp.
+        """
+        runner = CliRunner()
+        runner.invoke(
+            app, ["node", "scan"], input="4\nKitchen Box\n10.0.0.8\n1\ny\n"
+        )
+        nodes, _ = NodeStore(store_path).load()
+        assert nodes[0].last_probed_at is not None
+        assert nodes[0].reachable is False
+        assert (nodes[0].label, nodes[0].source_of("label").value) == (
+            "Kitchen Box", "DECLARED"
+        )
+        listing = runner.invoke(app, ["node", "list"]).output
+        assert "not checked yet" not in listing
+
+    def test_an_address_already_recorded_is_named_and_nothing_changes(
+        self, store_path, looked_at
+    ):
+        """I5, on this path. The row there is not renamed and nothing is added.
+
+        The seeded row carries no typed provenance, which is the case that
+        used to be worst: the merge applied the typed name to it.
+        """
+        seed(store_path)
+        result = CliRunner().invoke(
+            app, ["node", "scan"], input="4\nKitchen Box\nlocalhost\n1\n"
+        )
+        assert result.exit_code == 1, result.output
+        assert "Already recorded at that address as" in result.output
+        assert "Home PC" in result.output
+        assert "May I contact it" not in result.output
+        nodes, _ = NodeStore(store_path).load()
+        assert [(n.node_id, n.label) for n in nodes] == [("home-pc", "Home PC")]
+        assert looked_at == []
+
+    def test_with_nothing_recorded_the_copy_says_so(self, store_path, looked_at):
+        result = CliRunner().invoke(app, ["node", "scan"], input=self.TYPED + "n\n")
+        assert "No computers are recorded yet." in result.output
+        assert "Recorded so far" not in result.output
+
+    def test_with_computers_recorded_the_copy_names_them(
+        self, store_path, looked_at
+    ):
+        """Somebody adding a fourth computer is not told they have none.
+
+        The menu appears whenever a scan runs without flags, however many
+        computers are recorded -- an assumption the handoff records as
+        checked and found false.
+        """
+        seed(store_path)
+        result = CliRunner().invoke(app, ["node", "scan"], input=self.TYPED + "n\n")
+        assert "Recorded so far: Home PC." in result.output
+        assert "No computers are recorded yet." not in result.output
+
+    def test_the_copy_on_an_empty_store_obeys_both_rules(
+        self, store_path, looked_at
+    ):
+        """TestCopyRules seeds a computer, so it never sees the empty branch."""
+        for answer in ("n\n", "y\n"):
+            output = CliRunner().invoke(
+                app, ["node", "scan"], input=self.TYPED + answer
+            ).output
+            assert judgements_in(output) == []
+            assert ownership_in(output) == []
+
+
+class TestRefusingToLookStaysARefusal:
+    """The other half of M8: the flag paths keep exit 3 and ask nothing."""
+
+    def test_the_flag_is_still_refused(self, store_path):
+        result = CliRunner().invoke(app, ["node", "scan", "--scope", "none", "--yes"])
+        assert result.exit_code == 3, result.output
+        assert "What should I call it?" not in result.output
+
+    def test_none_on_file_with_yes_is_still_refused(self, store_path):
+        """A bare --yes reading "none" off the file is not the menu choice."""
+        NodeStore(store_path).save([], ScanConsent.granted(ScanScope.NONE, "sam"))
+        result = CliRunner().invoke(app, ["node", "scan", "--yes"])
+        assert result.exit_code == 3, result.output
+        assert "What should I call it?" not in result.output
 
 
 class TestSkippingThePrompts:
@@ -453,9 +720,37 @@ class TestAddAndForget:
             "--url", "http://10.0.0.9:11434",
         ])
         assert result.exit_code == 0, result.output
+        # The name reported is the name stored. Nothing checked this until I5,
+        # which was precisely a report naming a computer that was not stored.
+        assert "Added Kitchen Box." in result.output
         nodes, _ = NodeStore(store_path).load()
         assert nodes[0].node_id == "kitchen-box"
         assert nodes[0].source_of("url").value == "DECLARED"
+
+    def test_adding_at_an_address_already_recorded_changes_nothing(
+        self, store_path
+    ):
+        """I5: the command used to say "Added Kitchen Box." and rename Home PC.
+
+        `upsert` matches on address and merges, which is right for a rescan.
+        The seeded row has no typed provenance -- the worst case, where the
+        typed name and program were applied to the row already there. Every
+        part of the lie is checked: the claim, the rename, the retype, and a
+        count that did not move.
+        """
+        seed(store_path)
+        result = CliRunner().invoke(app, [
+            "node", "add", "--label", "Kitchen Box", "--kind", "llamacpp",
+            "--url", "http://localhost:11434",
+        ])
+        assert result.exit_code == 1, result.output
+        assert "Added" not in result.output
+        assert "Home PC" in result.output
+        assert "fukasawa node show home-pc" in result.output
+        nodes, _ = NodeStore(store_path).load()
+        assert [(n.node_id, n.label, n.kind) for n in nodes] == [
+            ("home-pc", "Home PC", NodeKind.OLLAMA),
+        ]
 
     def test_forgetting_something_absent_is_a_user_error(self, store_path):
         result = CliRunner().invoke(app, ["node", "forget", "nope"])
@@ -643,13 +938,19 @@ class TestCopyRules:
         (["node", "consent", "--set", "local-network"], None),
         (["node", "add", "--label", "Kitchen Box", "--kind", "ollama",
           "--url", "http://10.0.0.9:11434"], None),
+        # An address already recorded: the refusal naming who holds it.
+        (["node", "add", "--label", "Kitchen Box", "--kind", "ollama",
+          "--url", "http://localhost:11434"], None),
         (["node", "forget", "home-pc"], None),
         (["node", "scan", "--scope", "this-machine", "--yes"], None),
         (["node", "scan", "--scope", "none", "--yes"], None),
         (["node", "scan", "--scope", "local-network", "--yes"], None),
         (["node", "scan"], "1\n"),
         (["node", "scan"], "3\n"),
-        (["node", "scan"], "4\n"),
+        # Choice 4 to the end, both answers to the check, and a collision.
+        (["node", "scan"], "4\nKitchen Box\n10.0.0.9\n1\nn\n"),
+        (["node", "scan"], "4\nKitchen Box\n10.0.0.9\n1\ny\n"),
+        (["node", "scan"], "4\nKitchen Box\nlocalhost\n1\n"),
     ])
     def test_no_command_judges_or_assumes_ownership(
         self, store_path, a_scan_that_finds_something, argv, typed

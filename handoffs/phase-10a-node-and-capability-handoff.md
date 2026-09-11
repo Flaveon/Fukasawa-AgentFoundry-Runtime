@@ -63,6 +63,17 @@ fix commits have had no independent pass.
 
 ## Pick up here
 
+> **2026-09-11 — items 1 and 2 are done.** M8 and I5 are implemented in
+> `src/cli.py` (`_type_it_in`, `_record_by_hand`, `_run_scan`) with a shared
+> `address_for` in `src/nodes/discovery.py`. The flow is written down for both
+> front ends as **design §3.8** — Task 8 builds the desktop side of it from
+> there. **M5 is decided (option C) and implemented too** — see M5 below.
+> Engine support beyond Ollama and llama.cpp is planned in **design §10.1**,
+> unscheduled. 13 guards mutation-checked red. Like Tasks 6 and 7's
+> fix rounds, this has had **no independent review**; add it to the final
+> whole-branch review. **Start at item 3.** Items 1 and 2 are kept below as
+> the record of what was ruled.
+
 Three things are ready to go, in the order I would do them.
 
 ### 1. M8 — the Task 6 question the operator has now answered
@@ -356,6 +367,16 @@ So the route both refusals recommend lands on a panel saying "No step can be
 assigned to an agent." This is Task 3's contract, confirmed and deliberately not
 patched by Task 7's fix round. Decide it before Task 8 renders that panel — it
 is the first thing a new user will see after following the advice.
+
+**2026-09-11 — decided: option C, and implemented.** The operator chose between
+leaving it (A), counting a typed-in computer like a scanned one (B), and
+counting it *named as unchecked* (C). In `summarise`, a computer never looked at
+(`last_probed_at` empty) is listed as "Kitchen Box (not checked yet)" and
+contributes no figures; one looked at and not answering does not count. Beside
+an unchecked computer the consequence line ends "on the computers checked so
+far". The desktop inherits it through `list_nodes`. Written into design §3.6.
+**Task 8 must stamp a look that finds nothing** the way the CLI's typed-in
+route does (§3.8), or a checked computer keeps reading "not checked yet".
 
 **Minor deferred items from Tasks 1, 3 and 5** are listed at the top of
 `handoffs/reviews/node-and-capability/ledger.md`. The final whole-branch review

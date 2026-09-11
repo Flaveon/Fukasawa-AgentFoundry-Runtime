@@ -63,6 +63,26 @@ def _normalise(host: str) -> str:
     return f"http://{host}"
 
 
+def _names_a_port(base: str) -> bool:
+    """Whether a base URL from ``_normalise`` already says which port to use."""
+    return ":" in base.split("//", 1)[1]
+
+
+def address_for(host: str, kind: NodeKind) -> str:
+    """The address a typed-in computer is recorded at, without contacting it.
+
+    What a person typed is read the same way a named-computer scan reads it: a
+    full URL, or a host that already names a port, is kept exactly as given. A
+    bare host gets the port that kind of program listens on by default, since
+    nothing has been asked which port it actually uses.
+    """
+    base = _normalise(host)
+    if _names_a_port(base):
+        return base
+    port = next(p for p, k in PORTS if k is kind)
+    return f"{base}:{port}"
+
+
 def candidate_addresses(scope: ScanScope, host: str) -> list[tuple[str, NodeKind]]:
     """Every address this permission allows, and which backend to try there.
 
@@ -76,8 +96,7 @@ def candidate_addresses(scope: ScanScope, host: str) -> list[tuple[str, NodeKind
         return [(f"http://127.0.0.1:{port}", kind) for port, kind in PORTS]
     if scope is ScanScope.NAMED_HOST:
         base = _normalise(host)
-        tail = base.split("//", 1)[1]
-        if ":" in tail:
+        if _names_a_port(base):
             return [(base, kind) for _port, kind in PORTS]
         return [(f"{base}:{port}", kind) for port, kind in PORTS]
     raise ConsentRefused(f"{scope.value} is not scannable by this function")

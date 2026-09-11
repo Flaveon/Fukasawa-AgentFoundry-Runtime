@@ -1427,16 +1427,21 @@ def node_scan(
     they arrive rather than in a block at the end, because a scan takes time
     and a person watching one deserves to see it happening.
     """
-    from src.schemas.node import ScanConsent, ScanScope
+    from src.schemas.node import ScanScope
 
     store = _node_store()
-    _nodes, existing = store.load()
+    recorded, existing = store.load()
 
+    # Set on one path only: the person answered the menu. Two different acts
+    # reach "not looking" and they are answered differently -- see the NONE
+    # branch below.
+    from_menu = False
     if scope:
         chosen = _scope_from(scope)
     elif yes:
         chosen = existing.scope
     else:
+        from_menu = True
         console.print(
             "\nFukasawa can run some workflow steps automatically, using AI\n"
             "on a computer you point it at.\n"
@@ -1456,19 +1461,16 @@ def node_scan(
         }.get(answer.strip(), ScanScope.THIS_MACHINE)
 
     if chosen is ScanScope.NONE:
-        # OPEN QUESTION — for the operator, not to be guessed at here.
-        #
-        # Two different situations end up on this line. `--scope none` is a
-        # refusal of something explicitly asked for, and exit 3 is right for
-        # it; a test holds that contract. Choice 4 on the menu — "Don't look
-        # — I'll type it in" — is not a refusal of anything. It is a person
-        # taking a route this program offers, and answering it with
-        # "Refused" and a non-zero exit describes them wrongly.
-        #
-        # Telling the two paths apart in code is easy. What the chosen route
-        # should then do is not: exit 0 pointing at `node add`, or exit 3
-        # with different words, turns on whether anything is expected to read
-        # this exit code, and nobody has said. Left as one path on purpose.
+        # Two different acts end up on this line, and the operator ruled on
+        # both (2026-08-27; handoffs/phase-10a-node-and-capability-handoff.md,
+        # M8). Choice 4 on the menu -- "Don't look -- I'll type it in" -- is a
+        # person taking a route this program offers, so it is taken: they type
+        # the computer in, it is saved, and that is success. `--scope none`,
+        # or a bare --yes reading "none" off the file, is a scan explicitly
+        # asked for with no permission to do it, and stays a refusal, exit 3.
+        if from_menu:
+            _type_it_in(store, recorded, label)
+            return
         console.print(
             "[yellow]Refused:[/yellow] no permission to look. "
             "Choose a different option, or add a computer with "
@@ -1511,6 +1513,18 @@ def node_scan(
             raise typer.Exit(1)
         host = typer.prompt("Address of the computer")
 
+    _run_scan(store, chosen, host, label=label, as_json=as_json)
+
+
+def _run_scan(store, chosen, host: str, *, label: str = "", as_json: bool = False):
+    """Record the permission, look, print each finding, save what was found.
+
+    Shared by `node scan` and by the check offered after a computer is typed
+    in, so a look taken either way records the permission it acted under and
+    is printed and saved identically. Returns the computers found.
+    """
+    from src.schemas.node import ScanConsent
+
     store.set_consent(ScanConsent.granted(chosen, "operator"))
 
     # A blank line to separate the findings from the question above them --
@@ -1551,6 +1565,135 @@ def node_scan(
     # reaches it, and the leak hides behind the success case.
     if found and not as_json:
         _render_summary(store.load()[0])
+    return found
+
+
+def _type_it_in(store, recorded, label: str) -> None:
+    """Menu choice 4: save a computer a person types in, contacting nothing.
+
+    The operator's rulings (M8, 2026-08-27), each of which this follows:
+
+    * Choosing not to look and having nothing looked at is success, exit 0.
+    * The person is asked for a name and an address, and the computer is saved.
+    * **Typing an address is not permission to contact it.** The computer is
+      saved unchecked, and looking at it is a separate question with its own
+      yes -- a look at one named computer, the same permission menu choice 2
+      asks for, not a new kind of permission. It defaults to no.
+    * The opening copy differs by whether anything is recorded yet. The menu
+      is shown whenever a scan runs without flags, so somebody with three
+      computers recorded, adding a fourth, reaches this line too.
+
+    Design §3.8 writes the same flow down for the desktop, so the two front
+    ends ask the same things in the same order.
+    """
+    from src.nodes.discovery import address_for
+    from src.schemas.node import NodeKind, ScanScope
+
+    if recorded:
+        # Labels are typed by people, so they are escaped before printing.
+        names = ", ".join(escape(n.label) for n in recorded)
+        console.print(f"\nRecorded so far: {names}.")
+        console.print("Tell me about another one and I'll save it with them.\n")
+    else:
+        console.print("\nNo computers are recorded yet.")
+        console.print("Tell me about one and I'll save it.\n")
+
+    name = typer.prompt("What should I call it?", default=label or None)
+    address = typer.prompt("Address of the computer")
+    console.print("Which is running on it?")
+    console.print("  1  Ollama")
+    console.print("  2  llama.cpp")
+    kinds = {"1": NodeKind.OLLAMA, "2": NodeKind.LLAMACPP}
+    # Asked again rather than guessed. An answer off the scan menu falls back
+    # to the careful route; there is no careful route here, only a wrong
+    # record, and nothing would ever contact the computer to correct it.
+    answer = typer.prompt("Choose", default="1").strip()
+    while answer not in kinds:
+        answer = typer.prompt("Choose 1 or 2", default="1").strip()
+    kind = kinds[answer]
+
+    url = address_for(address, kind)
+    node = _record_by_hand(store, name, kind, url)
+    console.print(
+        f"\nSaved [bold]{escape(node.label)}[/bold] at {escape(url)}.",
+        soft_wrap=True,
+    )
+    console.print("Nothing has contacted it, so what it can run is not known yet.")
+
+    if not typer.confirm(
+        "May I contact it now to see what it can run? Nothing else is contacted.",
+        default=False,
+    ):
+        # No summary panel on this path. Every figure on it comes from
+        # contact, so with none made each would read "not sure" -- which the
+        # line printed just above already says in one sentence. The panel
+        # does count this computer, as "not checked yet" (M5, option C), and
+        # `node list` shows it.
+        console.print(
+            "To check it later, run [cyan]fukasawa node scan --scope "
+            f"named-host --host {escape(url)}[/cyan].",
+            soft_wrap=True,
+        )
+        return
+
+    # The typed-in record is already saved at this address, and a look saves
+    # by address, so what is found fills in the same record. What the person
+    # typed -- the name, the address, the program -- is kept over anything
+    # detected (NodeStore.upsert).
+    found = _run_scan(store, ScanScope.NAMED_HOST, url)
+    if not any(n.url == url for n in found):
+        # Discovery saves only what answers, so a look that found nothing
+        # would leave the record reading "not checked yet" -- no longer true,
+        # and the summary panel counts unchecked computers (M5, option C).
+        # Stamp it as looked at and not answering. What the person typed is
+        # kept, since the store never overwrites a typed value.
+        from datetime import datetime, timezone
+
+        store.upsert(node.model_copy(update={
+            "reachable": False, "last_probed_at": datetime.now(timezone.utc),
+        }))
+        console.print(
+            f"\nNothing answered. {escape(node.label)} is still saved. "
+            f"To check it again, run "
+            f"[cyan]fukasawa node scan --scope named-host --host "
+            f"{escape(url)}[/cyan].",
+            soft_wrap=True,
+        )
+
+
+def _record_by_hand(store, label: str, kind, url: str):
+    """Save a computer a person typed in, or exit 1 if its address is taken.
+
+    Reads before writing, because `NodeStore.upsert` matches on address and
+    merges -- right for a rescan, wrong for somebody typing a computer in.
+    Merging kept the existing row's id and applied the typed name and program
+    to it, so "Added Kitchen Box." was printed while nothing was added and the
+    computer already there was silently renamed. The desktop's `add_node`
+    refuses the same way (review finding I5).
+
+    Exit 1, not 3: nothing is refused as a matter of doctrine, the request
+    collides with a record, like a name that does not exist elsewhere here.
+    """
+    from src.schemas.node import InferenceNode, Provenance, slugify
+
+    clash = next((n for n in store.load()[0] if n.url == url), None)
+    if clash is not None:
+        console.print(
+            f"[yellow]Already recorded at that address as "
+            f"[bold]{escape(clash.label)}[/bold].[/yellow] Nothing was added.\n"
+            f"To see it, run [cyan]fukasawa node show "
+            f"{escape(clash.node_id)}[/cyan].",
+            soft_wrap=True,
+        )
+        raise typer.Exit(1)
+    return store.upsert(InferenceNode(
+        node_id=slugify(label), label=label, kind=kind, url=url,
+        provenance={
+            "label": Provenance.DECLARED,
+            "url": Provenance.DECLARED,
+            "kind": Provenance.DECLARED,
+        },
+    ))
 
 
 @node_app.command("list")
@@ -1613,22 +1756,14 @@ def node_add(
     url: str = typer.Option(..., "--url", help="Base URL it answers on."),
 ) -> None:
     """Add a computer by hand, without looking for it."""
-    from src.schemas.node import InferenceNode, NodeKind, Provenance, slugify
+    from src.schemas.node import NodeKind
 
     if kind not in {k.value for k in NodeKind}:
         console.print(f"[red]'{escape(kind)}' is not one of: ollama, llamacpp[/red]")
         raise typer.Exit(1)
 
-    node = InferenceNode(
-        node_id=slugify(label), label=label, kind=NodeKind(kind), url=url,
-        provenance={
-            "label": Provenance.DECLARED,
-            "url": Provenance.DECLARED,
-            "kind": Provenance.DECLARED,
-        },
-    )
-    _node_store().upsert(node)
-    console.print(f"Added [bold]{escape(label)}[/bold].")
+    node = _record_by_hand(_node_store(), label, NodeKind(kind), url)
+    console.print(f"Added [bold]{escape(node.label)}[/bold].")
 
 
 @node_app.command("forget")

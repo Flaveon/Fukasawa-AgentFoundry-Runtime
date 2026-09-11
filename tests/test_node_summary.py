@@ -7,6 +7,8 @@ is that a validator states what is wrong and lets a person judge; these tests
 hold the same line for the environment screen.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 
 from src.nodes.summary import (
@@ -103,9 +105,77 @@ class TestSummary:
             "promotion and export do not require a computer."
         )
 
-    def test_an_unreachable_computer_counts_as_nothing(self):
-        summary = summarise([node(reachable=False)])
+    def test_a_computer_checked_and_not_answering_counts_as_nothing(self):
+        summary = summarise([node(reachable=False, last_probed_at=LOOKED_AT)])
         assert "No step can be assigned" in summary.consequence
+
+
+#: When a look happened. Its presence is what tells "checked, not answering"
+#: apart from "never checked" -- reachable is False for both.
+LOOKED_AT = datetime(2026, 9, 11, tzinfo=timezone.utc)
+
+
+def typed_in(**kw) -> InferenceNode:
+    """A computer somebody typed in and nothing has contacted: no figures."""
+    base = dict(node_id="kitchen-box", label="Kitchen Box", kind=NodeKind.OLLAMA,
+                url="http://10.0.0.9:11434")
+    base.update(kw)
+    return InferenceNode(**base)
+
+
+class TestUncheckedComputers:
+    """M5, option C (operator, 2026-09-11): a typed-in computer counts.
+
+    The route both "can't look" answers recommend is typing a computer in, and
+    it used to land on a panel saying no step could be assigned to an agent.
+    Recording a computer is what makes it one agent steps may run on, so it is
+    listed -- and named as unchecked, because nothing is known about it.
+    """
+
+    def test_it_is_listed_and_named_as_unchecked(self):
+        rows = {r.label: r.value for r in summarise([typed_in()]).rows}
+        assert rows["Agent steps can run on"] == "Kitchen Box (not checked yet)"
+
+    def test_it_is_not_answered_with_nothing_can_run(self):
+        assert "No step can be assigned" not in summarise([typed_in()]).consequence
+
+    def test_it_contributes_no_figures_and_no_consequence(self):
+        """Nothing was measured, so every figure is "not sure" and no
+        consequence follows arithmetically from nothing."""
+        summary = summarise([typed_in()])
+        rows = {r.label: r.value for r in summary.rows}
+        assert rows["Longest input any model takes"] == "not sure"
+        assert rows["Measured speed"] == "not sure"
+        assert rows["Graphics card"] == "not sure"
+        assert summary.consequence == ""
+
+    def test_beside_a_reached_computer_both_are_listed(self):
+        rows = {r.label: r.value for r in summarise([node(), typed_in()]).rows}
+        assert rows["Agent steps can run on"] == (
+            "Home PC, Kitchen Box (not checked yet)"
+        )
+
+    def test_the_figures_still_come_from_what_was_reached(self):
+        rows = {r.label: r.value for r in summarise([node(), typed_in()]).rows}
+        assert "8,192 tokens" in rows["Longest input any model takes"]
+
+    def test_the_consequence_claims_nothing_about_the_unchecked_one(self):
+        """The unchecked computer might take a longer input than any reached
+        one, so "these computers" would claim something about a machine nobody
+        has looked at. The sentence says where the figure came from."""
+        summary = summarise([node(), typed_in()])
+        assert summary.consequence == (
+            "A step needing more than about 6,100 words of input is likely "
+            "to fail on the computers checked so far."
+        )
+
+    def test_with_every_computer_reached_the_approved_sentence_is_unchanged(self):
+        """§3.6's copy stands when there is nothing unchecked to hedge about,
+        including beside a computer that was checked and did not answer."""
+        summary = summarise(
+            [node(), typed_in(reachable=False, last_probed_at=LOOKED_AT)]
+        )
+        assert summary.consequence.endswith("likely to fail on these computers.")
 
     def test_no_graphics_card_is_stated_not_predicted(self):
         summary = summarise([node(host=HostCapability(gpu_present=False))])
@@ -131,6 +201,8 @@ class TestCopyRules:
         [],
         [node()],
         [node(reachable=False)],
+        [node(reachable=False, last_probed_at=LOOKED_AT)],
+        [node(), typed_in()],
         [node(host=HostCapability(gpu_present=False))],
         [node(host=HostCapability(gpu_present=None))],
         [node(models=[ModelCapability(name="m")])],

@@ -155,6 +155,21 @@ class TestListing:
         assert "Agent steps can run on" in labels
         assert dict(result.summary_rows)["Agent steps can run on"] == "Home PC"
 
+    def test_a_computer_added_by_hand_is_counted_not_a_dead_end(self, store):
+        """M5, option C, on the desktop's side -- the same panel as the CLI's.
+
+        The route this tab recommends when it cannot look is adding a computer
+        by hand, and the panel used to answer that with "No step can be
+        assigned to an agent."
+        """
+        assert service.add_node("Kitchen Box", "ollama",
+                                "http://10.0.0.9:11434", store).ok
+        result = service.list_nodes(store)
+        assert dict(result.summary_rows)["Agent steps can run on"] == (
+            "Kitchen Box (not checked yet)"
+        )
+        assert "No step can be assigned" not in result.consequence
+
 
 class TestEditing:
     def test_editing_a_field_marks_it_as_typed(self, store):
