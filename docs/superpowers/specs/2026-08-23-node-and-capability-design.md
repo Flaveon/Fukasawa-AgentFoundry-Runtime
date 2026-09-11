@@ -680,6 +680,32 @@ automatically.
 Screens are §3.2–§3.6. The card is built once and its rows updated as events
 arrive.
 
+**As built (Task 8, 2026-09-11).** Three panes, one shown at a time:
+*home* (§3.2 when empty; otherwise a §3.5 card per computer, the §3.6 panel,
+**Look for more** / **Add one by hand**, and a findings log above the cards
+while a look runs), *permission* (§3.3, with the address box directly under
+the choice it belongs to), and *typed-in* (§3.8). Where it differs from the
+mockups above, deliberately:
+
+- **The card is rebuilt when a look closes**, not updated row by row. Findings
+  stream into the log one at a time (§3.4); the card appears once the look has
+  recorded what it found. Each card carries a status line — *not checked yet*,
+  *answering when last checked*, *not answering when last checked* — because
+  the §3.6 panel counts the first and not the third.
+- **Forget** is on the card, and takes a second press.
+- **Looks right** puts the findings log away. Nothing needs confirming to be
+  kept: a look saves what it finds before it says it has finished.
+- **No spinner** on the pending row. An attempt is marked `…` instead of §3.4's
+  tick, since it is not yet a finding.
+- **Nothing can be changed while a look runs.** Every handler that writes
+  refuses and says so, and the buttons that reach them are disabled — the
+  store has no lock, and a look writes it from the worker thread.
+- **Nothing is read while the window is built.** The tab reads what is
+  recorded when it is opened.
+
+Brief and corrections to the plan's Task 8 section:
+`handoffs/reviews/node-and-capability/task-8-brief.md`.
+
 ## 9. Testing
 
 **Permission is the privacy promise, so it is tested, not trusted.**

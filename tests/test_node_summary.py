@@ -169,6 +169,22 @@ class TestUncheckedComputers:
             "to fail on the computers checked so far."
         )
 
+    def test_its_model_count_is_not_sure_rather_than_zero(self):
+        """Found by looking at the card: "Models it can run  0" for a
+        computer nothing has contacted claims it runs nothing (§3.1.1)."""
+        from src.nodes.summary import model_count
+
+        assert model_count(typed_in()) == "not sure"
+
+    def test_a_reached_computer_with_no_models_really_has_none(self):
+        """The other side: zero is a fact once a look has listed them."""
+        from src.nodes.summary import model_count
+
+        assert model_count(node(models=[])) == "0"
+        assert model_count(
+            typed_in(reachable=False, last_probed_at=LOOKED_AT)
+        ) == "0"
+
     def test_with_every_computer_reached_the_approved_sentence_is_unchanged(self):
         """§3.6's copy stands when there is nothing unchecked to hedge about,
         including beside a computer that was checked and did not answer."""

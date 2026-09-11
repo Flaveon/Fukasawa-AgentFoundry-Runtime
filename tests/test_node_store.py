@@ -114,6 +114,37 @@ class TestUpsert:
         assert store.forget("nope") is False
 
 
+class TestMarkSilent:
+    """A look that found nothing, recorded on the computer that was looked at."""
+
+    def test_the_computer_reads_as_looked_at_and_not_answering(self, store):
+        store.save([node()], ScanConsent.granted(ScanScope.THIS_MACHINE, "sam"))
+        assert store.mark_silent("http://localhost:11434") is True
+        stored = store.load()[0][0]
+        assert stored.reachable is False
+        assert stored.last_probed_at is not None
+
+    def test_what_was_typed_and_found_is_kept(self, store):
+        """Only the two facts a silent look established change."""
+        store.save([node(
+            label="Home PC",
+            models=[ModelCapability(name="llama3.1:8b", context_length=8192)],
+            provenance={"label": Provenance.DECLARED},
+        )], ScanConsent.granted(ScanScope.THIS_MACHINE, "sam"))
+        store.mark_silent("http://localhost:11434")
+        stored, consent = store.load()
+        assert stored[0].label == "Home PC"
+        assert stored[0].source_of("label") is Provenance.DECLARED
+        assert [m.name for m in stored[0].models] == ["llama3.1:8b"]
+        assert consent.scope is ScanScope.THIS_MACHINE
+
+    def test_nothing_at_that_address_changes_nothing(self, store):
+        store.save([node()], ScanConsent())
+        before = store.path.read_text()
+        assert store.mark_silent("http://10.0.0.9:11434") is False
+        assert store.path.read_text() == before
+
+
 class TestNodeIdCollision:
     def test_two_different_computers_with_the_same_id_both_survive(self, store):
         # Discovery derives an id from host:port alone before this fix's

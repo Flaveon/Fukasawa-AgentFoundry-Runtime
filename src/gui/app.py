@@ -2,10 +2,11 @@
 # Copyright (C) 2026 ConcordiaPax LLC
 """Fukasawa desktop app — the non-technical front door.
 
-Two tasks, two tabs: **Validate a Brief** and **Build a Workflow**. Both are
-thin views over src/gui/services.py — every decision, gate, and message lives
-there, so this file only wires widgets to functions and renders their
-results. The runtime remains fully usable without ever opening this window.
+Four tabs: the **Workflow** lifecycle, **Validate Brief**, **Build Workflow**,
+and **Environment** — which computers can run agent steps. All are thin views
+over `src/gui/services` — every decision, gate, and message lives there, so
+this file only wires widgets to functions and renders their results. The
+runtime remains fully usable without ever opening this window.
 
 The window constructs without entering the event loop, and the button
 handlers are plain methods that read the entry fields — so the app can be
@@ -18,6 +19,7 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 from src.gui.services import BriefValidation, BuildOutcome, build_workflow, validate_brief_file
+from src.gui.environment_views import EnvironmentTab
 from src.gui.workflow_views import WorkflowTab
 
 #: Brand palette (BRAND.md): primary purple, secondary pink.
@@ -52,16 +54,33 @@ class FukasawaApp(ctk.CTk):
             text_color=SECONDARY,
         ).pack(pady=(0, 10))
 
-        self.tabs = ctk.CTkTabview(self, fg_color=("gray92", "gray14"))
+        self.tabs = ctk.CTkTabview(
+            self, fg_color=("gray92", "gray14"), command=self._on_tab_change
+        )
         self.tabs.pack(fill="both", expand=True, padx=16, pady=(0, 16))
         self.tabs.add("Workflow")
         self.tabs.add("Validate Brief")
         self.tabs.add("Build Workflow")
+        self.tabs.add("Environment")
         # The lifecycle tab comes first: a brief is what the lifecycle
         # produces, so validating and building one are the later steps.
         self.workflow_tab = WorkflowTab(self.tabs.tab("Workflow"))
         self._build_validate_tab(self.tabs.tab("Validate Brief"))
         self._build_build_tab(self.tabs.tab("Build Workflow"))
+        # Last: which computers can run agent steps. Nothing in the lifecycle
+        # needs one, so it is not in the way of anything before it.
+        self.environment_tab = EnvironmentTab(self.tabs.tab("Environment"))
+
+    def _on_tab_change(self) -> None:
+        """Read the computers when the Environment tab is opened, not before.
+
+        The window builds every tab at start-up, and what is recorded lives in
+        somebody's own home directory. Reading it only when the tab is looked
+        at keeps start-up from touching it, and shows what is current each
+        time rather than what was there when the window opened.
+        """
+        if self.tabs.get() == "Environment":
+            self.environment_tab.refresh()
 
     # -------------------------------------------------------------- widgets
 

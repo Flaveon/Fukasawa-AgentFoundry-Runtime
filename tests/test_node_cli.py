@@ -459,6 +459,10 @@ class TestTypingItIn:
         )
         assert result.exit_code == 0, result.output
         assert "is still saved" in result.output
+        # The same closing words as the desktop's check, not discovery's
+        # suggestion to type in a computer that was just typed in.
+        assert "Nothing answered at http://10.0.0.8:11434." in result.output
+        assert "type it in instead" not in result.output
         nodes, _ = NodeStore(store_path).load()
         assert [n.label for n in nodes] == ["Kitchen Box"]
 

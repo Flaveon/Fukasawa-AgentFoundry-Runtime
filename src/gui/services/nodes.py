@@ -41,21 +41,28 @@ rather than fixed, so the next person to wire a screen to these functions
 knows the rule before finding out the hard way.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Iterator, Optional
 
 import yaml
 
 from src.gui.services.workflow import Outcome
-from src.nodes.discovery import discover
+from src.nodes.discovery import address_for, discover
 from src.nodes.store import NodeStore
 from src.nodes.summary import (
+    KIND_WORDS,
+    MAY_I_CONTACT,
+    NOT_CONTACTED,
     human_bytes,
     human_rate,
     human_words,
+    model_count,
+    nothing_answered,
     source_label,
+    status_of,
     summarise,
+    typed_in_opening,
 )
 from src.schemas.node import (
     InferenceNode,
@@ -85,8 +92,29 @@ EDITABLE = ("label", "url", "kind")
 #:
 #: ``store`` is on the list although it is not a refusal on doctrine: the file
 #: cannot be used, which stops the scan the same way and needs the same
-#: treatment. The other three decline before anything is opened.
-REFUSAL_STAGES = frozenset({"permission", "not-built", "address", "store"})
+#: treatment. ``missing`` is ``check_node`` asked about a computer that is not
+#: stored. The others decline before anything is opened.
+REFUSAL_STAGES = frozenset({"permission", "not-built", "address", "store", "missing"})
+
+#: Design §3.3's four answers to "Where should I look?", in its order and its
+#: words, with the reach each one grants. Here rather than in the view for two
+#: reasons: the view may not import the schema that defines the reach
+#: (ADR-007 §2), and the copy rules are tested against what the services say.
+SCAN_CHOICES: tuple[tuple[ScanScope, str, str], ...] = (
+    (ScanScope.THIS_MACHINE, "Just this computer",
+     "I'll check whether AI is running here. Nothing leaves this machine."),
+    (ScanScope.NAMED_HOST, "A computer I'll name",
+     "You give me its address; I check that one only."),
+    (ScanScope.LOCAL_NETWORK, "Every computer on this network",
+     "I'll look at other computers on the same network. Takes about a "
+     "minute. Some workplaces don't allow this — check first."),
+    (ScanScope.NONE, "Don't look at anything", "I'll type it in myself."),
+)
+
+#: Which programs can be typed in, as ``(value add_node takes, name shown)``.
+KIND_CHOICES: tuple[tuple[str, str], ...] = tuple(
+    (kind.value, words) for kind, words in KIND_WORDS.items()
+)
 
 #: The answer to a whole-network sweep, which the design names (§3.3) and this
 #: phase does not build. Written once so the two callers cannot drift apart.
@@ -122,6 +150,23 @@ class NodeRowView:
     label: str
     url: str
     fields: list[FieldView] = field(default_factory=list)
+    #: Not checked yet / answering / not answering when last checked. The
+    #: panel counts the first and not the third (design §3.6), so the card
+    #: has to say which one a computer is, or the panel reads as arbitrary.
+    status: str = ""
+
+
+@dataclass
+class AddResult(Outcome):
+    """What `add_node` did, with the record it made.
+
+    The id and the address are the stored ones, which the view needs in order
+    to offer the §3.8 check: the address is normalised before it is saved,
+    and an id already taken gets a suffix, so neither is what was typed.
+    """
+
+    node_id: str = ""
+    url: str = ""
 
 
 @dataclass
@@ -204,12 +249,13 @@ def _row(node: InferenceNode) -> NodeRowView:
         node_id=node.node_id,
         label=node.label,
         url=node.url,
+        status=status_of(node),
         fields=[
             FieldView("label", "Call it", node.label,
                       source_label(node.source_of("label")), editable=True),
             FieldView("url", "Address", node.url,
                       source_label(node.source_of("url")), editable=True),
-            FieldView("models", "Models it can run", str(len(node.models)),
+            FieldView("models", "Models it can run", model_count(node),
                       source_label(node.source_of("models"))),
             FieldView("context", "Longest input",
                       human_words(node.max_context_length),
@@ -387,16 +433,25 @@ def scan(
 
 def add_node(
     label: str, kind: str, url: str, store: Optional[NodeStore] = None
-) -> Outcome:
-    """Add a computer by hand. Every field is marked as typed."""
+) -> AddResult:
+    """Add a computer by hand. Every field is marked as typed.
+
+    ``url`` may be what a person typed into an address box -- ``10.0.0.9`` as
+    readily as a full URL -- and is read the way the terminal reads it
+    (``address_for``, design §3.8): a bare host gets that program's usual
+    port, anything naming a port is kept. That happens **before** the check
+    for an address already recorded, or ``10.0.0.9`` and
+    ``http://10.0.0.9:11434`` would pass as two different computers.
+    """
     if not label.strip() or not url.strip():
-        return Outcome(ok=False, summary="Missing details", refusal=NEEDS_BOTH)
+        return AddResult(ok=False, summary="Missing details", refusal=NEEDS_BOTH)
     if kind not in {k.value for k in NodeKind}:
-        return Outcome(
+        return AddResult(
             ok=False,
             summary="Unknown kind",
             refusal=f"'{kind}' is not one of: {', '.join(k.value for k in NodeKind)}",
         )
+    url = address_for(url, NodeKind(kind))
     target = _store(store)
     try:
         # Read before writing, because `upsert` matches on URL and would
@@ -408,12 +463,12 @@ def add_node(
         stored, _consent = target.load()
         clash = next((n for n in stored if n.url == url), None)
         if clash is not None:
-            return Outcome(
+            return AddResult(
                 ok=False, summary="Address already recorded",
                 refusal=f"Already recorded at that address as '{clash.label}'. "
                         f"Edit that computer to change what it is called.",
             )
-        target.upsert(InferenceNode(
+        stored = target.upsert(InferenceNode(
             node_id=slugify(label), label=label, kind=NodeKind(kind), url=url,
             provenance={
                 "label": Provenance.DECLARED,
@@ -422,9 +477,67 @@ def add_node(
             },
         ))
     except (OSError, yaml.YAMLError, ValueError) as exc:
-        return Outcome(ok=False, summary=UNUSABLE_FILE,
-                       refusal=_unusable(target.path, exc))
-    return Outcome(ok=True, summary=f"Added {label}.")
+        return AddResult(ok=False, summary=UNUSABLE_FILE,
+                         refusal=_unusable(target.path, exc))
+    return AddResult(ok=True, summary=f"Added {label}.",
+                     node_id=stored.node_id, url=stored.url)
+
+
+def check_node(
+    node_id: str,
+    store: Optional[NodeStore] = None,
+    actor: str = "operator",
+    fetch=None,
+    post=None,
+) -> Iterator[ScanEventView]:
+    """Look at one recorded computer, at its recorded address, and say what was found.
+
+    Design §3.5's "Check again", and §3.8's check after typing a computer in.
+    It is a look at one named computer, so it goes through ``scan()`` at that
+    reach and inherits everything ``scan()`` promises: the permission it acts
+    under is recorded, both network verbs are forwarded, and what answers is
+    saved before the closing event.
+
+    One thing ``scan()`` cannot do: discovery saves only what answers, so a
+    look that found nothing changes no record, and a computer never looked at
+    would go on reading "not checked yet" after it was checked -- which the
+    panel counts (M5, option C). So when the look closes without having
+    refreshed this computer, it is marked silent, **before** the closing event
+    is yielded, keeping ``scan()``'s rule that a finished look has already
+    recorded what it learned. "Refreshed" is read from the record rather than
+    from the events: a look that reached it stamps ``last_probed_at``.
+    """
+    target = _store(store)
+    try:
+        nodes, _consent = target.load()
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        yield ScanEventView(stage="store", message=_unusable(target.path, exc),
+                            ok=False, finished=True)
+        return
+    match = next((n for n in nodes if n.node_id == node_id), None)
+    if match is None:
+        yield ScanEventView(stage="missing",
+                            message=f"Nothing stored called '{node_id}'.",
+                            ok=False, finished=True)
+        return
+
+    before = match.last_probed_at
+    for event in scan(ScanScope.NAMED_HOST, match.url, store=target,
+                      actor=actor, fetch=fetch, post=post):
+        if event.finished and event.stage not in REFUSAL_STAGES:
+            try:
+                after = next(
+                    (n for n in target.load()[0] if n.url == match.url), None
+                )
+                if after is not None and after.last_probed_at == before:
+                    target.mark_silent(match.url)
+                    event = replace(event, message=nothing_answered(match.url))
+            except (OSError, yaml.YAMLError, ValueError) as exc:
+                yield ScanEventView(stage="store",
+                                    message=_unusable(target.path, exc),
+                                    ok=False, finished=True)
+                return
+        yield event
 
 
 def forget_node(node_id: str, store: Optional[NodeStore] = None) -> Outcome:
@@ -475,6 +588,11 @@ def update_field(
     if field_name in ("label", "url") and not value.strip():
         return Outcome(ok=False, summary="Missing details", refusal=NEEDS_BOTH)
     if field_name == "url":
+        # Read the way a typed-in address is read (§3.8), and before the
+        # comparison below -- a card is the other place a person types an
+        # address, and "10.0.0.9" must collide with the computer stored at
+        # "http://10.0.0.9:11434", not slip past it as a different string.
+        value = address_for(value, match.kind)
         # `store.py` states the invariant -- two computers may never share a
         # URL -- but enforces it inside `upsert`, which this path does not go
         # through. Two rows at one address survive until the next scan, which

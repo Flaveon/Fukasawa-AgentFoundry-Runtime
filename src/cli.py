@@ -1516,12 +1516,19 @@ def node_scan(
     _run_scan(store, chosen, host, label=label, as_json=as_json)
 
 
-def _run_scan(store, chosen, host: str, *, label: str = "", as_json: bool = False):
+def _run_scan(
+    store, chosen, host: str, *, label: str = "", as_json: bool = False,
+    on_nothing: str = "",
+):
     """Record the permission, look, print each finding, save what was found.
 
     Shared by `node scan` and by the check offered after a computer is typed
     in, so a look taken either way records the permission it acted under and
     is printed and saved identically. Returns the computers found.
+
+    ``on_nothing`` replaces the closing line when nothing answered. Discovery's
+    own suggests typing a computer in, which is wrong for a check on one that
+    was just typed in; the desktop's check replaces it with the same words.
     """
     from src.schemas.node import ScanConsent
 
@@ -1535,6 +1542,9 @@ def _run_scan(store, chosen, host: str, *, label: str = "", as_json: bool = Fals
         console.print("")
     found = []
     for event in _discover(chosen, host):
+        message = event.message
+        if on_nothing and event.finished and not found:
+            message = on_nothing
         if as_json:
             # A plain print, not console.print: Rich wraps to the window and
             # would split a message in two. Not `_emit_json` either — that
@@ -1542,14 +1552,14 @@ def _run_scan(store, chosen, host: str, *, label: str = "", as_json: bool = Fals
             # this a stream of one object per line. So: dumped flat, printed
             # raw. NOTE: src/cli.py imports the json module as `jsonlib`.
             print(jsonlib.dumps({
-                "stage": event.stage, "message": event.message,
+                "stage": event.stage, "message": message,
                 "ok": event.ok, "finished": event.finished,
             }))
         else:
             mark = "  [green]OK[/green]" if event.ok else "  [yellow]--[/yellow]"
             # A finding quotes model names read off another computer, so the
             # text is not ours and is escaped before it is printed.
-            console.print(f"{mark}  {escape(event.message)}")
+            console.print(f"{mark}  {escape(message)}")
         if event.node is not None and event.node not in found:
             found.append(event.node)
 
@@ -1587,23 +1597,28 @@ def _type_it_in(store, recorded, label: str) -> None:
     ends ask the same things in the same order.
     """
     from src.nodes.discovery import address_for
-    from src.schemas.node import NodeKind, ScanScope
+    from src.nodes.summary import (
+        KIND_WORDS,
+        MAY_I_CONTACT,
+        NOT_CONTACTED,
+        nothing_answered,
+        typed_in_opening,
+    )
+    from src.schemas.node import ScanScope
 
-    if recorded:
-        # Labels are typed by people, so they are escaped before printing.
-        names = ", ".join(escape(n.label) for n in recorded)
-        console.print(f"\nRecorded so far: {names}.")
-        console.print("Tell me about another one and I'll save it with them.\n")
-    else:
-        console.print("\nNo computers are recorded yet.")
-        console.print("Tell me about one and I'll save it.\n")
+    # The words are shared with the desktop (src/nodes/summary.py), so the two
+    # front ends cannot drift. The first line quotes labels people typed, so
+    # it is escaped before printing.
+    first, second = typed_in_opening([n.label for n in recorded])
+    console.print(f"\n{escape(first)}")
+    console.print(f"{second}\n")
 
     name = typer.prompt("What should I call it?", default=label or None)
     address = typer.prompt("Address of the computer")
     console.print("Which is running on it?")
-    console.print("  1  Ollama")
-    console.print("  2  llama.cpp")
-    kinds = {"1": NodeKind.OLLAMA, "2": NodeKind.LLAMACPP}
+    kinds = {str(i): kind for i, kind in enumerate(KIND_WORDS, start=1)}
+    for number, kind in kinds.items():
+        console.print(f"  {number}  {KIND_WORDS[kind]}")
     # Asked again rather than guessed. An answer off the scan menu falls back
     # to the careful route; there is no careful route here, only a wrong
     # record, and nothing would ever contact the computer to correct it.
@@ -1618,12 +1633,9 @@ def _type_it_in(store, recorded, label: str) -> None:
         f"\nSaved [bold]{escape(node.label)}[/bold] at {escape(url)}.",
         soft_wrap=True,
     )
-    console.print("Nothing has contacted it, so what it can run is not known yet.")
+    console.print(NOT_CONTACTED)
 
-    if not typer.confirm(
-        "May I contact it now to see what it can run? Nothing else is contacted.",
-        default=False,
-    ):
+    if not typer.confirm(MAY_I_CONTACT, default=False):
         # No summary panel on this path. Every figure on it comes from
         # contact, so with none made each would read "not sure" -- which the
         # line printed just above already says in one sentence. The panel
@@ -1640,21 +1652,17 @@ def _type_it_in(store, recorded, label: str) -> None:
     # by address, so what is found fills in the same record. What the person
     # typed -- the name, the address, the program -- is kept over anything
     # detected (NodeStore.upsert).
-    found = _run_scan(store, ScanScope.NAMED_HOST, url)
+    found = _run_scan(store, ScanScope.NAMED_HOST, url,
+                      on_nothing=nothing_answered(url))
     if not any(n.url == url for n in found):
         # Discovery saves only what answers, so a look that found nothing
         # would leave the record reading "not checked yet" -- no longer true,
         # and the summary panel counts unchecked computers (M5, option C).
-        # Stamp it as looked at and not answering. What the person typed is
-        # kept, since the store never overwrites a typed value.
-        from datetime import datetime, timezone
-
-        store.upsert(node.model_copy(update={
-            "reachable": False, "last_probed_at": datetime.now(timezone.utc),
-        }))
+        # Stamp it as looked at and not answering -- the same call the
+        # desktop's check makes, so the two cannot record it differently.
+        store.mark_silent(url)
         console.print(
-            f"\nNothing answered. {escape(node.label)} is still saved. "
-            f"To check it again, run "
+            f"\n{escape(node.label)} is still saved. To check it again, run "
             f"[cyan]fukasawa node scan --scope named-host --host "
             f"{escape(url)}[/cyan].",
             soft_wrap=True,
@@ -1706,7 +1714,7 @@ def node_list(
         _emit_json({"nodes": [n.model_dump(mode="json") for n in nodes]})
         return
 
-    from src.nodes.summary import human_words, source_label
+    from src.nodes.summary import human_words, model_count, source_label
 
     for node in nodes:
         # Label and address are both typed by a person; escape() keeps a
@@ -1714,7 +1722,7 @@ def node_list(
         console.print(
             f"\n[bold]{escape(node.label)}[/bold]  [dim]{escape(node.url)}[/dim]"
         )
-        console.print(f"  Models it can run    {len(node.models)}")
+        console.print(f"  Models it can run    {model_count(node)}")
         if node.max_context_length:
             console.print(
                 f"  Longest input        {human_words(node.max_context_length)}"
