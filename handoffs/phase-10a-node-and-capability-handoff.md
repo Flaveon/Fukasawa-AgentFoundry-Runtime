@@ -42,7 +42,12 @@ anywhere in this branch.
 | 6 CLI `node` sub-app | complete, reviewed, fixed — **fix commits never reviewed** |
 | 7 GUI service layer | complete, reviewed, fixed — **fix commits never reviewed** |
 | 8 Environment tab | complete 2026-09-11 — **not independently reviewed**; brief at `reviews/node-and-capability/task-8-brief.md` |
-| 9 doctrine tests, docs, phase note | not started — **start here** |
+| 9 doctrine tests, docs, phase note | complete 2026-09-11 — **not independently reviewed**; brief at `reviews/node-and-capability/task-9-brief.md`, note at `implementation/phase-10a-node-capability-completion-note.md` |
+
+**All nine tasks are done (2026-09-11). Next: the Opus review over the whole
+branch, `3d81d36..main`, which the operator scheduled for after Task 9.** Task
+9 found and fixed a gap in the phase itself — recorded computers were never
+wired into the runtime's endpoints — so the review should read that fix too.
 
 Then a final whole-branch review, which the plan already calls for.
 

@@ -14,16 +14,36 @@ fukasawa gui
 The desktop is optional forever. If `customtkinter` is not installed the
 command says so and the rest of the runtime is unaffected.
 
-## The three tabs
+## The four tabs
 
 | Tab | For |
 |---|---|
 | **Workflow** | The lifecycle: capture → validate → promote → assess → assign → export |
 | **Validate Brief** | Check a finished brief file on its own |
 | **Build Workflow** | Generate agent packages from an approved brief |
+| **Environment** | Which computers can run agent steps — see below |
 
-Workflow comes first because a brief is what the lifecycle *produces*; the other
-two tabs act on one you already have.
+Workflow comes first because a brief is what the lifecycle *produces*; the next
+two tabs act on one you already have. Environment comes last because nothing
+before it needs a computer.
+
+## The Environment tab
+
+Records the computers that can run AI for agent steps: found by looking, with
+your permission, or typed in. Each gets a card saying what it can run and where
+every fact came from, and a panel below the cards says what follows — which
+computers agent steps can run on, the longest input any model accepts, and
+what is likely to fail.
+
+- **Look for it** asks *where should I look?* first. Nothing is contacted
+  until you answer. Findings then appear one line at a time.
+- **I'll type it in** saves a computer without contacting it, then asks
+  separately whether it may be contacted. The answer defaults to no.
+- On a card: **Change something**, **Check again**, **Forget** (press twice).
+  Nothing can be changed while a look is running.
+
+The tab reads what is recorded when you open it, not when the window starts.
+The full guide is `docs/environment-guide.md`.
 
 ## The Workflow tab
 

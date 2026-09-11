@@ -65,6 +65,28 @@ def judgements_in(output: str) -> list[str]:
     return [w for w in JUDGEMENT if re.search(rf"\b{w}\b", remaining)]
 
 
+#: Design §3.1's vocabulary rule: words of the implementation that never
+#: appear in a sentence shown to a person.
+JARGON = ["endpoint", "provenance", "capability", "capabilities", "vram"]
+
+
+def jargon_in(output: str) -> list[str]:
+    """Implementation words used as prose (§3.1), with their typed exceptions.
+
+    Two words are allowed only as something a person types: ``node`` as the
+    command noun in ``fukasawa node …``, and ``scope`` as the ``--scope``
+    flag. Anywhere else they are the implementation showing through. Every
+    other word on ``JARGON`` is simply absent.
+    """
+    lowered = output.lower()
+    found = [w for w in JARGON if re.search(rf"\b{w}\b", lowered)]
+    if re.search(r"(?<!fukasawa )\bnode\b", lowered):
+        found.append("node")
+    if re.search(r"(?<!--)\bscope\b", lowered):
+        found.append("scope")
+    return found
+
+
 def ownership_in(output: str) -> list[str]:
     """Every phrase in this output that claims someone owns something."""
     lowered = output.lower()

@@ -22,7 +22,7 @@ from src.schemas.node import (
     ScanConsent,
     ScanScope,
 )
-from tests.copy_rules import judgements_in, ownership_in
+from tests.copy_rules import jargon_in, judgements_in, ownership_in
 
 
 @pytest.fixture()
@@ -903,9 +903,15 @@ class TestCopyRules:
         seed(store_path, host=HostCapability(gpu_present=True,
                                              vram_bytes=6_000_000_000,
                                              tokens_per_second=53.0))
-        output = CliRunner().invoke(app, argv, input=typed).output
+        # Wide, so a command is never split across lines -- `fukasawa` at the
+        # end of one line and `node` at the start of the next would read as
+        # prose to the vocabulary check.
+        output = CliRunner(env={"COLUMNS": "400"}).invoke(
+            app, argv, input=typed
+        ).output
         assert judgements_in(output) == []
         assert ownership_in(output) == []
+        assert jargon_in(output) == [], output
 
     def test_the_endorsed_use_of_only_is_told_apart_from_the_forbidden_one(self):
         """The allowlist has to discriminate, not just excuse the word.
@@ -915,6 +921,17 @@ class TestCopyRules:
         """
         assert judgements_in('"Look for it" only checks this computer.') == []
         assert judgements_in("8 GB is only enough for small models.") == ["only"]
+
+    def test_a_typed_command_is_told_apart_from_prose(self):
+        """§3.1's exemption has to discriminate, not just excuse the word.
+
+        ``node`` is allowed as the command noun and ``scope`` as the flag;
+        the same words in a sentence are the implementation showing through.
+        """
+        assert jargon_in("run fukasawa node scan --scope named-host") == []
+        assert jargon_in("This node answered.") == ["node"]
+        assert jargon_in("Choose a wider scope.") == ["scope"]
+        assert jargon_in("The endpoint has 6 GB of VRAM.") == ["endpoint", "vram"]
 
     def test_a_comparison_between_figures_is_not_a_verdict_on_one(self):
         """Word boundaries, so §3.6's "Fastest measured speed" stays legal."""

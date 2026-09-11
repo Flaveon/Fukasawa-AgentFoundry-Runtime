@@ -224,6 +224,44 @@ class TestDocumentedCommandsAreReal:
                 wrong.append(f"{command}: takes an id, README shows {line.strip()!r}")
         assert not wrong, "README command drift:\n  " + "\n  ".join(wrong)
 
+    #: Every document that shows `fukasawa node …` commands.
+    NODE_DOCS = ("README.md", "docs/environment-guide.md", "docs/cli-guide.md")
+
+    def test_every_documented_node_command_and_flag_is_real(self):
+        """The same guard as the workflow commands', for phase 10a's commands.
+
+        Each ``fukasawa node <verb> --flag …`` written in a document must be a
+        verb the CLI has and a flag that verb takes. Read from the documents
+        rather than listed here, so a command added to a guide is checked
+        without anybody remembering to add it.
+        """
+        import re
+
+        from typer.testing import CliRunner
+
+        from src.cli import app
+
+        runner = CliRunner(env={"COLUMNS": "200"})
+        documented: dict[str, set[str]] = {}
+        for name in self.NODE_DOCS:
+            text = (ROOT / name).read_text(encoding="utf-8")
+            for match in re.finditer(r"fukasawa node ([a-z]+)([^\n`#]*)", text):
+                verb, rest = match.group(1), match.group(2)
+                documented.setdefault(verb, set()).update(
+                    re.findall(r"--[a-z][a-z-]*", rest)
+                )
+        assert {"scan", "list", "add"} <= set(documented), documented
+
+        wrong = []
+        for verb, flags in sorted(documented.items()):
+            result = runner.invoke(app, ["node", verb, "--help"])
+            if result.exit_code != 0:
+                wrong.append(f"`node {verb}` does not exist")
+                continue
+            wrong += [f"`node {verb}` has no {flag}" for flag in sorted(flags)
+                      if flag not in result.output]
+        assert not wrong, "documented node commands drift:\n  " + "\n  ".join(wrong)
+
     def test_the_readme_does_not_claim_unbuilt_infrastructure(self):
         """The README described a "workflow node library" and a prompt/module
         registry as delivered infrastructure. Neither exists — the first not at

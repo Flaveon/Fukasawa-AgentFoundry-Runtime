@@ -125,13 +125,13 @@ That naming indirection is the right foundation and should be kept.
 
 ### What is missing
 
-- [ ] **No way to add a node from the product.** Adding one means hand-writing
+- [x] **No way to add a node from the product.** Adding one means hand-writing
       YAML at a path that, until phase 9, appeared in exactly one line of source
       and no user-facing document. There is no `model add`, no `model remove`,
       no desktop screen. Someone handed the binary has neither the repository
       nor the path. *(Phase 9 made `model list` print the path and a template —
       that is a stopgap, not the feature.)*
-- [ ] **An endpoint carries no capabilities.** It is `name`, `kind`
+- [x] **An endpoint carries no capabilities.** It is `name`, `kind`
       (`ollama` | `llamacpp`), `url`. Nothing about which models it serves,
       context length, VRAM, quantisation, throughput, or what work it is fit
       for. A capability model is the substantive half of this item.
@@ -141,10 +141,17 @@ That naming indirection is the right foundation and should be kept.
       checks. So the runtime can classify a step
       `AGENT_EXECUTED_HUMAN_SUPERVISED` and hand the operator a workflow no
       machine they own can run.
-- [ ] **Nothing discovers what a node can do.** Both backends can be asked —
+- [x] **Nothing discovers what a node can do.** Both backends can be asked —
       Ollama's `/api/tags`, llama.cpp's `/v1/models` — so a `model discover`
       that populates capabilities from a live node is achievable without
       asking the user to type model names by hand.
+
+**Closed by phase 10a, 2026-09-11** — three of the four boxes above:
+`fukasawa node scan|list|show|add|forget|consent`, the desktop's Environment
+tab, and computers usable as endpoints by name (`docs/environment-guide.md`).
+The third box — capabilities connected to cooperation assessment — is phase
+10b and remains open. So does sweeping a whole network, which is offered and
+answered as not built yet.
 
 ### Why this is the honest framing
 
