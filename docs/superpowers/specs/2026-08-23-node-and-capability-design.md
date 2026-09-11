@@ -265,6 +265,33 @@ Both sentences are facts about this program, not reassurance. Someone with no
 hardware configured needs to know the lifecycle still works, because otherwise
 the empty state reads as a breakage.
 
+**Computers typed in and not yet checked count.** *Operator ruling, M5 option
+C, 2026-09-11.* Recording a computer is what makes it one agent steps may run
+on, and the route both "can't look" answers recommend is typing one in — so
+leaving it off sent people following this program's own advice to "No step can
+be assigned to an agent." Three cases, told apart by `reachable` and
+`last_probed_at`:
+
+| | Listed | Figures |
+|---|---|---|
+| reached by a look | by name | every figure on the panel comes from these |
+| typed in, never looked at | *Kitchen Box (not checked yet)* | none; with no others, every row is *not sure* and there is no consequence line |
+| looked at, nothing answered | not at all | none |
+
+```
+    Agent steps can run on         Home PC, Kitchen Box (not checked yet)
+    Longest input any model takes  about 6,000 words   (8,192 tokens)
+    ...
+
+    A step needing more than 6,000 words of input is likely to
+    fail on the computers checked so far.
+```
+
+The consequence line changes its last words when anything is unchecked. The
+figure is the longest input among the computers reached, and an unchecked one
+might take more — "these computers" would then claim something about a machine
+nobody has looked at, and the sentence would no longer be falsifiable.
+
 **When a graphics card was not detected**, the row says so and nothing more:
 `Graphics card — none detected`. No prediction about how that will feel. Note
 also that a card can be present and unobserved (§4.1), so the row distinguishes
@@ -302,6 +329,73 @@ Non-interactive use is supported and skips every prompt:
 `--scope this-machine|named-host|local-network|none`, `--host`, `--label`,
 `--yes`, `--json`. With `--json`, each discovery event is emitted as one JSON
 object per line so the stream is still a stream.
+
+### 3.8 Typing it in
+
+*Added 2026-09-11, implementing the operator's M8 rulings of 2026-08-27
+(`handoffs/phase-10a-node-and-capability-handoff.md`). Both front ends follow
+this one flow: the CLI's menu choice 4 today, and the desktop's
+"I'll type it in" (§3.2) and "Don't look at anything" (§3.3) in Task 8.*
+
+Choosing not to look is a route this program offers, not a refusal. Taking it
+succeeds.
+
+```
+  No computers are recorded yet.                  ← nothing recorded
+  Tell me about one and I'll save it.
+
+  Recorded so far: Home PC, Garage PC.            ← something recorded
+  Tell me about another one and I'll save it with them.
+
+  What should I call it?      Kitchen Box
+  Address of the computer     10.0.0.9
+  Which is running on it?     (•) Ollama   ( ) llama.cpp
+
+  Saved Kitchen Box at http://10.0.0.9:11434.
+  Nothing has contacted it, so what it can run is not known yet.
+
+  May I contact it now to see what it can run?
+  Nothing else is contacted.                      [ Not now ]  [ Check it ]
+```
+
+**The opening differs by whether anything is recorded.** The question is
+reachable however many computers are already saved; somebody adding a fourth
+is not told they have none.
+
+**Typing an address is not permission to contact it.** The computer is saved
+first, unchecked (`reachable` false, every typed field *you told me*). Looking
+at it is a separate question with its own yes, defaulting to no. That yes is
+the §3.3 permission for one named computer — the existing second rung, not a
+new kind of permission — and it is recorded exactly as a scan records the
+permission it acts under.
+
+**A check fills in the same record.** The address saved is one a look at that
+computer tries (`address_for`, `src/nodes/discovery.py`), and the store matches
+findings to records by address, so what is found is added to the typed record
+while the name, address and program the person gave are kept. If nothing
+answers, the computer stays saved and the way to check it again is named.
+
+**Which program is running is asked, never guessed.** A bare address gets that
+program's usual port; an address that names a port, or a full URL, is kept as
+typed. An answer that is not one of the choices is asked again. There is no
+careful default here as there is on the §3.3 menu: a guess would be saved as
+something the person said, and nothing would contact the computer to correct
+it.
+
+**An address already recorded is named, and nothing is saved.** The store's
+merge-by-address is right for a rescan and wrong here: it once renamed the
+computer already at that address while reporting the new name as added.
+
+**A check that finds nothing is recorded as a check.** Discovery saves only
+what answers, so the typed record is stamped as looked at (`last_probed_at`)
+and not answering. Otherwise it would go on reading *not checked yet* — which
+§3.6 counts — after it was checked.
+
+**No §3.6 panel after a record-only save.** Every figure on it comes from
+contact, so each would read *not sure*, which the line above it already says.
+The panel does count the computer, as *not checked yet* (§3.6), and the listing
+shows it. The panel is shown after a check that finds something, as after any
+scan.
 
 ## 4. Contracts — `src/schemas/node.py`
 
@@ -555,7 +649,9 @@ alone. This is what makes "Check again" safe to press.
 | `node consent [--set ...]` | show or change the permission |
 
 Exit codes follow the existing convention: `0` fine, `1` user error, `3` a
-refusal (e.g. scanning when consent is `NONE`).
+refusal (e.g. `--scope none`, or a bare `--yes` reading `NONE` off the file).
+Menu choice 4 also ends in `NONE` and is **not** a refusal — it is the route
+§3.8 describes, and it exits `0`.
 
 ## 8. Desktop — a fourth tab, "Environment"
 
@@ -650,5 +746,57 @@ arrive.
   `StepAssignment.runtime_requirements` so `AutomationReadiness` can mean
   "ready *here*" rather than "ready in principle".
 - Credentials for protected endpoints.
-- Backends beyond Ollama and llama.cpp.
+- Backends beyond Ollama and llama.cpp — planned, see §10.1.
 - Re-probing on a schedule.
+
+### 10.1 More engines — LM Studio, vLLM, and "something else"
+
+*Planned 2026-09-11 at the operator's request. Not scheduled.*
+
+**Today there are exactly two.** `NodeKind` has `OLLAMA` and `LLAMACPP`, and
+the choice is repeated in six places: the enum, the probes and port table
+(`src/nodes/backends.py`), discovery, the CLI's `--kind` and §3.8 menu, the
+desktop's `add_node`, and the endpoint registry.
+
+**The frozen kernel is not in the way.** `src/kernel/models.py` executes by
+kind string, and its `"llamacpp"` branch is really an OpenAI-compatible client
+— it POSTs to `{url}/v1/chat/completions`. LM Studio and vLLM both serve that.
+So the plan separates **which program is running** (shown to the person,
+probed for) from **which protocol it speaks** (what the kernel needs), and
+`src/nodes/registry.py` maps the first onto the second. New engines then run
+through the kernel unchanged, with no FROZEN waiver. The cost is that the
+kernel's internal word `llamacpp` becomes a misnomer for "OpenAI-compatible";
+renaming it would need a waiver and is not worth one.
+
+**The patch, in order:**
+
+1. **One table of engines, no behaviour change.** Each entry: the name shown,
+   the default port, the protocol, and a probe. The six places read the
+   table instead of naming engines. Shipped with the existing two only, so
+   the refactor is reviewable on its own.
+2. **Positive identification, per engine.** A port that answers is not proof
+   of what is behind it — vLLM's default 8000 is shared with countless
+   unrelated development servers. Each probe needs a signature that only that
+   engine returns. Candidates to verify against current documentation at
+   implementation time, not from memory: vLLM's `/version` and `owned_by`
+   field in `/v1/models`; LM Studio's native REST listing, which also reports
+   each model's context length and whether it is loaded.
+3. **LM Studio, then vLLM**, one entry and one probe each, tested with the
+   recording fakes of §9 — both HTTP verbs, per the POST blind spot found in
+   Task 4.
+4. **"Something else that speaks the OpenAI format"** as a typed-in choice
+   only: no probe, no port guessed (the address must name one). Covers
+   LocalAI, Jan, text-generation-webui, SGLang and the like. What
+   `/v1/models` reports is thin — usually no context length — so the card
+   says *not sure*, which is true.
+
+**Things to hold while doing it:**
+
+- §5.2 lists what each rung may open. More engines means more ports on the
+  same computer; the rung is still "one computer" and the copy still holds,
+  but the table must be updated with the ports.
+- Adding enum values is backward compatible for reading old `nodes.yaml`. The
+  reverse is not: a file naming `vllm`, opened by an older build, fails
+  validation. The unusable-file refusal already names the file and field.
+- The §3.8 question "Which is running on it?" grows from two choices to four.
+  An answer off the list is still asked again, never guessed.

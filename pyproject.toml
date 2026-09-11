@@ -40,3 +40,9 @@ namespaces = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The repository root on the import path, so `pytest` and `python -m pytest`
+# resolve imports identically. They did not: `-m` adds the working directory
+# and the bare script does not, so `from tests.… import` passed on every
+# machine that ran `python -m pytest` and failed collection in CI, which runs
+# the script -- red on main from PR #19 to #22 while every local run was green.
+pythonpath = ["."]

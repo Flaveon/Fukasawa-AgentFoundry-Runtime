@@ -112,10 +112,25 @@ class Summary:
 
 
 def summarise(nodes: list[InferenceNode]) -> Summary:
-    """Describe what is available, and what follows arithmetically from it."""
-    usable = [n for n in nodes if n.reachable]
+    """Describe what is available, and what follows arithmetically from it.
 
-    if not usable:
+    Three kinds of computer, told apart by two facts already stored:
+
+    * **reached** — a look found it answering. It counts, and every figure on
+      the panel comes from these.
+    * **not checked yet** — typed in and never looked at (``last_probed_at``
+      is empty). It counts, named as unchecked, and contributes no figures.
+      Recording a computer is what makes it one agent steps may run on; the
+      operator settled that (M5, option C, 2026-09-11). Leaving it off sent
+      somebody who followed this program's own advice -- "type it in" -- to
+      a panel saying no step could be assigned.
+    * **checked, not answering** — looked at, and nothing replied. It does not
+      count.
+    """
+    usable = [n for n in nodes if n.reachable]
+    unchecked = [n for n in nodes if not n.reachable and n.last_probed_at is None]
+
+    if not usable and not unchecked:
         return Summary(
             rows=[SummaryRow("Agent steps can run on", "nothing yet")],
             consequence=(
@@ -124,21 +139,26 @@ def summarise(nodes: list[InferenceNode]) -> Summary:
             ),
         )
 
-    best_context = max(n.max_context_length for n in usable)
-    fastest = max(n.host.tokens_per_second for n in usable)
+    # default=0 because every computer may be unchecked, and then nothing was
+    # measured: 0 renders as "not sure" through the helpers below.
+    best_context = max((n.max_context_length for n in usable), default=0)
+    fastest = max((n.host.tokens_per_second for n in usable), default=0.0)
     with_gpu = [n for n in usable if n.host.gpu_present is True]
     any_unknown_gpu = any(n.host.gpu_present is None for n in usable)
 
     if with_gpu:
         vram = max(n.host.vram_bytes for n in with_gpu)
         card = f"yes, on {with_gpu[0].label} — {human_bytes(vram)}"
-    elif any_unknown_gpu:
+    elif any_unknown_gpu or not usable:
         card = UNKNOWN
     else:
         card = "none detected"
 
+    names = [n.label for n in usable]
+    names += [f"{n.label} (not checked yet)" for n in unchecked]
+
     rows = [
-        SummaryRow("Agent steps can run on", ", ".join(n.label for n in usable)),
+        SummaryRow("Agent steps can run on", ", ".join(names)),
         SummaryRow(
             "Longest input any model takes",
             f"{human_words(best_context)} ({best_context:,} tokens)"
@@ -152,9 +172,14 @@ def summarise(nodes: list[InferenceNode]) -> Summary:
     consequence = ""
     if best_context:
         words = _two_significant(words_from_tokens(best_context))
+        # The figure is the longest input on the computers that were reached.
+        # An unchecked one might take more, so "these computers" would then
+        # claim something about a machine nobody has looked at, and the
+        # sentence would stop being falsifiable -- its whole defence.
+        where = "the computers checked so far" if unchecked else "these computers"
         consequence = (
             f"A step needing more than about {words:,} words of input is "
-            f"likely to fail on these computers."
+            f"likely to fail on {where}."
         )
 
     return Summary(rows=rows, consequence=consequence)

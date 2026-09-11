@@ -14,7 +14,7 @@ to answer. The Task 4 review found a fake blind to POST for precisely this
 reason. An ``AssertionError`` is not an ``OSError`` and is not swallowed.
 
 **The copy rules are imported, not re-stated.** ``judgements_in`` and
-``ownership_in`` come from ``tests/test_node_cli.py`` so the two front ends are
+``ownership_in`` come from ``tests/copy_rules.py`` so the two front ends are
 policed by one word list. A second copy would drift, and the first thing to
 drift out of it would be the awkward case the list exists to handle.
 """
@@ -35,7 +35,7 @@ from src.schemas.node import (
     ScanConsent,
     ScanScope,
 )
-from tests.test_node_cli import judgements_in, ownership_in
+from tests.copy_rules import judgements_in, ownership_in
 
 #: Every address ``THIS_MACHINE`` is allowed to reach. Anything else appearing
 #: in a recorder's log is a scan that went further than it was permitted. Taken
@@ -154,6 +154,21 @@ class TestListing:
         labels = [label for label, _value in result.summary_rows]
         assert "Agent steps can run on" in labels
         assert dict(result.summary_rows)["Agent steps can run on"] == "Home PC"
+
+    def test_a_computer_added_by_hand_is_counted_not_a_dead_end(self, store):
+        """M5, option C, on the desktop's side -- the same panel as the CLI's.
+
+        The route this tab recommends when it cannot look is adding a computer
+        by hand, and the panel used to answer that with "No step can be
+        assigned to an agent."
+        """
+        assert service.add_node("Kitchen Box", "ollama",
+                                "http://10.0.0.9:11434", store).ok
+        result = service.list_nodes(store)
+        assert dict(result.summary_rows)["Agent steps can run on"] == (
+            "Kitchen Box (not checked yet)"
+        )
+        assert "No step can be assigned" not in result.consequence
 
 
 class TestEditing:

@@ -63,6 +63,17 @@ fix commits have had no independent pass.
 
 ## Pick up here
 
+> **2026-09-11 — items 1 and 2 are done.** M8 and I5 are implemented in
+> `src/cli.py` (`_type_it_in`, `_record_by_hand`, `_run_scan`) with a shared
+> `address_for` in `src/nodes/discovery.py`. The flow is written down for both
+> front ends as **design §3.8** — Task 8 builds the desktop side of it from
+> there. **M5 is decided (option C) and implemented too** — see M5 below.
+> Engine support beyond Ollama and llama.cpp is planned in **design §10.1**,
+> unscheduled. 13 guards mutation-checked red. Like Tasks 6 and 7's
+> fix rounds, this has had **no independent review**; add it to the final
+> whole-branch review. **Start at item 3.** Items 1 and 2 are kept below as
+> the record of what was ruled.
+
 Three things are ready to go, in the order I would do them.
 
 ### 1. M8 — the Task 6 question the operator has now answered
@@ -144,9 +155,9 @@ available. See below.
 Fold in two things while you are there:
 
 - The M8 flow above, as actual fields in the tab.
-- Move the copy-rule helpers to `tests/copy_rules.py`. They currently live in
-  `tests/test_node_cli.py` and are imported by `tests/test_gui_nodes.py`, so
-  that module is loaded under two names. **Task 8 would be the third importer.**
+- ~~Move the copy-rule helpers to `tests/copy_rules.py`.~~ **Done 2026-09-11**,
+  and it turned out to matter more than tidiness — see "CI was red" below.
+  Task 8 imports `from tests.copy_rules import judgements_in, ownership_in`.
 
 Task 8 must also honour a constraint written into
 `src/gui/services/nodes.py`'s module docstring: **do not offer editing while a
@@ -234,6 +245,17 @@ PYTHONPATH=$PWD .venv/bin/python script.py
 
 Running the suite is safe: `.venv/bin/python -m pytest -q`. About 40 tests are
 display-gated and skip in a plain run; that is expected, not a problem.
+
+**CI was red on `main` from PR #19 through #22 (2026-08-27 to 2026-09-11), and
+every local run was green.** CI runs the bare `pytest` script; everybody locally
+ran `python -m pytest`. Only `-m` puts the repository root on the import path,
+so `tests/test_gui_nodes.py`'s `from tests.test_node_cli import …` (Task 7,
+`b8541f7`) imported locally and failed collection in CI — the suite never ran
+there at all. Every "907 passed" in this file was true only on one machine.
+Fixed in PR #23 with `pythonpath = ["."]` in `pyproject.toml`, which makes the
+two invocations agree, and the helpers moved to `tests/copy_rules.py`.
+**Before calling a phase green, read CI, not the terminal** —
+`gh pr checks <n>`, or reproduce it: `xvfb-run -a .venv/bin/pytest -q`.
 
 **`.superpowers/` is gitignored repo-wide** (`.gitignore:14`). Every plan
 artifact — the ledger, all briefs, all reports, all review packages — lived on
@@ -356,6 +378,16 @@ So the route both refusals recommend lands on a panel saying "No step can be
 assigned to an agent." This is Task 3's contract, confirmed and deliberately not
 patched by Task 7's fix round. Decide it before Task 8 renders that panel — it
 is the first thing a new user will see after following the advice.
+
+**2026-09-11 — decided: option C, and implemented.** The operator chose between
+leaving it (A), counting a typed-in computer like a scanned one (B), and
+counting it *named as unchecked* (C). In `summarise`, a computer never looked at
+(`last_probed_at` empty) is listed as "Kitchen Box (not checked yet)" and
+contributes no figures; one looked at and not answering does not count. Beside
+an unchecked computer the consequence line ends "on the computers checked so
+far". The desktop inherits it through `list_nodes`. Written into design §3.6.
+**Task 8 must stamp a look that finds nothing** the way the CLI's typed-in
+route does (§3.8), or a checked computer keeps reading "not checked yet".
 
 **Minor deferred items from Tasks 1, 3 and 5** are listed at the top of
 `handoffs/reviews/node-and-capability/ledger.md`. The final whole-branch review

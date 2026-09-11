@@ -17,7 +17,13 @@ reason, even where a single stage answers deterministically.
 
 import pytest
 
-from src.nodes.discovery import ConsentRefused, DiscoveryEvent, candidate_addresses, discover
+from src.nodes.discovery import (
+    ConsentRefused,
+    DiscoveryEvent,
+    address_for,
+    candidate_addresses,
+    discover,
+)
 from src.schemas.node import NodeKind, ScanScope
 
 
@@ -147,6 +153,36 @@ class TestCandidates:
         """
         with pytest.raises(ConsentRefused, match="LOCAL_NETWORK"):
             candidate_addresses(ScanScope.LOCAL_NETWORK, "")
+
+
+class TestTypedAddresses:
+    """Where a typed-in computer is recorded, before anything contacts it."""
+
+    def test_a_bare_host_gets_the_port_of_the_program_named(self):
+        assert address_for("box", NodeKind.OLLAMA) == "http://box:11434"
+        assert address_for("box", NodeKind.LLAMACPP) == "http://box:8081"
+
+    def test_a_port_that_was_typed_is_kept(self):
+        assert address_for("box:9000", NodeKind.OLLAMA) == "http://box:9000"
+
+    def test_a_full_url_is_kept_as_typed(self):
+        assert address_for(" https://box:9000/ ", NodeKind.LLAMACPP) == (
+            "https://box:9000"
+        )
+
+    @pytest.mark.parametrize("typed", ["box", "box:9000", "http://box:9000/"])
+    @pytest.mark.parametrize("kind", list(NodeKind))
+    def test_a_later_look_at_that_address_reaches_the_same_record(self, typed, kind):
+        """The store matches a finding to a record by address, exactly.
+
+        So the address saved for a typed-in computer has to be one that a look
+        at it tries, character for character. If the two ever read a typed
+        host differently, checking the computer later would save a second row
+        beside the first instead of filling it in.
+        """
+        saved = address_for(typed, kind)
+        tried = [url for url, _kind in candidate_addresses(ScanScope.NAMED_HOST, saved)]
+        assert saved in tried
 
 
 class TestTheStream:
