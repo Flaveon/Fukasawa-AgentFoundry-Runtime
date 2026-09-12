@@ -1608,7 +1608,7 @@ class TestEnvironmentTab:
 
     def test_every_screen_obeys_both_copy_rules(self, env):
         """§3.1.1 and §3.1.2, over every screen this tab can show."""
-        from tests.copy_rules import judgements_in, ownership_in
+        from tests.copy_rules import jargon_in, judgements_in, ownership_in
 
         screens = [env.shown()]
         env.on_look()
@@ -1628,5 +1628,4 @@ class TestEnvironmentTab:
         for text in screens:
             assert judgements_in(text) == [], text
             assert ownership_in(text) == [], text
-            for word in ("endpoint", "provenance", "capability", "vram", "scope"):
-                assert word not in text.lower(), (word, text)
+            assert jargon_in(text) == [], text

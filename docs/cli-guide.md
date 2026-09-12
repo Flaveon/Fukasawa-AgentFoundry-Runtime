@@ -7,8 +7,11 @@ How to take a process that currently lives in someone's head and turn it into
 something a runtime can execute, without pretending the messy parts are not
 there.
 
-Everything here runs locally against a SQLite file. No network calls happen
-anywhere in this program.
+Everything here runs locally against a SQLite file, and the whole lifecycle
+runs with the network unavailable — a test holds that. Two parts of the
+program do use the network, and neither is on this path: looking for
+computers (`fukasawa node scan`, only after you choose how far to look), and
+running a model step on one.
 
 ## The shape of it
 
@@ -263,6 +266,30 @@ The assessment puts `publish-post` on `AGENT_PREPARED_HUMAN_APPROVED` with an
 `IRREVERSIBLE` floor: an agent may **prepare** the publication, but a human
 authorizes it, because an email to subscribers cannot be unsent. That result
 comes from the table, not from anyone placing it by hand.
+
+## Computers — the `node` commands
+
+Which computers can run agent steps. Not needed for anything above: with none
+recorded the whole lifecycle still works, and no step can be assigned to an
+agent. Full guide: `docs/environment-guide.md`.
+
+```bash
+fukasawa node scan                  # asks where to look first; nothing is contacted until you answer
+fukasawa node list                  # every computer, and what follows from having them
+fukasawa node show <id>             # one computer, and every model it serves
+fukasawa node add --label <name> --kind ollama|llamacpp --url <address>
+fukasawa node forget <id>
+fukasawa node consent [--set this-machine|named-host|local-network|none]
+```
+
+`node scan` without flags offers four choices; the fourth, *Don't look — I'll
+type it in*, saves a computer without contacting it and then asks separately
+whether it may. Findings print one line at a time; `--json` prints one object
+per line. Exit codes follow this guide's: `0`, `1` to correct something, `3` a
+refusal (`--scope none`).
+
+A recorded computer is usable by its id — `endpoint: <id>` in a graph — and
+appears in `fukasawa model list`.
 
 ## Two conventions this sub-app does not share
 

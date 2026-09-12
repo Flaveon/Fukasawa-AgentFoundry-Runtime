@@ -644,7 +644,7 @@ alone. This is what makes "Check again" safe to press.
 | `node list` | the cards, one per computer |
 | `node show <id>` | one card plus every model |
 | `node add` | manual entry, same fields, all *you told me* |
-| `node edit <id>` | prompts field by field, current value as the default, blank keeps it; any value the user changes flips to *you told me*. `--set field=value` for one field non-interactively |
+| `node edit <id>` | **Not built** (found 2026-09-11). Edit a computer in the desktop's Environment tab, or in `nodes.yaml`. As designed: prompts field by field, current value as the default, blank keeps it; any value the user changes flips to *you told me*. `--set field=value` for one field non-interactively |
 | `node forget <id>` | remove it |
 | `node consent [--set ...]` | show or change the permission |
 
@@ -729,7 +729,9 @@ Brief and corrections to the plan's Task 8 section:
 
 - Round trip through YAML; unknown field refused by name.
 - Editing a field flips its provenance to `DECLARED`.
-- `nodes.yaml` absent → zero nodes → "every step stays with you".
+- `nodes.yaml` absent → zero nodes → "No step can be assigned to an agent."
+  (This line read "every step stays with you" until 2026-09-11 — the phrase
+  §3.1.2 of this document forbids. The test asserts the approved words.)
 - An existing `model_endpoints.yaml` keeps resolving.
 
 **Doctrine**

@@ -42,7 +42,12 @@ anywhere in this branch.
 | 6 CLI `node` sub-app | complete, reviewed, fixed — **fix commits never reviewed** |
 | 7 GUI service layer | complete, reviewed, fixed — **fix commits never reviewed** |
 | 8 Environment tab | complete 2026-09-11 — **not independently reviewed**; brief at `reviews/node-and-capability/task-8-brief.md` |
-| 9 doctrine tests, docs, phase note | not started — **start here** |
+| 9 doctrine tests, docs, phase note | complete 2026-09-11 — **not independently reviewed**; brief at `reviews/node-and-capability/task-9-brief.md`, note at `implementation/phase-10a-node-capability-completion-note.md` |
+
+**All nine tasks are done (2026-09-11). Next: the Opus review over the whole
+branch, `3d81d36..main`, which the operator scheduled for after Task 9.** Task
+9 found and fixed a gap in the phase itself — recorded computers were never
+wired into the runtime's endpoints — so the review should read that fix too.
 
 Then a final whole-branch review, which the plan already calls for.
 
@@ -278,7 +283,12 @@ there at all. Every "907 passed" in this file was true only on one machine.
 Fixed in PR #23 with `pythonpath = ["."]` in `pyproject.toml`, which makes the
 two invocations agree, and the helpers moved to `tests/copy_rules.py`.
 **Before calling a phase green, read CI, not the terminal** —
-`gh pr checks <n>`, or reproduce it: `xvfb-run -a .venv/bin/pytest -q`.
+`gh pr checks <n>`, or reproduce it:
+`GITHUB_ACTIONS=true xvfb-run -a .venv/bin/pytest -q`. **The variable is
+part of the reproduction:** Typer colours help text when it is set, and PR
+#25's first push failed in CI on a test that searched `--help` for `--kind`
+and found `-`, a colour code, `-kind`. Without the variable that failure
+cannot appear locally.
 
 **`.superpowers/` is gitignored repo-wide** (`.gitignore:14`). Every plan
 artifact — the ledger, all briefs, all reports, all review packages — lived on

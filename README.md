@@ -99,15 +99,33 @@ content lives on disk and you are still editing it. The last four take a
 Add `--json` to any of them. Exit codes: `0` ok, `1` user error, `2` blocking
 findings, `3` a doctrine refusal.
 
+### Computers that can run agent steps
+
+Optional — nothing above needs one. With none recorded, no step can be
+assigned to an agent, and everything else works the same.
+
+```bash
+fukasawa node scan          # asks where to look first; nothing is contacted until you answer
+fukasawa node list          # every computer, and what follows from having them
+fukasawa node add --label "Kitchen Box" --kind ollama --url http://192.168.1.20:11434
+```
+
+The desktop's **Environment** tab does the same. A recorded computer is usable
+by name in a graph (`endpoint: kitchen-box`) and never by address. See
+`docs/environment-guide.md`.
+
 ### Tests
 
 ```bash
-xvfb-run -a .venv/bin/python -m pytest -q     # 694 passed, 1 skipped
-.venv/bin/python -m pytest -q                 # 654 passed, 41 skipped
+GITHUB_ACTIONS=true xvfb-run -a .venv/bin/pytest -q   # as CI runs it
+.venv/bin/python -m pytest -q       # no display: the view tests skip
 ```
 
-Run it **both ways** — the plain invocation skips 40 view tests that need a
-display, and one desktop defect only ever appeared under Xvfb.
+Run it **both ways**. The plain invocation skips the view tests that need a
+display, and more than one desktop defect has only ever appeared under Xvfb.
+Before calling anything green, read CI too: for two weeks `main` failed there
+while every local run passed, because the two invocations resolved imports
+differently.
 
 ### A standalone binary
 
@@ -134,6 +152,7 @@ are in that order.
 | `docs/promotion-state-reference.md` | what each maturity state means |
 | `docs/cooperation-classification-guide.md` | how executors are chosen |
 | `docs/cli-guide.md` · `docs/desktop-guide.md` | the two surfaces |
+| `docs/environment-guide.md` | the computers that can run agent steps |
 | `docs/migration-notes.md` · `docs/packaging-guide.md` · `docs/release-notes.md` | shipping it |
 
 Contributor guides live inside the reference they extend:
@@ -156,8 +175,9 @@ registry** (`registry/prompt-module-registry.yaml`, `schema_version: 0.1`).
 `roadmap.md` also uses a *different* phase numbering from the one this release
 followed — see `handoffs/handoff-master.md`.
 
-The **node library** those documents mention is a different matter: it is
-**missing, not obsolete**. See [Known gaps](#known-gaps).
+The **node library** those documents mention is a different matter: it was
+**missing, not obsolete**, and phase 10a built its first half —
+`docs/environment-guide.md`. What remains is under [Still open](#still-open).
 
 `docs/source-to-contract-map.md` exists to detect exactly this kind of drift.
 
@@ -173,9 +193,10 @@ Fukasawa-AgentFoundry-Runtime/
 |   |-- runtime/               # state machine, ledger, review gates
 |   |-- foundry/               # agent package generation, export
 |   |-- gui/                   # CustomTkinter desktop + its service layer
-|   |-- kernel/                # model adapters (the only network surface)
+|   |-- nodes/                 # recorded computers: discovery, store, summary
+|   |-- kernel/                # model adapters
 |   `-- security/              # signing and trust
-|-- tests/                     # 695 tests
+|-- tests/
 |-- examples/workflows/substack-publication/   # the pilot, all 8 artifacts
 |-- docs/                      # the documentation above
 |-- handoffs/                  # the master handoff, ADRs, phase notes, reviews
@@ -183,40 +204,36 @@ Fukasawa-AgentFoundry-Runtime/
 `-- tasks/backlog.md
 ```
 
-## Known gaps
+## Still open
 
-### Bring your own inference nodes
+### Matching steps to computers — phase 10b
 
 This is built to be handed to someone else, and that person runs their own
-hardware. Today the runtime resolves **named model endpoints** — a graph says
-`endpoint: gpu-node` and each operator's config decides what that means, so a
-shared workflow never carries anyone's IP addresses:
+hardware. Phase 10a closed the first half of that: a person can record their
+computers from the product — found by looking, with permission, or typed in —
+and see what each can run (`docs/environment-guide.md`). A recorded computer
+is usable by name, so a shared workflow never carries anyone's address:
 
 ```bash
-fukasawa model list          # what is configured
-fukasawa model test gpu-node # does it answer
+fukasawa model list             # every usable name, recorded computers included
+fukasawa model test kitchen-box --model llama3.1:8b
 ```
 
-Two limits, and they matter most for exactly the audience this is for:
+Endpoints can still be written by hand in `$FUKASAWA_HOME/model_endpoints.yaml`
+(default `~/.fukasawa/model_endpoints.yaml`, modelled on
+`config/model_endpoints.example.yaml`); recorded computers are merged over it.
 
-**Adding a node means hand-editing YAML at a path nothing tells you about.**
-Endpoints live in `$FUKASAWA_HOME/model_endpoints.yaml` (default
-`~/.fukasawa/model_endpoints.yaml`), modelled on
-`config/model_endpoints.example.yaml`. There is no `model add`, and no desktop
-screen for it. A person who was handed the binary has neither the repository nor
-that path.
-
-**An endpoint has no capabilities.** It is a name, a kind (`ollama` or
-`llamacpp`) and a URL — nothing about which models it serves, how much context
-it has, what hardware is behind it, or what work it is fit for. So nothing can
-answer the question the cooperation layer implicitly raises: *this step could be
-automated, but can this operator's hardware actually run it?*
+**What is not closed: nothing connects a step to a computer.** The cooperation
+layer can say an agent could perform a step without anything checking that a
+recorded computer can run it — the input is too long for every model, say.
 `CooperationAssessment.required_tools` and `StepAssignment.runtime_requirements`
-are free strings today, checked by nobody.
+are free strings, checked by nobody. Until phase 10b, "an agent may perform
+this step" is a judgement about the **work**, not a promise about the
+computers. Tracked in `tasks/backlog.md`.
 
-Until both are closed, "an agent may perform this step" is a judgement about the
-**work**, not a promise that your machines can do it. Tracked in
-`tasks/backlog.md`.
+Also still open: sweeping a whole network for computers (offered, and answered
+as not built yet), and programs other than Ollama and llama.cpp (planned —
+design §10.1).
 
 ## Status
 
@@ -228,6 +245,10 @@ Gate G is open on two items that need a person rather than an agent — an
 independent verification pass, and a review of three commits on phase-owned
 files. Both are recorded in `docs/release-notes.md` under *Known limitations*
 and in `handoffs/implementation/release-verification-report.md`.
+
+Since the release candidate, **phase 10a** added recording the computers that
+can run agent steps — see *Unreleased* in `docs/release-notes.md` and
+`handoffs/implementation/phase-10a-node-capability-completion-note.md`.
 
 The governing specification is `handoffs/handoff-master.md`. Every document
 derived from it is a lossy summary; when they disagree, the master handoff wins.

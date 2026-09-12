@@ -1,5 +1,34 @@
 # Release notes
 
+## Unreleased — phase 10a: the computers that can run agent steps
+
+On `main`, after the v1.0 release candidate. Closes the largest gap v1.0
+recorded: somebody handed this program can now tell it which of their own
+computers can run AI, without editing YAML.
+
+- **Look for them, with permission first.** `fukasawa node scan` and the
+  desktop's new **Environment** tab ask *where should I look?* — just this
+  computer, one computer you name, or don't look at all — before anything is
+  contacted. Findings appear one line at a time. Sweeping a whole network is
+  offered and answered as not built yet.
+- **Or type them in.** Saved without being contacted; whether it may be
+  contacted is asked separately, and defaults to no.
+- **What each can run, and how that is known.** Models, the longest input any
+  of them accepts, graphics memory in use (always "or more"), speed — each
+  marked *found it*, *measured*, *you told me* or *not sure*.
+- **What follows from them.** A panel says which computers agent steps can run
+  on and what input length is likely to fail — figures, never verdicts on
+  anybody's hardware.
+- **Usable by name.** A recorded computer is an endpoint under its own id: a
+  graph says `endpoint: kitchen-box` and never carries an address. It is kept
+  in `$FUKASAWA_HOME/nodes.yaml` and never written into an exported brief.
+- Guide: `docs/environment-guide.md`. Design:
+  `docs/superpowers/specs/2026-08-23-node-and-capability-design.md`.
+
+**Still not done:** matching steps to computers (phase 10b) — nothing yet
+checks that a particular step can run on a particular computer. Programs other
+than Ollama and llama.cpp are planned (design §10.1).
+
 ## v1.0 — Human & Cooperative Workflow Runtime
 
 **Status:** release candidate. Gates A–F met; Gate G has two items that need a
@@ -131,15 +160,12 @@ on every persisted artifact so an audit can tell which logic produced it.
 - **No TypeScript.** Master handoff §3 describes a mixed Python/TypeScript
   runtime; this repository has never had any. Resolved at Gate A as defect D1 —
   JSON Schema export is the seam for any future consumer.
-- **You cannot register your own inference nodes from the product, and an
-  endpoint has no capabilities.** This is the largest known gap and it is a
-  product one, not a defect: the runtime resolves *named* endpoints from
-  `~/.fukasawa/model_endpoints.yaml`, but adding one means hand-writing YAML,
-  and an endpoint is only a name, a kind and a URL. Nothing therefore checks
-  whether the machines you actually own can run a step the cooperation layer
-  just said an agent could perform. Those are two different claims and this
-  release only makes the first. See *Known gaps* in the README and the
-  **Node library** entry in `tasks/backlog.md`.
+- **Nothing checks that a step can run on the computers recorded.** *(Updated
+  by phase 10a — see Unreleased, above.)* Registering computers, and learning
+  what each can run, is now supported. Connecting that to the cooperation
+  layer is not: it can still say an agent could perform a step that no
+  recorded computer can run. Those are two different claims and only the first
+  is made. Phase 10b; the **Node library** entry in `tasks/backlog.md`.
 
 ### Deliberately not built
 
@@ -149,15 +175,18 @@ path — validation, promotion eligibility, classification, export and persisten
 are all deterministic.
 
 **Not to be confused with the node library**, which is *not* in this list: it is
-wanted and not yet built. See *Known limitations*.
+wanted, and phase 10a built its first half. See *Known limitations*.
 
 ### Verifying this release
 
 ```bash
 uv venv --python 3.12 .venv && uv pip install -e '.[dev,gui]'
-xvfb-run -a .venv/bin/python -m pytest -q     # 694 passed, 1 skipped
-.venv/bin/python -m pytest -q                 # 654 passed, 41 skipped
+GITHUB_ACTIONS=true xvfb-run -a .venv/bin/pytest -q   # as CI runs it
+.venv/bin/python -m pytest -q       # no display: the view tests skip
 ```
+
+At the v1.0 candidate: 694 passed, 1 skipped under Xvfb. With phase 10a on
+`main`: 1045 passed, 2 skipped.
 
 Run it **both ways**: the plain invocation skips 40 view tests that only execute
 under a display.

@@ -846,13 +846,43 @@ def _sidecar_signature(graph_path: str) -> Optional[str]:
 
 
 def _model_endpoints() -> "ModelEndpointRegistry":
-    """Load model endpoints from the trust-home config, falling back to defaults."""
+    """Every endpoint the runtime can use, recorded computers included.
+
+    Built-in defaults, then `model_endpoints.yaml`, then every computer in
+    `nodes.yaml` under its own id -- later winning (design §6). The merge is
+    `src/nodes/registry.py`'s and the kernel takes it as a mapping, so the
+    frozen kernel is not touched.
+
+    This used to read `model_endpoints.yaml` alone. `merged_endpoints` was
+    built and tested in Task 5 and never called, so a computer recorded by
+    `node scan`, `node add` or the Environment tab could not be used by
+    `model test` or a graph run -- the one thing recording it is for.
+
+    A `nodes.yaml` that cannot be read must not stop a graph run that uses no
+    recorded computer, so it is named in a warning and left out. A graph that
+    does name one then fails on the endpoint, saying which names are known.
+    """
     from src.kernel.models import ModelEndpointRegistry
+    from src.nodes.registry import merged_endpoints
     from src.security.trust import DEFAULT_TRUST_ROOT
 
-    return ModelEndpointRegistry.from_config(
-        DEFAULT_TRUST_ROOT / "model_endpoints.yaml"
-    )
+    legacy = DEFAULT_TRUST_ROOT / "model_endpoints.yaml"
+    store = _node_store()
+    # The store is read on its own first, so a failure is blamed on the file
+    # that caused it: the merge reads `model_endpoints.yaml` before it, and a
+    # broken endpoint file must not be reported as unreadable computers.
+    try:
+        store.load()
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        console.print(
+            f"[yellow]The recorded computers in {escape(str(store.path))} "
+            f"could not be read, so they are left out:[/yellow] "
+            f"{escape(str(exc))}",
+            soft_wrap=True,
+        )
+        # Exactly what this function did before recorded computers existed.
+        return ModelEndpointRegistry.from_config(legacy)
+    return ModelEndpointRegistry(merged_endpoints(store, legacy))
 
 
 def _make_runner(
@@ -1304,9 +1334,10 @@ def model_list() -> None:
         console.print()
         console.print(_ENDPOINT_TEMPLATE)
     console.print(
-        "An endpoint is a name, a kind and a URL — it carries no capabilities, "
-        "so nothing yet checks whether a node can run a given step. See "
-        "'Known gaps' in the README."
+        "Computers recorded with [cyan]fukasawa node scan[/cyan] or "
+        "[cyan]fukasawa node add[/cyan], or in the desktop's Environment tab, "
+        "are listed here under their own names. Nothing yet checks whether a "
+        "computer can run a given step; see 'Still open' in the README."
     )
 
 
