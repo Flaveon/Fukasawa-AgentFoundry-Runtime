@@ -21,7 +21,7 @@ an error or silent truncation, and both fail the step.
 
 from dataclasses import dataclass, field
 
-from src.schemas.node import InferenceNode, NodeKind, Provenance
+from src.schemas.node import InferenceNode, NodeKind, Provenance, slugify
 
 #: Words per token for English prose. A rough but stable convention, used so a
 #: reader who has never heard of a token still gets a figure they can act on.
@@ -145,6 +145,20 @@ def nothing_answered(url: str) -> str:
     because it was just typed in.
     """
     return f"Nothing answered at {url}."
+
+
+def graph_name(label: str, node_id: str) -> str:
+    """Said when a computer's id is not the one its name would give.
+
+    A graph refers to a computer by id. When the id a name gives is already
+    taken -- by another computer, or by a name the runtime already resolves
+    -- a suffix is added (review finding 3), and somebody writing a graph
+    has to be told which one to use. Empty when there is nothing to say.
+    """
+    wanted = slugify(label)
+    if wanted == node_id:
+        return ""
+    return f"A graph calls it {node_id}, because {wanted} already names something else."
 
 
 def typed_in_opening(labels: list[str]) -> tuple[str, str]:

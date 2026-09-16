@@ -28,6 +28,60 @@ from src.schemas.node import InferenceNode, Provenance, ScanConsent
 DEFAULT_HOME = Path(os.environ.get("FUKASAWA_HOME", "~/.fukasawa")).expanduser()
 
 
+def _what(value) -> str:
+    """Name what was found where something else belonged, for a person."""
+    if value is None:
+        return "nothing"
+    if isinstance(value, list):
+        return "a list"
+    return f"the single value {value!r}"
+
+
+def unusable_message(path: Path, exc: Exception) -> str:
+    """Say what is wrong with a stored file, and name a way out of it.
+
+    Shared by the terminal and the desktop, so the two say the same words
+    (§3.7). Three failures are told apart, because they call for different
+    repairs: the file could not be opened at all, it is not YAML, or it
+    parses but is not laid out as this file is. ``NodeStore.load`` already
+    phrases the third and names the path, so it is passed through as
+    written.
+    """
+    if isinstance(exc, yaml.YAMLError):
+        detail = f"{path} is not valid YAML: {exc}"
+    elif isinstance(exc, OSError):
+        detail = f"{path} could not be opened: {exc}"
+    else:
+        detail = str(exc)
+    return (
+        f"{detail}\n"
+        "Correct that file, or move it aside and record the computers again."
+    )
+
+
+def recorded_at(
+    nodes: list[InferenceNode], url: str, kind
+) -> Optional[InferenceNode]:
+    """The computer in ``nodes`` at this address, however either was written.
+
+    Addresses are compared as ``address_for`` reads them, not character for
+    character. A record saved by an older build, by hand, or before ``node
+    add`` read addresses can hold ``10.0.0.9:11434`` or ``http://10.0.0.9``
+    where a look produces ``http://10.0.0.9:11434``; compared as strings, a
+    look at it filed the finding as a second computer and the first went on
+    reading "not answering". ``kind`` is needed because an address with no
+    port means that program's usual one. None when nothing is there.
+    """
+    # Late, because discovery sits above this module (it imports the network
+    # layer) and nothing here should depend on it at import time.
+    from src.nodes.discovery import address_for
+
+    wanted = address_for(url, kind)
+    return next(
+        (n for n in nodes if address_for(n.url, n.kind) == wanted), None
+    )
+
+
 class NodeStore:
     """Read and write the computers a person has told us about."""
 
@@ -41,10 +95,21 @@ class NodeStore:
         return DEFAULT_HOME / "nodes.yaml"
 
     def load(self) -> tuple[list[InferenceNode], ScanConsent]:
-        """Everything stored. A missing file is no computers and no permission."""
+        """Everything stored. A missing file is no computers and no permission.
+
+        A file that cannot be used raises ``ValueError`` naming it, whatever
+        is wrong with it -- or ``OSError`` / ``yaml.YAMLError`` when it cannot
+        be opened or is not YAML. That is the set every caller catches. YAML
+        of the wrong shape (a list, a bare word, a computer with nothing
+        under it) used to escape as ``AttributeError`` or ``TypeError``
+        straight past all of them, through the desktop and every graph run
+        (review finding 2); it is checked here, before anything is read out
+        of it.
+        """
         if not self.path.exists():
             return [], ScanConsent()
         raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
+        self._check_shape(raw)
         try:
             nodes = [
                 InferenceNode.model_validate({**spec, "node_id": node_id})
@@ -54,6 +119,37 @@ class NodeStore:
         except ValidationError as exc:
             raise ValueError(f"{self.path} does not match the contract — {exc}") from exc
         return nodes, consent
+
+    def _check_shape(self, raw) -> None:
+        """Refuse, by name, YAML that is not laid out the way this file is.
+
+        Written for the person who will open the file to fix it: it says
+        where the problem is and what belongs there.
+        """
+        if not isinstance(raw, dict):
+            raise ValueError(
+                f"{self.path} should start with `consent:` and `nodes:`, and "
+                f"it holds {_what(raw)} instead."
+            )
+        computers = raw.get("nodes") or {}
+        if not isinstance(computers, dict):
+            raise ValueError(
+                f"{self.path}: under `nodes:` each computer should be its "
+                f"name followed by its details, and they are written as "
+                f"{_what(computers)}."
+            )
+        for name, details in computers.items():
+            if not isinstance(details, dict):
+                raise ValueError(
+                    f"{self.path}: '{name}' under `nodes:` should have its "
+                    f"details written under it, and it has {_what(details)}."
+                )
+        consent = raw.get("consent") or {}
+        if not isinstance(consent, dict):
+            raise ValueError(
+                f"{self.path}: `consent:` should have the permission's details "
+                f"written under it, and it has {_what(consent)}."
+            )
 
     def save(self, nodes: list[InferenceNode], consent: ScanConsent) -> None:
         """Write every computer and the standing permission."""
@@ -76,14 +172,16 @@ class NodeStore:
     def upsert(self, node: InferenceNode) -> InferenceNode:
         """Add a computer, or refresh one already stored at the same address.
 
-        Values a person typed are preserved; values that were detected are
-        replaced. Two computers may never share a URL, and never silently
-        share an id either -- a newly discovered id already in use by a
-        different computer gets a numeric suffix (see ``_with_unique_id``).
+        Values a person typed are preserved, and so is the name; values that
+        were detected are replaced. Two computers may never share an address
+        -- compared as ``address_for`` reads it, not as a string, see
+        ``recorded_at`` -- and never silently share an id either: a new id
+        already in use gets a numeric suffix (see ``_with_unique_id``).
         """
         nodes, consent = self.load()
+        same = recorded_at(nodes, node.url, node.kind)
         for index, existing in enumerate(nodes):
-            if existing.url != node.url:
+            if existing is not same:
                 continue
             # Everything a person typed wins over anything just detected.
             # Only a top-level field can be copied across by name below --
@@ -96,12 +194,23 @@ class NodeStore:
                 for key, source in existing.provenance.items()
                 if source is Provenance.DECLARED
             }
+            # The name is kept whatever its source, as design §6.0 says a
+            # rescan does: a name saved without one -- as `node scan --label`
+            # saved it until review finding 4 -- was renamed back to
+            # "Ollama on this computer" by the next look.
             merged = node.model_copy(update={
                 "node_id": existing.node_id,
+                "label": existing.label,
                 "provenance": {**node.provenance, **typed},
             })
             for key in typed:
-                if "." in key:
+                # The address is the one exception. The two already name the
+                # same place (`recorded_at`), so what the person typed is
+                # kept; only its spelling becomes the one the look reached,
+                # which is the one the runtime can use. Restored as written,
+                # a record left as `http://10.0.0.9` read "answering" while
+                # sending every graph to port 80.
+                if "." in key or key == "url":
                     continue
                 setattr(merged, key, getattr(existing, key))
             nodes[index] = merged
@@ -113,8 +222,7 @@ class NodeStore:
         self.save(nodes, consent)
         return node
 
-    @staticmethod
-    def _with_unique_id(node: InferenceNode, nodes: list[InferenceNode]) -> InferenceNode:
+    def _with_unique_id(self, node: InferenceNode, nodes: list[InferenceNode]) -> InferenceNode:
         """Give ``node`` an id nobody in ``nodes`` already holds.
 
         Discovery derives an id from host:port (see ``src/nodes/discovery.py``),
@@ -124,8 +232,19 @@ class NodeStore:
         so the newcomer gets a numeric suffix (``-2``, ``-3``, ...) rather
         than silently displacing whoever already holds the id when ``save()``
         writes ``nodes`` as a dict keyed by id.
+
+        The names the runtime already resolves are taken too: the built-in
+        endpoints and those in ``model_endpoints.yaml`` beside this file. A
+        computer's entry wins over them (design §6), so without this,
+        calling a computer "GPU box" replaced a hand-written ``gpu-box`` and
+        sent every graph using it to another machine (review finding 3).
+        Only a newcomer is renamed -- an id already stored is already in
+        somebody's graphs.
         """
+        from src.nodes.registry import names_in_use
+
         taken = {existing.node_id for existing in nodes}
+        taken |= names_in_use(self.path.parent / "model_endpoints.yaml")
         if node.node_id not in taken:
             return node
         suffix = 2
@@ -142,8 +261,8 @@ class NodeStore:
         self.save(remaining, consent)
         return True
 
-    def mark_silent(self, url: str) -> bool:
-        """Record that the computer at this address was looked at and did not answer.
+    def mark_silent(self, node_id: str) -> bool:
+        """Record that this computer was looked at and did not answer.
 
         Discovery saves only what answers, so a look that found nothing
         changes no record. That was harmless until the summary panel began
@@ -154,13 +273,17 @@ class NodeStore:
         Two facts change: it is not answering, and when that was learned.
         Everything else -- what the person typed, and the last models and
         figures a look did find -- is left as it was. False when nothing is
-        stored at that address.
+        stored under that id.
+
+        Named by id rather than by address: the address is exactly what may
+        be spelled one way in the record and another in the look, and the
+        caller always knows which record it looked at.
         """
         from datetime import datetime, timezone
 
         nodes, consent = self.load()
         for node in nodes:
-            if node.url == url:
+            if node.node_id == node_id:
                 node.reachable = False
                 node.last_probed_at = datetime.now(timezone.utc)
                 self.save(nodes, consent)

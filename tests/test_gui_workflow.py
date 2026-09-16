@@ -1521,6 +1521,13 @@ class TestEnvironmentTab:
         stored = env.store.load()[0][0]
         assert (stored.label, stored.reachable) == ("Kitchen Box", False)
 
+    def test_a_name_a_graph_already_uses_is_named_after_saving(self, env):
+        """Review finding 3: the id changed, so the screen says to what."""
+        env.on_add()
+        env.fill_typed("Local Ollama", "10.0.0.9")
+        env.on_save_typed()
+        assert "A graph calls it local-ollama-2" in env.shown()
+
     def test_the_opening_differs_by_what_is_recorded(self, env):
         env.on_add()
         assert "No computers are recorded yet." in env.shown()
@@ -1620,7 +1627,11 @@ class TestEnvironmentTab:
         screens.append(env.shown())
         _use_net(env, answering={"10.0.0.9:11434"})
         env.on_check_typed()
-        _pump(env, lambda: not env.busy)
+        # Asserted: unchecked, a look that never closed left this screen
+        # captured mid-look, and the rules were checked against the wrong
+        # words (review finding 9).
+        assert _pump(env, lambda: not env.busy), "the check never finished"
+        assert "Answering when last checked" in env.shown()
         screens.append(env.shown())
         _seed(env)
         env.on_change("home-pc")

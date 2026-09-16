@@ -145,7 +145,13 @@ wrong with it, rather than failing silently.
 
 An existing `model_endpoints.yaml` keeps working alongside it. Endpoints
 resolve in this order, later winning: built-in defaults →
-`model_endpoints.yaml` → `nodes.yaml`.
+`model_endpoints.yaml` → `nodes.yaml`. A graph names a computer by its id —
+`kitchen-box` for "Kitchen Box". A new computer never takes a name a graph
+can already use, such as `local-ollama` or one written in
+`model_endpoints.yaml`: it gets a number on the end instead
+(`local-ollama-2`), and the screen says which name to use. If either file
+cannot be read, it is named in a warning and left out, and graphs that use
+nothing from it still run.
 
 ## Terminal equivalents
 
@@ -163,7 +169,8 @@ fukasawa node consent --set this-machine
 ```
 
 Exit codes: `0` done, `1` something to correct (an unknown choice, a missing
-address, an address already recorded, a part not built yet), `3` a refusal —
+address, an address already recorded, a `nodes.yaml` that cannot be used, a
+part not built yet), `3` a refusal —
 `--scope none`, or `--yes` with no permission to look recorded.
 
 ## Not yet

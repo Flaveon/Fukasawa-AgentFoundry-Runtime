@@ -858,9 +858,13 @@ def _model_endpoints() -> "ModelEndpointRegistry":
     `node scan`, `node add` or the Environment tab could not be used by
     `model test` or a graph run -- the one thing recording it is for.
 
-    A `nodes.yaml` that cannot be read must not stop a graph run that uses no
-    recorded computer, so it is named in a warning and left out. A graph that
-    does name one then fails on the endpoint, saying which names are known.
+    A file that cannot be read must not stop a graph run that uses nothing
+    from it, so each is named in a warning and left out, and the other still
+    resolves. A graph that does name something from it then fails on the
+    endpoint, saying which names are known. That held for `nodes.yaml` only:
+    a broken `model_endpoints.yaml` crashed every graph run and `model list`
+    with a parser traceback, and the test meant to guard it passed anyway
+    (review finding 7).
     """
     from src.kernel.models import ModelEndpointRegistry
     from src.nodes.registry import merged_endpoints
@@ -868,21 +872,18 @@ def _model_endpoints() -> "ModelEndpointRegistry":
 
     legacy = DEFAULT_TRUST_ROOT / "model_endpoints.yaml"
     store = _node_store()
-    # The store is read on its own first, so a failure is blamed on the file
-    # that caused it: the merge reads `model_endpoints.yaml` before it, and a
-    # broken endpoint file must not be reported as unreadable computers.
-    try:
-        store.load()
-    except (OSError, yaml.YAMLError, ValueError) as exc:
+
+    def left_out(path, exc) -> None:
+        """Name the file that could not be read, and what that costs."""
+        what = ("The recorded computers in " if path == store.path else "")
         console.print(
-            f"[yellow]The recorded computers in {escape(str(store.path))} "
-            f"could not be read, so they are left out:[/yellow] "
+            f"[yellow]{what}{escape(str(path))} could not be read, so "
+            f"{'they are' if what else 'what it lists is'} left out:[/yellow] "
             f"{escape(str(exc))}",
             soft_wrap=True,
         )
-        # Exactly what this function did before recorded computers existed.
-        return ModelEndpointRegistry.from_config(legacy)
-    return ModelEndpointRegistry(merged_endpoints(store, legacy))
+
+    return ModelEndpointRegistry(merged_endpoints(store, legacy, on_unreadable=left_out))
 
 
 def _make_runner(
@@ -1392,6 +1393,27 @@ def _node_store():
     return NodeStore()
 
 
+def _loaded(store):
+    """Everything stored -- or say why the file cannot be used, and exit 1.
+
+    Every `node` command reads the file through this first. It is hand-
+    editable by design, so a file that cannot be used is an expected outcome,
+    and every command used to answer it with a traceback (review finding 2).
+    The words are the ones the desktop shows (`unusable_message`), and they
+    name a way out. Exit 1: the file is wrong, nobody is refused anything.
+    """
+    from src.nodes.store import unusable_message
+
+    try:
+        return store.load()
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        console.print(
+            f"[yellow]{escape(unusable_message(store.path, exc))}[/yellow]",
+            soft_wrap=True,
+        )
+        raise typer.Exit(1)
+
+
 #: Both directions of the scope vocabulary, declared once. The CLI flag values
 #: are hyphenated; the enum values are not; the sentence is neither.
 _SCOPE_FLAGS = {
@@ -1461,7 +1483,7 @@ def node_scan(
     from src.schemas.node import ScanScope
 
     store = _node_store()
-    recorded, existing = store.load()
+    recorded, existing = _loaded(store)
 
     # Set on one path only: the person answered the menu. Two different acts
     # reach "not looking" and they are answered differently -- see the NONE
@@ -1561,7 +1583,7 @@ def _run_scan(
     own suggests typing a computer in, which is wrong for a check on one that
     was just typed in; the desktop's check replaces it with the same words.
     """
-    from src.schemas.node import ScanConsent
+    from src.schemas.node import Provenance, ScanConsent
 
     store.set_consent(ScanConsent.granted(chosen, "operator"))
 
@@ -1594,10 +1616,36 @@ def _run_scan(
         if event.node is not None and event.node not in found:
             found.append(event.node)
 
+    # `--label` is a name the person gave, so it is marked as theirs: saved
+    # with no source, the card read "not sure" beside it and the next look
+    # renamed it (review finding 4). One name for one computer -- given to
+    # two, it named neither usefully. Anything not done is said.
+    notes = []
+    if label and len(found) > 1:
+        which = "neither" if len(found) == 2 else "none of them"
+        notes.append(
+            f"Found {len(found)} computers, so {which} was called {label}. "
+            "Name each one in the desktop's Environment tab, or in nodes.yaml."
+        )
+        label = ""
     for node in found:
         if label:
             node.label = label
-        store.upsert(node)
+            node.provenance["label"] = Provenance.DECLARED
+        stored = store.upsert(node)
+        if label and stored.label != label:
+            # A computer already recorded keeps its name (design §6.0).
+            notes.append(
+                f"That computer is already recorded as {stored.label}, and "
+                f"keeps that name. Change it in the desktop's Environment "
+                f"tab, or in nodes.yaml."
+            )
+    for note in notes:
+        if as_json:
+            print(jsonlib.dumps({"stage": "label", "message": note,
+                                 "ok": False, "finished": False}))
+        else:
+            console.print(f"\n{escape(note)}", soft_wrap=True)
 
     # The summary panel is prose for a person: labelled rows, rounded word
     # figures, and a consequence sentence. Under --json it would land inside
@@ -1664,6 +1712,7 @@ def _type_it_in(store, recorded, label: str) -> None:
         f"\nSaved [bold]{escape(node.label)}[/bold] at {escape(url)}.",
         soft_wrap=True,
     )
+    _say_graph_name(node)
     console.print(NOT_CONTACTED)
 
     if not typer.confirm(MAY_I_CONTACT, default=False):
@@ -1683,21 +1732,39 @@ def _type_it_in(store, recorded, label: str) -> None:
     # by address, so what is found fills in the same record. What the person
     # typed -- the name, the address, the program -- is kept over anything
     # detected (NodeStore.upsert).
-    found = _run_scan(store, ScanScope.NAMED_HOST, url,
-                      on_nothing=nothing_answered(url))
-    if not any(n.url == url for n in found):
+    _run_scan(store, ScanScope.NAMED_HOST, url, on_nothing=nothing_answered(url))
+    # Read from the record, found again by its id, as the desktop's check
+    # does -- not by comparing addresses, which is how a look once filed its
+    # finding as a second computer and called this one silent (review
+    # finding 1). A look that reached it stamped `last_probed_at`.
+    after = next((n for n in store.load()[0] if n.node_id == node.node_id), None)
+    if after is not None and after.last_probed_at is None:
         # Discovery saves only what answers, so a look that found nothing
         # would leave the record reading "not checked yet" -- no longer true,
         # and the summary panel counts unchecked computers (M5, option C).
         # Stamp it as looked at and not answering -- the same call the
         # desktop's check makes, so the two cannot record it differently.
-        store.mark_silent(url)
+        store.mark_silent(node.node_id)
         console.print(
             f"\n{escape(node.label)} is still saved. To check it again, run "
             f"[cyan]fukasawa node scan --scope named-host --host "
             f"{escape(url)}[/cyan].",
             soft_wrap=True,
         )
+
+
+def _say_graph_name(node) -> None:
+    """Say which name a graph uses, when it is not the one the label gives.
+
+    A new computer does not take a name the runtime already resolves; it
+    gets a suffix (review finding 3). Somebody about to write
+    ``endpoint: gpu-box`` into a graph has to be told it is ``gpu-box-2``.
+    """
+    from src.nodes.summary import graph_name
+
+    note = graph_name(node.label, node.node_id)
+    if note:
+        console.print(escape(note), soft_wrap=True)
 
 
 def _record_by_hand(store, label: str, kind, url: str):
@@ -1713,9 +1780,12 @@ def _record_by_hand(store, label: str, kind, url: str):
     Exit 1, not 3: nothing is refused as a matter of doctrine, the request
     collides with a record, like a name that does not exist elsewhere here.
     """
+    from src.nodes.store import recorded_at
     from src.schemas.node import InferenceNode, Provenance, slugify
 
-    clash = next((n for n in store.load()[0] if n.url == url), None)
+    # However either address was written: a record left by an older build or
+    # a hand edit may spell the same computer differently (review finding 1).
+    clash = recorded_at(store.load()[0], url, kind)
     if clash is not None:
         console.print(
             f"[yellow]Already recorded at that address as "
@@ -1740,7 +1810,7 @@ def node_list(
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
     """Show every computer Fukasawa has been told about."""
-    nodes, _consent = _node_store().load()
+    nodes, _consent = _loaded(_node_store())
     if as_json:
         _emit_json({"nodes": [n.model_dump(mode="json") for n in nodes]})
         return
@@ -1765,18 +1835,21 @@ def node_list(
 @node_app.command("show")
 def node_show(node_id: str = typer.Argument(..., help="Which computer.")) -> None:
     """Show one computer and every model it can serve."""
-    nodes, _ = _node_store().load()
+    nodes, _ = _loaded(_node_store())
     match = next((n for n in nodes if n.node_id == node_id), None)
     if match is None:
         console.print(f"[red]Nothing stored called '{escape(node_id)}'.[/red]")
         raise typer.Exit(1)
 
-    from src.nodes.summary import human_bytes, human_rate, human_words
+    from src.nodes.summary import human_bytes, human_rate, human_words, status_of
 
     console.print(
         f"\n[bold]{escape(match.label)}[/bold]  [dim]{escape(match.url)}[/dim]"
     )
-    console.print(f"  Answering            {'yes' if match.reachable else 'no'}")
+    # The desktop card's three states, not yes/no: "no" for a computer nobody
+    # has contacted claimed it was silent, and the panel counts an unchecked
+    # computer and not a silent one (§3.6; review finding 6).
+    console.print(f"  {status_of(match)}")
     console.print(f"  Speed                {human_rate(match.host.tokens_per_second)}")
     console.print(f"  Graphics card        {human_bytes(match.host.vram_bytes)}")
     for model in match.models:
@@ -1795,20 +1868,31 @@ def node_add(
     url: str = typer.Option(..., "--url", help="Base URL it answers on."),
 ) -> None:
     """Add a computer by hand, without looking for it."""
+    from src.nodes.discovery import address_for
     from src.schemas.node import NodeKind
 
     if kind not in {k.value for k in NodeKind}:
         console.print(f"[red]'{escape(kind)}' is not one of: ollama, llamacpp[/red]")
         raise typer.Exit(1)
 
-    node = _record_by_hand(_node_store(), label, NodeKind(kind), url)
+    # Read the way the desktop's `add_node` and the typed-in route read an
+    # address (§3.7, §3.8). Stored as typed, `http://10.0.0.9` sent the
+    # runtime to port 80, `10.0.0.9:11434` was not a URL at all, and neither
+    # matched what a look at that computer produces (review finding 1).
+    url = address_for(url, NodeKind(kind))
+    store = _node_store()
+    _loaded(store)
+    node = _record_by_hand(store, label, NodeKind(kind), url)
     console.print(f"Added [bold]{escape(node.label)}[/bold].")
+    _say_graph_name(node)
 
 
 @node_app.command("forget")
 def node_forget(node_id: str = typer.Argument(..., help="Which computer.")) -> None:
     """Remove a computer."""
-    if not _node_store().forget(node_id):
+    store = _node_store()
+    _loaded(store)
+    if not store.forget(node_id):
         console.print(f"[red]Nothing stored called '{escape(node_id)}'.[/red]")
         raise typer.Exit(1)
     console.print(f"Removed {escape(node_id)}.")
@@ -1822,7 +1906,7 @@ def node_consent(
     from src.schemas.node import ScanConsent, ScanScope
 
     store = _node_store()
-    _nodes, consent = store.load()
+    _nodes, consent = _loaded(store)
     if not set_to:
         console.print(f"Currently: {_SCOPE_WORDS[consent.scope.value]}")
         return

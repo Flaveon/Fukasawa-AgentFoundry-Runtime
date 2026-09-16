@@ -68,6 +68,28 @@ class TestRoundTrip:
         assert "bogus" in str(exc.value)
 
 
+#: YAML that parses, but not into the shape of this file. Each one got past
+#: every handler as an AttributeError or TypeError, because only a contract
+#: failure was turned into the ValueError they catch (review finding 2).
+#: Shared with the service and CLI tests.
+WRONG_SHAPES = {
+    "a list": "- one\n- two\n",
+    "a bare word": "hello\n",
+    "computers as a list": "nodes:\n  - label: x\n",
+    "a computer with nothing under it": "nodes:\n  home-pc:\n",
+    "the permission as a word": "consent: yes\n",
+}
+
+
+class TestAFileOfTheWrongShape:
+    @pytest.mark.parametrize("text", WRONG_SHAPES.values(), ids=WRONG_SHAPES.keys())
+    def test_it_is_refused_by_name(self, store, text):
+        store.path.write_text(text, encoding="utf-8")
+        with pytest.raises(ValueError) as exc:
+            store.load()
+        assert str(store.path) in str(exc.value)
+
+
 class TestUpsert:
     def test_a_new_computer_is_added(self, store):
         store.upsert(node())
@@ -94,6 +116,19 @@ class TestUpsert:
             "rescan would silently overwrite it"
         )
 
+    def test_a_rescan_leaves_the_name_alone_however_it_was_saved(self, store):
+        """§6.0: a rescan leaves ``node_id`` and ``label`` alone.
+
+        Not only a name marked as typed. `node scan --label` saved its name
+        with no source at all until review finding 4, and the next rescan
+        renamed it back to "Ollama on this computer".
+        """
+        store.upsert(node(label="Home PC"))
+        store.upsert(node(label="Ollama on this computer", backend_version="0.6"))
+        nodes, _ = store.load()
+        assert nodes[0].label == "Home PC"
+        assert nodes[0].backend_version == "0.6"
+
     def test_a_dotted_declared_key_survives_a_rescan_without_raising(self, store):
         # "host.vram_bytes" is a documented provenance form (a person can, in
         # principle, declare a nested value) even though nothing in the
@@ -114,12 +149,54 @@ class TestUpsert:
         assert store.forget("nope") is False
 
 
+class TestAddressesSpelledDifferently:
+    """One computer, however its address was written down.
+
+    A record saved by an older build, by ``node add`` before it read
+    addresses, or by hand in ``nodes.yaml`` can hold ``10.0.0.9:11434`` or
+    ``http://10.0.0.9`` where a look produces ``http://10.0.0.9:11434``.
+    Matched character for character, a look at it filed what it found as a
+    second computer.
+    """
+
+    def test_a_finding_fills_in_a_record_saved_without_a_scheme(self, store):
+        store.save([node(node_id="kitchen-box", label="Kitchen Box",
+                         url="10.0.0.9:11434", reachable=False,
+                         provenance={"label": Provenance.DECLARED,
+                                     "url": Provenance.DECLARED})],
+                   ScanConsent())
+        merged = store.upsert(node(node_id="ollama-10-0-0-9-11434",
+                                   label="Ollama on 10.0.0.9",
+                                   url="http://10.0.0.9:11434"))
+        nodes, _ = store.load()
+        assert [(n.node_id, n.label) for n in nodes] == [("kitchen-box", "Kitchen Box")]
+        assert merged.node_id == "kitchen-box"
+        assert nodes[0].reachable is True
+
+    def test_a_record_saved_without_a_port_matches_its_programs_port(self, store):
+        store.save([node(node_id="kitchen-box", label="Kitchen Box",
+                         url="http://10.0.0.9", reachable=False)], ScanConsent())
+        store.upsert(node(node_id="ollama-10-0-0-9-11434", url="http://10.0.0.9:11434"))
+        assert [n.node_id for n in store.load()[0]] == ["kitchen-box"]
+
+    def test_a_different_program_on_another_port_is_another_computer(self, store):
+        store.save([node(node_id="kitchen-box", url="http://10.0.0.9")], ScanConsent())
+        store.upsert(node(node_id="llamacpp-10-0-0-9-8081", kind=NodeKind.LLAMACPP,
+                          url="http://10.0.0.9:8081"))
+        assert len(store.load()[0]) == 2
+
+
 class TestMarkSilent:
-    """A look that found nothing, recorded on the computer that was looked at."""
+    """A look that found nothing, recorded on the computer that was looked at.
+
+    Named by id, not by address: the address is exactly what may be spelled
+    differently in the record and in the look (see above), and the caller
+    always knows which record it looked at.
+    """
 
     def test_the_computer_reads_as_looked_at_and_not_answering(self, store):
         store.save([node()], ScanConsent.granted(ScanScope.THIS_MACHINE, "sam"))
-        assert store.mark_silent("http://localhost:11434") is True
+        assert store.mark_silent("home-pc") is True
         stored = store.load()[0][0]
         assert stored.reachable is False
         assert stored.last_probed_at is not None
@@ -131,17 +208,20 @@ class TestMarkSilent:
             models=[ModelCapability(name="llama3.1:8b", context_length=8192)],
             provenance={"label": Provenance.DECLARED},
         )], ScanConsent.granted(ScanScope.THIS_MACHINE, "sam"))
-        store.mark_silent("http://localhost:11434")
+        store.mark_silent("home-pc")
         stored, consent = store.load()
+        # Without this line every assertion below also holds when the stamp
+        # never lands, since then nothing changes at all.
+        assert stored[0].last_probed_at is not None
         assert stored[0].label == "Home PC"
         assert stored[0].source_of("label") is Provenance.DECLARED
         assert [m.name for m in stored[0].models] == ["llama3.1:8b"]
         assert consent.scope is ScanScope.THIS_MACHINE
 
-    def test_nothing_at_that_address_changes_nothing(self, store):
+    def test_an_id_not_stored_changes_nothing(self, store):
         store.save([node()], ScanConsent())
         before = store.path.read_text()
-        assert store.mark_silent("http://10.0.0.9:11434") is False
+        assert store.mark_silent("kitchen-box") is False
         assert store.path.read_text() == before
 
 
@@ -165,6 +245,50 @@ class TestNodeIdCollision:
         store.upsert(node(node_id="ollama-11434", url="http://10.0.0.2:11434"))
         third = store.upsert(node(node_id="ollama-11434", url="http://10.0.0.3:11434"))
         assert third.node_id == "ollama-11434-3"
+
+
+class TestNamesTheRuntimeAlreadyUses:
+    """A computer is used by its id, in the same namespace as every other
+    endpoint, and a computer's entry wins (design §6). An id taken from a
+    name a graph already uses would silently send that graph to a different
+    machine -- so a new computer gets a suffix instead (review finding 3)."""
+
+    def test_a_built_in_name_is_not_taken(self, store):
+        stored = store.upsert(node(node_id="local-ollama",
+                                   url="http://10.0.0.9:11434"))
+        assert stored.node_id == "local-ollama-2"
+        # The endpoint file named explicitly: the default is the tester's own.
+        endpoints = merged_endpoints(
+            store, legacy_path=store.path.parent / "model_endpoints.yaml")
+        assert endpoints["local-ollama"]["url"] == "http://localhost:11434"
+
+    def test_a_name_in_the_endpoint_file_beside_it_is_not_taken(self, store):
+        (store.path.parent / "model_endpoints.yaml").write_text(
+            "endpoints:\n  gpu-box:\n    kind: ollama\n"
+            "    url: http://10.0.0.5:11434\n", encoding="utf-8")
+        stored = store.upsert(node(node_id="gpu-box", kind=NodeKind.LLAMACPP,
+                                   url="http://10.0.0.9:8081"))
+        assert stored.node_id == "gpu-box-2"
+        endpoints = merged_endpoints(
+            store, legacy_path=store.path.parent / "model_endpoints.yaml")
+        assert endpoints["gpu-box"] == {"kind": "ollama", "url": "http://10.0.0.5:11434"}
+        assert endpoints["gpu-box-2"]["url"] == "http://10.0.0.9:8081"
+
+    def test_an_unreadable_endpoint_file_does_not_stop_a_computer_being_recorded(
+        self, store
+    ):
+        """Its names are not in use -- the runtime leaves that file out too."""
+        (store.path.parent / "model_endpoints.yaml").write_text(
+            "endpoints: [oops\n", encoding="utf-8")
+        assert store.upsert(node(node_id="gpu-box")).node_id == "gpu-box"
+
+    def test_a_computer_already_stored_keeps_its_id(self, store):
+        """Only a newcomer is renamed. An id already in graphs stays put."""
+        store.save([node(node_id="local-ollama", url="http://10.0.0.9:11434")],
+                   ScanConsent())
+        merged = store.upsert(node(node_id="ollama-10-0-0-9-11434",
+                                   url="http://10.0.0.9:11434"))
+        assert merged.node_id == "local-ollama"
 
 
 class TestEndpointResolution:

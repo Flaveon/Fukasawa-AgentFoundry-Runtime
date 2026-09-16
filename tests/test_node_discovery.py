@@ -170,7 +170,42 @@ class TestTypedAddresses:
             "https://box:9000"
         )
 
-    @pytest.mark.parametrize("typed", ["box", "box:9000", "http://box:9000/"])
+    #: Ways a person really types an address. The trailing-slash and
+    #: capitalised forms are what a browser's address bar hands over; the
+    #: bracketed one is how an IPv6 address is written in a URL.
+    TYPED = ["box", "box:9000", "http://box:9000/", "box/", "box:9000/",
+             "HTTP://box:9000", "Http://box/", "[::1]", "[::1]:9000"]
+
+    def test_a_trailing_slash_does_not_become_part_of_the_host(self):
+        """``10.0.0.9/`` once became ``http://10.0.0.9/:11434`` -- a path, not
+        a port -- which was stored, and which a look sent to port 80."""
+        assert address_for("10.0.0.9/", NodeKind.OLLAMA) == "http://10.0.0.9:11434"
+        assert [url for url, _ in candidate_addresses(ScanScope.NAMED_HOST, "box/")] == [
+            "http://box:11434", "http://box:8081",
+        ]
+
+    def test_the_scheme_is_recognised_however_it_is_capitalised(self):
+        assert address_for("HTTP://box", NodeKind.OLLAMA) == "http://box:11434"
+
+    def test_an_ipv6_address_is_not_mistaken_for_one_naming_a_port(self):
+        assert address_for("[::1]", NodeKind.OLLAMA) == "http://[::1]:11434"
+        assert address_for("[::1]:9000", NodeKind.OLLAMA) == "http://[::1]:9000"
+
+    @pytest.mark.parametrize("typed", TYPED)
+    @pytest.mark.parametrize("kind", list(NodeKind))
+    def test_an_address_reads_the_same_the_second_time(self, typed, kind):
+        """Read twice, an address must not change.
+
+        The store matches records by address, and an address is read once
+        when it is saved and again when a look is aimed at it. A reading
+        that moved on the second pass -- as a trailing slash once did --
+        files the finding under a second record and leaves the first
+        reading "not answering".
+        """
+        once = address_for(typed, kind)
+        assert address_for(once, kind) == once
+
+    @pytest.mark.parametrize("typed", TYPED)
     @pytest.mark.parametrize("kind", list(NodeKind))
     def test_a_later_look_at_that_address_reaches_the_same_record(self, typed, kind):
         """The store matches a finding to a record by address, exactly.
@@ -192,6 +227,13 @@ class TestTheStream:
         first = next(stream)
         assert isinstance(first, DiscoveryEvent)
         assert not first.finished, "the first event must not be the last"
+
+    def test_the_program_is_named_as_a_person_reads_it(self):
+        """§3.4: "It's Ollama 0.5.4" -- the program's name, not the enum's."""
+        fetch = Recorder()
+        lines = [e.message for e in discover(ScanScope.THIS_MACHINE, fetch=fetch,
+                                             post=fetch.post) if e.stage == "backend"]
+        assert lines == ["It's Ollama 0.5.4"]
 
     def test_each_event_carries_a_human_message(self):
         fetch = Recorder()

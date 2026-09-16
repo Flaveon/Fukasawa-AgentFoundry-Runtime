@@ -66,8 +66,19 @@ def judgements_in(output: str) -> list[str]:
 
 
 #: Design §3.1's vocabulary rule: words of the implementation that never
-#: appear in a sentence shown to a person.
-JARGON = ["endpoint", "provenance", "capability", "capabilities", "vram"]
+#: appear in a sentence shown to a person -- each with its plural, which
+#: until review finding 8 passed as a different word.
+JARGON = {
+    "endpoint": r"endpoints?",
+    "provenance": r"provenances?",
+    "capability": r"capabilit(?:y|ies)",
+    "vram": r"vram",
+}
+
+#: Not prose: a word in backticks is a key a person types into a file, and
+#: ``nodes.yaml`` / ``model_endpoints.yaml`` are file names. Both are
+#: identifiers, as a command is.
+_TYPED = r"(?<!`)"
 
 
 def jargon_in(output: str) -> list[str]:
@@ -76,13 +87,15 @@ def jargon_in(output: str) -> list[str]:
     Two words are allowed only as something a person types: ``node`` as the
     command noun in ``fukasawa node …``, and ``scope`` as the ``--scope``
     flag. Anywhere else they are the implementation showing through. Every
-    other word on ``JARGON`` is simply absent.
+    other word on ``JARGON`` is simply absent -- except as a key in backticks
+    or part of a file name, which are typed, not read.
     """
     lowered = output.lower()
-    found = [w for w in JARGON if re.search(rf"\b{w}\b", lowered)]
-    if re.search(r"(?<!fukasawa )\bnode\b", lowered):
+    found = [word for word, pattern in JARGON.items()
+             if re.search(rf"{_TYPED}\b{pattern}\b(?!\.yaml)", lowered)]
+    if re.search(rf"(?<!fukasawa ){_TYPED}\bnodes?\b(?!\.yaml)", lowered):
         found.append("node")
-    if re.search(r"(?<!--)\bscope\b", lowered):
+    if re.search(rf"(?<!--){_TYPED}\bscopes?\b", lowered):
         found.append("scope")
     return found
 

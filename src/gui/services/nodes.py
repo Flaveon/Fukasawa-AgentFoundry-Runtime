@@ -49,11 +49,12 @@ import yaml
 
 from src.gui.services.workflow import Outcome
 from src.nodes.discovery import address_for, discover
-from src.nodes.store import NodeStore
+from src.nodes.store import NodeStore, recorded_at, unusable_message
 from src.nodes.summary import (
     KIND_WORDS,
     MAY_I_CONTACT,
     NOT_CONTACTED,
+    graph_name,
     human_bytes,
     human_rate,
     human_words,
@@ -167,6 +168,10 @@ class AddResult(Outcome):
 
     node_id: str = ""
     url: str = ""
+    #: Which name a graph uses, when it is not the one the label gives: a
+    #: name the runtime already resolves is not taken (review finding 3).
+    #: Empty when there is nothing to say.
+    graph_name: str = ""
 
 
 @dataclass
@@ -226,21 +231,10 @@ def _store(store: Optional[NodeStore]) -> NodeStore:
 def _unusable(path: Path, exc: Exception) -> str:
     """Say what is wrong with the stored file, and name a way out of it.
 
-    Three failures are expected here and are told apart, because they call for
-    different repairs: the file could not be opened at all, it is not YAML, or
-    it parses but is not a computer. ``NodeStore.load`` already phrases the
-    third one and names the path, so it is passed through as written.
+    The words are the store's (``unusable_message``), shared with the
+    terminal so the two front ends cannot drift (§3.7).
     """
-    if isinstance(exc, yaml.YAMLError):
-        detail = f"{path} is not valid YAML: {exc}"
-    elif isinstance(exc, OSError):
-        detail = f"{path} could not be opened: {exc}"
-    else:
-        detail = str(exc)
-    return (
-        f"{detail}\n"
-        "Correct that file, or move it aside and record the computers again."
-    )
+    return unusable_message(path, exc)
 
 
 def _row(node: InferenceNode) -> NodeRowView:
@@ -461,7 +455,7 @@ def add_node(
         # happened instead, and name the computer holding the address so the
         # person can find it.
         stored, _consent = target.load()
-        clash = next((n for n in stored if n.url == url), None)
+        clash = recorded_at(stored, url, NodeKind(kind))
         if clash is not None:
             return AddResult(
                 ok=False, summary="Address already recorded",
@@ -479,8 +473,9 @@ def add_node(
     except (OSError, yaml.YAMLError, ValueError) as exc:
         return AddResult(ok=False, summary=UNUSABLE_FILE,
                          refusal=_unusable(target.path, exc))
-    return AddResult(ok=True, summary=f"Added {label}.",
-                     node_id=stored.node_id, url=stored.url)
+    note = graph_name(stored.label, stored.node_id)
+    return AddResult(ok=True, summary=f"Added {label}. {note}".rstrip(),
+                     node_id=stored.node_id, url=stored.url, graph_name=note)
 
 
 def check_node(
@@ -504,8 +499,18 @@ def check_node(
     panel counts (M5, option C). So when the look closes without having
     refreshed this computer, it is marked silent, **before** the closing event
     is yielded, keeping ``scan()``'s rule that a finished look has already
-    recorded what it learned. "Refreshed" is read from the record rather than
-    from the events: a look that reached it stamps ``last_probed_at``.
+    recorded what it learned. "Refreshed" is read from the record, found
+    again by its id, rather than from the events: a look that reached it
+    stamps ``last_probed_at``.
+
+    By id, not by address, because the address in the record may be spelled
+    differently from the one the look produced -- a record left by an older
+    build or a hand edit -- and matching on the string once filed a finding
+    as a second computer and called this one silent (review finding 1).
+
+    The closing line is replaced with "Nothing answered" only when nothing
+    at all answered. A record with no port is looked for on both programs'
+    ports, and the other one answering is a finding worth its own line.
     """
     target = _store(store)
     try:
@@ -522,16 +527,20 @@ def check_node(
         return
 
     before = match.last_probed_at
+    answered = False
     for event in scan(ScanScope.NAMED_HOST, match.url, store=target,
                       actor=actor, fetch=fetch, post=post):
+        answered = answered or bool(event.node_id)
         if event.finished and event.stage not in REFUSAL_STAGES:
             try:
                 after = next(
-                    (n for n in target.load()[0] if n.url == match.url), None
+                    (n for n in target.load()[0] if n.node_id == node_id), None
                 )
                 if after is not None and after.last_probed_at == before:
-                    target.mark_silent(match.url)
-                    event = replace(event, message=nothing_answered(match.url))
+                    target.mark_silent(node_id)
+                    if not answered:
+                        event = replace(event,
+                                        message=nothing_answered(match.url))
             except (OSError, yaml.YAMLError, ValueError) as exc:
                 yield ScanEventView(stage="store",
                                     message=_unusable(target.path, exc),
@@ -598,8 +607,8 @@ def update_field(
         # through. Two rows at one address survive until the next scan, which
         # merges into whichever it matches first and leaves the other a stale
         # duplicate nothing will ever refresh.
-        clash = next(
-            (n for n in nodes if n.url == value and n.node_id != node_id), None
+        clash = recorded_at(
+            [n for n in nodes if n.node_id != node_id], value, match.kind
         )
         if clash is not None:
             return Outcome(
