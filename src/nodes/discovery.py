@@ -56,11 +56,21 @@ class DiscoveryEvent:
 
 
 def _normalise(host: str) -> str:
-    """Turn what a person typed into a base URL, without inventing a port."""
+    """Turn what a person typed into a base URL, without inventing a port.
+
+    Reading an address twice must give the same answer as reading it once.
+    The store matches records by address, and an address is read when it is
+    saved and again when a look is aimed at it; a trailing slash that was
+    kept on the first reading and dropped on the second once filed a
+    finding under a second record, and left the first reading "not
+    answering". So the scheme is recognised whatever its capitals, and a
+    trailing slash is dropped whether or not a scheme was typed.
+    """
     host = host.strip()
-    if host.startswith("http://") or host.startswith("https://"):
-        return host.rstrip("/")
-    return f"http://{host}"
+    scheme, sep, rest = host.partition("://")
+    if sep and scheme.lower() in ("http", "https"):
+        return f"{scheme.lower()}://{rest}".rstrip("/")
+    return f"http://{host}".rstrip("/")
 
 
 def _kind_words(kind: NodeKind) -> str:
@@ -71,8 +81,16 @@ def _kind_words(kind: NodeKind) -> str:
 
 
 def _names_a_port(base: str) -> bool:
-    """Whether a base URL from ``_normalise`` already says which port to use."""
-    return ":" in base.split("//", 1)[1]
+    """Whether a base URL from ``_normalise`` already says which port to use.
+
+    Only the host part is read, not a path after it. A bracketed IPv6
+    address is full of colons and names a port only after its closing
+    bracket.
+    """
+    netloc = base.split("//", 1)[1].split("/", 1)[0]
+    if netloc.startswith("["):
+        return "]:" in netloc
+    return ":" in netloc
 
 
 def address_for(host: str, kind: NodeKind) -> str:
@@ -111,7 +129,7 @@ def candidate_addresses(scope: ScanScope, host: str) -> list[tuple[str, NodeKind
 
 def _describe(node: InferenceNode) -> list[tuple[str, str]]:
     """The human lines for what one probe established, in the order learned."""
-    lines = [("backend", f"It's {node.kind.value} {node.backend_version}".rstrip())]
+    lines = [("backend", f"It's {_kind_words(node.kind)} {node.backend_version}".rstrip())]
     if node.models:
         biggest = max(node.models, key=lambda m: m.size_bytes)
         lines.append(("models", f"{len(node.models)} models available"))

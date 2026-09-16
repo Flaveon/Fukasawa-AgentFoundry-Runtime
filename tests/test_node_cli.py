@@ -8,6 +8,7 @@ the copy rules of the design apply here exactly as they do on screen.
 """
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 from typer.testing import CliRunner
@@ -23,6 +24,7 @@ from src.schemas.node import (
     ScanScope,
 )
 from tests.copy_rules import jargon_in, judgements_in, ownership_in
+from tests.test_node_store import WRONG_SHAPES
 
 
 @pytest.fixture()
@@ -111,6 +113,25 @@ class TestShow:
         result = CliRunner().invoke(app, ["node", "show", "home-pc"])
         assert result.exit_code == 0, result.output
         assert "Home PC" in result.output
+
+    @pytest.mark.parametrize("reachable,probed,status", [
+        (False, False, "Not checked yet"),
+        (False, True, "Not answering when last checked"),
+        (True, True, "Answering when last checked"),
+    ])
+    def test_it_says_which_of_the_three_states_the_computer_is_in(
+        self, store_path, reachable, probed, status
+    ):
+        """Review finding 6. It printed "Answering no" for a computer nobody
+        had contacted, where the desktop card says "Not checked yet" -- and
+        the panel counts that one and not a silent one (§3.6), so the
+        difference is not cosmetic."""
+        seed(store_path, reachable=reachable, models=[],
+             last_probed_at=datetime.now(timezone.utc) if probed else None)
+        result = CliRunner().invoke(app, ["node", "show", "home-pc"])
+        assert result.exit_code == 0, result.output
+        assert status in result.output
+        assert "Answering            " not in result.output
 
     def test_asking_for_something_absent_names_what_was_asked_for(
         self, store_path
@@ -220,6 +241,75 @@ class TestScan:
         assert "8,192 tokens" in result.output
 
 
+class TestNamingWhatIsFound:
+    """`node scan --label` -- review finding 4.
+
+    The name was saved with no source at all, so the card read "not sure"
+    beside a name the person gave, and the next scan or the desktop's Check
+    again renamed it back to "Ollama on this computer".
+    """
+
+    @staticmethod
+    def _finds(monkeypatch, *ports):
+        """Discovery finding Ollama or llama.cpp on these local ports."""
+        from src.nodes.discovery import DiscoveryEvent
+
+        def fake(scope, host="", **kw):
+            for port in ports:
+                kind = NodeKind.OLLAMA if port == 11434 else NodeKind.LLAMACPP
+                found = InferenceNode(
+                    node_id=f"{kind.value}-127-0-0-1-{port}",
+                    label="Ollama on this computer" if port == 11434
+                    else "llama.cpp on this computer",
+                    kind=kind, url=f"http://127.0.0.1:{port}", reachable=True,
+                    last_probed_at=datetime.now(timezone.utc),
+                )
+                yield DiscoveryEvent("reachable", "Something's listening",
+                                     node=found)
+            yield DiscoveryEvent("done", f"Found {len(ports)}.", finished=True)
+
+        monkeypatch.setattr("src.cli._discover", fake)
+
+    SCAN = ["node", "scan", "--scope", "this-machine"]
+
+    def test_the_name_given_is_marked_as_given(self, store_path, monkeypatch):
+        self._finds(monkeypatch, 11434)
+        CliRunner().invoke(app, self.SCAN + ["--label", "Home PC"])
+        stored = NodeStore(store_path).load()[0][0]
+        assert (stored.label, stored.source_of("label").value) == ("Home PC", "DECLARED")
+
+    def test_the_next_scan_keeps_it(self, store_path, monkeypatch):
+        self._finds(monkeypatch, 11434)
+        CliRunner().invoke(app, self.SCAN + ["--label", "Home PC"])
+        CliRunner().invoke(app, self.SCAN)
+        assert NodeStore(store_path).load()[0][0].label == "Home PC"
+
+    def test_one_name_is_not_given_to_two_computers(self, store_path, monkeypatch):
+        """Both programs answering here made two computers called "Home PC"."""
+        self._finds(monkeypatch, 11434, 8081)
+        result = CliRunner().invoke(app, self.SCAN + ["--label", "Home PC"])
+        assert result.exit_code == 0, result.output
+        labels = sorted(n.label for n in NodeStore(store_path).load()[0])
+        assert labels == ["Ollama on this computer", "llama.cpp on this computer"]
+        prose = " ".join(result.output.split())
+        assert "so neither was called Home PC" in prose
+        assert jargon_in(result.output) == [], result.output
+
+    def test_a_computer_already_named_keeps_its_name_and_says_so(
+        self, store_path, monkeypatch
+    ):
+        """§6.0 keeps the name a computer already has. Kept silently, the
+        person who typed --label would not know it was not used."""
+        from src.schemas.node import Provenance
+
+        seed(store_path, url="http://127.0.0.1:11434",
+             provenance={"label": Provenance.DECLARED})
+        self._finds(monkeypatch, 11434)
+        result = CliRunner().invoke(app, self.SCAN + ["--label", "Garage"])
+        assert NodeStore(store_path).load()[0][0].label == "Home PC"
+        assert "already recorded as Home PC" in " ".join(result.output.split())
+
+
 class TestTheConsentPrompt:
     """Nothing opens a socket until somebody has said how far to look.
 
@@ -322,19 +412,30 @@ class TestTypingItIn:
         what discovery really produces, since it names what it finds after
         the address. A stand-in reusing the typed name could not tell a merge
         into the typed record from a second record that happens to match.
+
+        The address on the finding is the one real discovery produces for
+        that host (``candidate_addresses``), NOT the host string echoed back.
+        Echoed back, the finding's address always equalled the one saved, so
+        a saved address that a look reads differently -- review finding 1 --
+        could not arise here.
         """
-        from src.nodes.discovery import DiscoveryEvent
+        from src.nodes.discovery import DiscoveryEvent, candidate_addresses
 
         calls = []
 
         def fake(scope, host="", **kw):
             calls.append((scope, host))
-            if host == "http://10.0.0.9:11434":
+            looked_at = candidate_addresses(scope, host)[0][0]
+            if looked_at == "http://10.0.0.9:11434":
                 node = InferenceNode(
                     node_id="ollama-10-0-0-9-11434", label="Ollama on 10.0.0.9",
-                    kind=NodeKind.OLLAMA, url=host, reachable=True,
+                    kind=NodeKind.OLLAMA, url=looked_at, reachable=True,
                     models=[ModelCapability(name="llama3.1:8b",
                                             context_length=8192)],
+                    # As `discover` stamps every computer it reaches. The
+                    # check afterwards reads this to tell a reached record
+                    # from a silent one, as the desktop's does.
+                    last_probed_at=datetime.now(timezone.utc),
                 )
                 yield DiscoveryEvent("done", "Found 1 computer.", node=node,
                                      finished=True)
@@ -450,6 +551,27 @@ class TestTypingItIn:
         assert nodes[0].reachable is True
         assert [m.name for m in nodes[0].models] == ["llama3.1:8b"]
         assert "What this means when steps run" in result.output
+
+    def test_a_name_a_graph_already_uses_is_named_when_typed_in(
+        self, store_path, looked_at
+    ):
+        result = CliRunner().invoke(
+            app, ["node", "scan"], input="4\nLocal Ollama\n10.0.0.9\n1\nn\n"
+        )
+        assert result.exit_code == 0, result.output
+        assert "A graph calls it local-ollama-2" in " ".join(result.output.split())
+
+    def test_an_address_typed_with_a_trailing_slash_is_filled_in_too(
+        self, store_path, looked_at
+    ):
+        """Review finding 1, typed in: ``10.0.0.9:11434/`` was saved with its
+        slash, the look dropped it, and the finding became a second computer
+        while the typed one was stamped "not answering"."""
+        CliRunner().invoke(
+            app, ["node", "scan"], input="4\nKitchen Box\n10.0.0.9:11434/\n1\ny\n"
+        )
+        nodes, _ = NodeStore(store_path).load()
+        assert [(n.node_id, n.reachable) for n in nodes] == [("kitchen-box", True)]
 
     def test_when_nothing_answers_the_computer_stays_saved(
         self, store_path, looked_at
@@ -658,6 +780,60 @@ class TestTheWholeNetworkIsNotBuiltYet:
         assert asked == [ScanScope.THIS_MACHINE]
 
 
+#: Every way the file has been found unusable: not YAML, off the contract,
+#: and the five that parse into the wrong shape (review finding 2).
+UNUSABLE = {
+    "not YAML": "nodes: [unclosed\n",
+    "off the contract": "nodes:\n  home-pc:\n    kind: tealeaves\n    url: http://x\n",
+    **WRONG_SHAPES,
+}
+
+
+class TestAFileThatCannotBeUsed:
+    """Every `node` command raised a traceback on a file it could not use.
+
+    The desktop answered in sentences from Task 7 on; the terminal never
+    did, and after review finding 2 neither did the desktop for YAML of the
+    wrong shape. A traceback is not an error message (``workflow.py``).
+    """
+
+    COMMANDS = [
+        ["node", "list"],
+        ["node", "show", "home-pc"],
+        ["node", "forget", "home-pc"],
+        ["node", "consent"],
+        ["node", "consent", "--set", "this-machine"],
+        ["node", "add", "--label", "Kitchen Box", "--kind", "ollama",
+         "--url", "10.0.0.9"],
+        ["node", "scan", "--scope", "this-machine"],
+    ]
+
+    @pytest.mark.parametrize("text", UNUSABLE.values(), ids=UNUSABLE.keys())
+    @pytest.mark.parametrize("args", COMMANDS, ids=lambda a: " ".join(a[1:3]))
+    def test_it_is_named_and_nothing_else_happens(
+        self, store_path, monkeypatch, text, args
+    ):
+        store_path.write_text(text, encoding="utf-8")
+
+        def looked(*_a, **_k):
+            raise AssertionError("a look ran on a file that cannot be used")
+
+        monkeypatch.setattr("src.cli._discover", looked)
+        result = CliRunner().invoke(app, args)
+        assert isinstance(result.exception, SystemExit), repr(result.exception)
+        assert result.exit_code == 1, result.output
+        assert str(store_path) in result.output
+        assert "Correct that file" in result.output
+        assert store_path.read_text(encoding="utf-8") == text, "the file was written"
+        # Ours to judge: not the path, and not the file's own lines, which a
+        # YAML parser's message quotes back.
+        prose = result.output.replace(str(store_path), "")
+        for line in filter(None, (ln.strip() for ln in text.splitlines())):
+            prose = prose.replace(line, "")
+        for rule in (jargon_in, judgements_in, ownership_in):
+            assert rule(prose) == [], prose
+
+
 class TestAddAndForget:
     def test_a_computer_can_be_added_by_hand(self, store_path):
         result = CliRunner().invoke(app, [
@@ -696,6 +872,74 @@ class TestAddAndForget:
         assert [(n.node_id, n.label, n.kind) for n in nodes] == [
             ("home-pc", "Home PC", NodeKind.OLLAMA),
         ]
+
+    @pytest.mark.parametrize("typed", [
+        "http://10.0.0.9", "10.0.0.9", "10.0.0.9:11434", "10.0.0.9:11434/",
+    ])
+    def test_an_address_is_read_the_way_the_desktop_reads_it(
+        self, store_path, typed
+    ):
+        """§3.7 parity with the desktop's `add_node`, which always did this.
+
+        Stored as typed, ``http://10.0.0.9`` sent the runtime to port 80 and
+        ``10.0.0.9:11434`` was not a URL at all -- and neither matched what a
+        look at that computer produces, so a check filed its findings as a
+        second computer (review finding 1).
+        """
+        result = CliRunner().invoke(app, [
+            "node", "add", "--label", "Kitchen Box", "--kind", "ollama",
+            "--url", typed,
+        ])
+        assert result.exit_code == 0, result.output
+        assert NodeStore(store_path).load()[0][0].url == "http://10.0.0.9:11434"
+
+    def test_an_address_already_recorded_is_named_however_it_is_spelled(
+        self, store_path
+    ):
+        seed(store_path)
+        result = CliRunner().invoke(app, [
+            "node", "add", "--label", "Kitchen Box", "--kind", "ollama",
+            "--url", "localhost",
+        ])
+        assert result.exit_code == 1, result.output
+        assert "Home PC" in result.output
+        assert len(NodeStore(store_path).load()[0]) == 1
+
+    def test_a_record_left_under_another_spelling_is_still_named(
+        self, store_path
+    ):
+        """A record saved before `node add` read addresses, or by hand."""
+        seed(store_path, url="10.0.0.9:11434")
+        result = CliRunner().invoke(app, [
+            "node", "add", "--label", "Kitchen Box", "--kind", "ollama",
+            "--url", "http://10.0.0.9:11434",
+        ])
+        assert result.exit_code == 1, result.output
+        assert "Home PC" in result.output
+
+    def test_a_name_a_graph_already_uses_is_not_taken(self, store_path):
+        """Review finding 3. "GPU box" became `gpu-box`, replaced the
+        endpoint of that name in model_endpoints.yaml -- another machine, and
+        another program -- and said only "Added GPU box."."""
+        (store_path.parent / "model_endpoints.yaml").write_text(
+            "endpoints:\n  gpu-box:\n    kind: ollama\n"
+            "    url: http://10.0.0.5:11434\n", encoding="utf-8")
+        result = CliRunner().invoke(app, [
+            "node", "add", "--label", "GPU box", "--kind", "llamacpp",
+            "--url", "http://10.0.0.9:8081",
+        ])
+        assert result.exit_code == 0, result.output
+        assert NodeStore(store_path).load()[0][0].node_id == "gpu-box-2"
+        prose = " ".join(result.output.split())
+        assert "A graph calls it gpu-box-2" in prose
+        assert jargon_in(result.output) == [], result.output
+
+    def test_the_name_is_not_mentioned_when_it_is_the_expected_one(self, store_path):
+        result = CliRunner().invoke(app, [
+            "node", "add", "--label", "Kitchen Box", "--kind", "ollama",
+            "--url", "10.0.0.9",
+        ])
+        assert "A graph calls it" not in result.output
 
     def test_forgetting_something_absent_is_a_user_error(self, store_path):
         result = CliRunner().invoke(app, ["node", "forget", "nope"])
@@ -931,6 +1175,19 @@ class TestCopyRules:
         assert jargon_in("run fukasawa node scan --scope named-host") == []
         assert jargon_in("This node answered.") == ["node"]
         assert jargon_in("Choose a wider scope.") == ["scope"]
+
+    def test_a_plural_is_the_same_word(self):
+        """Review finding 8: "endpoints", "nodes" and "scopes" all passed."""
+        assert jargon_in("Recorded computers become endpoints.") == ["endpoint"]
+        assert jargon_in("Two nodes answered.") == ["node"]
+        assert jargon_in("Both scopes are stored.") == ["scope"]
+        assert jargon_in("Its capabilities are listed.") == ["capability"]
+
+    def test_a_file_name_or_a_key_to_type_is_not_prose(self):
+        """What a person types into a file is an identifier, like a command."""
+        assert jargon_in("Correct nodes.yaml, or model_endpoints.yaml.") == []
+        assert jargon_in("Under `nodes:` each computer has a name.") == []
+        assert jargon_in("'mine' under `endpoints:` needs a `kind:`.") == []
         assert jargon_in("The endpoint has 6 GB of VRAM.") == ["endpoint", "vram"]
 
     def test_a_comparison_between_figures_is_not_a_verdict_on_one(self):

@@ -775,3 +775,17 @@ type it in") answers a deliberate choice with "Refused" and exit 3.
   After that: Task 8 (Environment tab) — CHECK ITS PLAN SECTION AGAINST
   CURRENT SOURCE FIRST; fold in the copy-rule helper move to
   tests/copy_rules.py; and carry the M8 flow into the tab.
+
+--- 2026-09-12/13 — the independent review ---
+Final review: 3d81d36..e16b6e4 reviewed closely, ae6b775..e16b6e4 as
+  context (claude-opus-5, at the operator's request). THE PHASE BASE IS
+  ae6b775, not 3d81d36 — 3d81d36 is the end of Task 5. 10 findings (4
+  Important, 6 Minor), all reproduced, all fixed test-first at the operator's
+  go-ahead; #3 by numeric suffix per the operator. 24 guards mutation-checked
+  red, anchors unique, reverts by checksum. No FROZEN path over ae6b775..HEAD.
+  Record: final-review.md in this directory.
+  Tasks 6, 7, M8/I5/M5, 8 and 9 are now independently reviewed, with fixes.
+  The fixes themselves have had no second review.
+Task 5: minor (deferred, "upsert compares URLs as exact strings") — FIXED by
+  review finding 1.
+Task 3: minors (deferred) — still open.

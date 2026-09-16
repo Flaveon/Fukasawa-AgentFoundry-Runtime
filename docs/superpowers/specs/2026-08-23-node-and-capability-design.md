@@ -625,6 +625,28 @@ stored updates that node in place — refreshing detected fields, preserving
 every field whose source is *you told me*, and leaving `node_id` and `label`
 alone. This is what makes "Check again" safe to press.
 
+*Settled in the phase 10a review, 2026-09-12
+(`handoffs/reviews/node-and-capability/final-review.md`):*
+
+- **"Share a URL" means the same address however it is written.** Addresses
+  are compared as `address_for` reads them, not character for character, so
+  `10.0.0.9:11434` and `http://10.0.0.9:11434` are one computer, and
+  `http://10.0.0.9` is the one on its program's usual port. A record left by
+  an older build or a hand edit is matched like any other, and a look that
+  reaches it rewrites the address in the form it reached — the same
+  address, still *you told me*, now in the spelling the runtime can use.
+  Findings 1 and 5.
+- **An id never takes a name the runtime already resolves.** The built-in
+  endpoint names and those in `model_endpoints.yaml` count as taken, so a new
+  computer gets the suffix rather than silently replacing the endpoint every
+  graph using that name reaches. Both front ends say which name to use when
+  it is not the one the label gives. Finding 3, operator ruling: suffix, not
+  a warning. A name added to `model_endpoints.yaml` *after* a computer took
+  it still resolves to the computer, by the order above.
+- **`label` is left alone whatever its source**, as the paragraph above
+  says; a name given with `node scan --label` is also marked *you told me*.
+  Finding 4.
+
 ### 6.1 Doctrine this file must obey
 
 - **Nodes are referenced by name.** A graph says `endpoint: home-pc`. An

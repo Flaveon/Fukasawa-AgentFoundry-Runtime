@@ -20,29 +20,39 @@ permission before anything is contacted — and use them.
 | 3 | backend probes, Ollama and llama.cpp | reviewed clean |
 | 4 | consent-gated, streaming discovery | reviewed clean |
 | 5 | the store, and endpoint merging | reviewed clean |
-| 6 | the `node` CLI | reviewed, fixed — **fix round never reviewed** |
-| 7 | the GUI service layer | reviewed, fixed — **fix round never reviewed** |
-| M8, I5, M5 | typing a computer in; `node add` renaming; unchecked computers on the panel | **not reviewed** |
-| 8 | the desktop's Environment tab | **not reviewed** |
-| 9 | the wiring gap, doctrine tests, documentation, this note | **not reviewed** |
+| 6 | the `node` CLI | reviewed, fixed; fix round reviewed in the final review, and fixed |
+| 7 | the GUI service layer | reviewed, fixed; fix round reviewed in the final review, and fixed |
+| M8, I5, M5 | typing a computer in; `node add` renaming; unchecked computers on the panel | reviewed in the final review, and fixed |
+| 8 | the desktop's Environment tab | reviewed in the final review, and fixed |
+| 9 | the wiring gap, doctrine tests, documentation, this note | reviewed in the final review, and fixed |
 
-The operator has scheduled one Opus review over the whole branch, after this
-note. The review debt above is real and deliberate; do not describe any of
-it as reviewed clean until that review has happened.
+*Updated 2026-09-13.* The Opus review the operator scheduled after this note
+ran on 2026-09-12 over everything after Task 5, and found ten defects — four
+Important. All ten are fixed, test-first, every guard broken on purpose and
+confirmed red: `handoffs/reviews/node-and-capability/final-review.md`. **The
+fixes have had no second review**, so none of this is "reviewed clean".
 
 ## Files changed
 
-42 files, about 10,600 lines, since the phase base `3d81d36`
-(`git diff --stat 3d81d36`). No FROZEN path (`.github/workflows/frozen-paths.yml`).
+53 files, about 16,600 lines, since the phase base `ae6b775`
+(`git diff --stat ae6b775`) — the last commit before the design spec,
+`87d5466`. No FROZEN path (`.github/workflows/frozen-paths.yml`), checked
+over that whole range.
+
+*Corrected 2026-09-12.* This section first named `3d81d36` as the phase base.
+That commit is the end of Task 5 — the boundary between the reviewed and the
+unreviewed parts of the phase, not its start — and the figures given for it
+were wrong even for that range (45 files, about 11,000 lines).
 
 - **New:** `src/schemas/node.py`; `src/nodes/{backends,discovery,store,registry,summary}.py`;
   `src/gui/services/nodes.py`; `src/gui/environment_views.py`;
-  `docs/environment-guide.md`; `tests/copy_rules.py`; seven test modules.
+  `docs/environment-guide.md`; the design spec and the plan
+  (`docs/superpowers/`); `tests/copy_rules.py`; seven test modules.
 - **Changed:** `src/cli.py` (the `node` sub-app, and `_model_endpoints`);
   `src/gui/app.py` (the fourth tab); `src/gui/services/__init__.py`;
-  `pyproject.toml` (`pythonpath`); `tests/test_hardening.py`;
+  `pyproject.toml` (`pythonpath`); `.gitignore`; `tests/test_hardening.py`;
   `tests/test_packaging.py`; `tests/test_gui_workflow.py`; README, release
-  notes, CLI and desktop guides, backlog; the design spec.
+  notes, CLI and desktop guides, backlog.
 
 ## Tests run and results
 
@@ -53,6 +63,9 @@ GITHUB_ACTIONS=true xvfb-run -a .venv/bin/pytest -q   # as CI runs it
 .venv/bin/python -m pytest -q        # no display
 984 passed, 63 skipped
 ```
+
+After the final review's fixes (2026-09-13): **1221 passed, 2 skipped** as CI
+runs it; **1159 passed, 64 skipped** without a display.
 
 From 712 passed, 1 skipped at the plan's start. The two skips under CI's
 command: one pre-existing, and the operator-hostname check, which skips
@@ -139,8 +152,11 @@ looked at under Xvfb, which found four defects no test had.
 
 ## Recommended next action
 
-1. **The Opus review over the whole branch**, `3d81d36..main`, as the operator
-   scheduled. It settles the unreviewed rows in the table above.
+1. ~~**The Opus review**, as the operator scheduled: `3d81d36..main` closely —
+   everything after Task 5, none of it independently reviewed — with the
+   whole phase, `ae6b775..main`, as context.~~ **Done 2026-09-12, fixes
+   written 2026-09-13** — `handoffs/reviews/node-and-capability/final-review.md`.
+   Its fixes want a review of their own before this phase is called clean.
 2. The operator's call on "Check again" and the permission.
 3. Phase 10b — matching steps to computers — needs its own design: does a step
    no recorded computer can run block promotion, lower `AutomationReadiness`,

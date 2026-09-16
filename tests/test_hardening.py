@@ -332,31 +332,60 @@ class TestRecordedComputersAreUsable:
         assert "kitchen-box" in result.output
         assert "mine" in result.output, "model_endpoints.yaml stopped resolving"
 
+    @pytest.mark.parametrize("nodes", [
+        "nodes: [oops\n",
+        # YAML of the wrong shape, which raised AttributeError or TypeError
+        # straight past the warning below (review finding 2).
+        "- one\n- two\n",
+        "hello\n",
+        "nodes:\n  - label: x\n",
+        "nodes:\n  home-pc:\n",
+    ])
     def test_unreadable_computers_are_named_and_left_out(
-        self, tmp_path, monkeypatch
+        self, tmp_path, monkeypatch, nodes
     ):
         """A graph that uses no recorded computer must still run."""
         result = TestEndpointsAreDiscoverable()._run(
-            tmp_path, monkeypatch, exists=True, nodes="nodes: [oops\n"
+            tmp_path, monkeypatch, exists=True, nodes=nodes
         )
         assert result.exit_code == 0, result.output
         assert "could not be read" in result.output
         assert "nodes.yaml" in result.output
         assert "mine" in result.output
 
-    def test_a_broken_endpoint_file_is_not_blamed_on_the_computers(
-        self, tmp_path, monkeypatch
+    @pytest.mark.parametrize("text", [
+        "endpoints: [oops\n",
+        "- one\n",
+        "endpoints:\n  - mine\n",
+        "endpoints:\n  mine: http://x:11434\n",
+        "endpoints:\n  mine:\n    url: http://x:11434\n",
+    ])
+    def test_a_broken_endpoint_file_is_named_and_left_out(
+        self, tmp_path, monkeypatch, text
     ):
+        """The same rule as for `nodes.yaml`, for the other file.
+
+        This test used to assert only that the computers were not blamed --
+        which held when `model list` crashed with a ParserError and printed
+        nothing at all (review finding 7). Every graph run crashed the same
+        way. The exit code and the recorded computer are what make it able
+        to fail.
+        """
         from typer.testing import CliRunner
 
         from src import cli
 
         home = _home(tmp_path, monkeypatch)
         _record(home)
-        (home / "model_endpoints.yaml").write_text("endpoints: [oops\n",
-                                                   encoding="utf-8")
+        (home / "model_endpoints.yaml").write_text(text, encoding="utf-8")
         result = CliRunner().invoke(cli.app, ["model", "list"])
+        assert result.exit_code == 0, repr(result.exception)
+        prose = " ".join(result.output.split())
+        assert "model_endpoints.yaml could not be read" in prose.replace(
+            str(home) + "/", "")
         assert "recorded computers" not in result.output
+        assert "kitchen-box" in result.output, "the computers were left out too"
+        assert cli._model_endpoints().get("kitchen-box").url == RECORDED_URL
 
     def test_the_readme_documents_the_gap(self):
         # "Known gaps" became "Still open" when phase 10a closed half of it.

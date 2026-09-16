@@ -35,7 +35,8 @@ from src.schemas.node import (
     ScanConsent,
     ScanScope,
 )
-from tests.copy_rules import judgements_in, ownership_in
+from tests.copy_rules import jargon_in, judgements_in, ownership_in
+from tests.test_node_store import WRONG_SHAPES
 
 #: Every address ``THIS_MACHINE`` is allowed to reach. Anything else appearing
 #: in a recorder's log is a scan that went further than it was permitted. Taken
@@ -381,6 +382,86 @@ class TestWhatTheEnvironmentTabNeeds:
         assert not result.ok
         assert "Home PC" in result.refusal
 
+    @staticmethod
+    def _left_by_hand(store, url, *also):
+        """Kitchen Box, recorded at ``url`` as an older build or a hand edit left it.
+
+        Every other check test saves through ``add_node``, which writes the
+        address exactly as a look will produce it -- so the case where the
+        two are spelled differently could not arise in any of them. That is
+        the case review finding 1 was about.
+        """
+        store.save([*also, InferenceNode(
+            node_id="kitchen-box", label="Kitchen Box", kind=NodeKind.OLLAMA,
+            url=url, provenance={"label": Provenance.DECLARED,
+                                 "url": Provenance.DECLARED,
+                                 "kind": Provenance.DECLARED},
+        )], ScanConsent())
+
+    @pytest.mark.parametrize("url", [
+        "10.0.0.9:11434", "http://10.0.0.9", "http://10.0.0.9:11434/",
+    ])
+    def test_a_check_finds_a_record_however_its_address_was_written(
+        self, store, url
+    ):
+        """It said "Nothing answered", stamped the record silent, and filed
+        what it found as a second computer under a name nobody chose."""
+        self._left_by_hand(store, url)
+        recorder = Recorder(answering={"10.0.0.9:11434"})
+        last = list(service.check_node("kitchen-box", store, fetch=recorder,
+                                       post=recorder.post))[-1]
+        nodes, _ = store.load()
+        assert [(n.node_id, n.label) for n in nodes] == [("kitchen-box", "Kitchen Box")]
+        assert nodes[0].reachable is True
+        assert "Nothing answered" not in last.message
+        # The same address, now written as the look reached it -- the form
+        # the runtime can use. Kept as written, "answering" sat beside an
+        # address that sent the runtime to port 80, or was not a URL at all.
+        assert nodes[0].url == "http://10.0.0.9:11434"
+        assert nodes[0].source_of("url") is Provenance.DECLARED
+
+    def test_a_check_that_finds_something_else_does_not_say_nothing_answered(
+        self, store
+    ):
+        """A record with no port is looked for on both programs' ports. If
+        the other program answers, that is a finding: the record is still
+        stamped (its own program did not answer) but the closing line is
+        discovery's, which says what was found."""
+        self._left_by_hand(store, "http://10.0.0.9")
+        recorder = Recorder(answering={"10.0.0.9:8081"})
+        last = list(service.check_node("kitchen-box", store, fetch=recorder,
+                                       post=recorder.post))[-1]
+        assert "Nothing answered" not in last.message
+        kitchen = next(n for n in store.load()[0] if n.node_id == "kitchen-box")
+        assert (kitchen.reachable, kitchen.last_probed_at is not None) == (False, True)
+
+    def test_check_again_keeps_a_name_saved_without_a_source(self, store):
+        """Review finding 4, on the desktop: a name `node scan --label` saved
+        before the fix has no source, and Check again renamed it back to
+        "Ollama on this computer". §6.0 leaves a name alone on a rescan."""
+        store.save([InferenceNode(node_id="ollama-127-0-0-1-11434",
+                                  label="Home PC", kind=NodeKind.OLLAMA,
+                                  url="http://127.0.0.1:11434")], ScanConsent())
+        recorder = Recorder()
+        list(service.check_node("ollama-127-0-0-1-11434", store,
+                                fetch=recorder, post=recorder.post))
+        assert store.load()[0][0].label == "Home PC"
+
+    def test_an_address_written_another_way_is_still_named_when_added(self, store):
+        self._left_by_hand(store, "10.0.0.9:11434")
+        result = service.add_node("Garage", "ollama", "10.0.0.9", store)
+        assert not result.ok
+        assert "Kitchen Box" in result.refusal
+        assert len(store.load()[0]) == 1
+
+    def test_an_address_written_another_way_is_still_named_when_edited(self, store):
+        home = InferenceNode(node_id="home-pc", label="Home PC",
+                             kind=NodeKind.OLLAMA, url="http://localhost:11434")
+        self._left_by_hand(store, "10.0.0.9:11434", home)
+        result = service.update_field("home-pc", "url", "10.0.0.9", store)
+        assert not result.ok
+        assert "Kitchen Box" in result.refusal
+
     def test_checking_something_not_stored_is_answered_not_looked_for(self, store):
         recorder = Recorder()
         events = list(service.check_node("nope", store, fetch=recorder,
@@ -450,6 +531,21 @@ class TestAddingByHand:
         result = service.forget_node("nope", store)
         assert not result.ok
         assert "nope" in result.refusal
+
+
+class TestNamesTheRuntimeAlreadyUses:
+    """Review finding 3, on the desktop: the id is what a graph uses, so a
+    person told the name has changed is told the one to use."""
+
+    def test_a_built_in_name_is_not_taken_and_the_one_given_is_said(self, store):
+        result = service.add_node("Local Ollama", "ollama", "10.0.0.9", store)
+        assert result.ok
+        assert result.node_id == "local-ollama-2"
+        assert "A graph calls it local-ollama-2" in result.summary
+
+    def test_nothing_is_said_when_the_name_is_the_expected_one(self, store):
+        result = service.add_node("Kitchen Box", "ollama", "10.0.0.9", store)
+        assert "A graph calls it" not in result.summary
 
 
 class TestConsent:
@@ -784,8 +880,19 @@ class TestAFileAPersonEdited:
         path.mkdir()
         return NodeStore(path)
 
-    @pytest.fixture(params=["unparseable", "off_contract", "unopenable"])
-    def broken(self, request) -> NodeStore:
+    @pytest.fixture(params=["unparseable", "off_contract", "unopenable",
+                            *WRONG_SHAPES])
+    def broken(self, request, tmp_path) -> NodeStore:
+        """Every way the file has been found to be unusable.
+
+        The last five parse as YAML but not into this file's shape. Until
+        review finding 2 every one of them raised through the tab, because
+        the three fixtures above were the only shapes anybody had tried.
+        """
+        if request.param in WRONG_SHAPES:
+            path = tmp_path / "nodes.yaml"
+            path.write_text(WRONG_SHAPES[request.param], encoding="utf-8")
+            return NodeStore(path)
         return request.getfixturevalue(request.param)
 
     def test_listing_reports_it_rather_than_raising(self, broken):
@@ -811,6 +918,25 @@ class TestAFileAPersonEdited:
         assert "Correct that file" in refusal
         assert judgements_in(refusal) == [], refusal
         assert ownership_in(refusal) == [], refusal
+        # The words that describe a file of the wrong shape are new (review
+        # finding 2). Not ours to judge: the path, and the file's own lines,
+        # which a YAML parser's message quotes back.
+        prose = refusal.replace(str(broken.path), "")
+        if broken.path.is_file():
+            for line in broken.path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    prose = prose.replace(line.strip(), "")
+        assert jargon_in(prose) == [], refusal
+
+    def test_a_check_ends_on_a_stage_the_view_can_recognise(self, broken):
+        """Check again reads the file before it looks, and was never tried
+        against one that could not be used."""
+        recorder = Recorder()
+        events = list(service.check_node("home-pc", broken, fetch=recorder,
+                                         post=recorder.post))
+        assert [(e.stage, e.finished) for e in events] == [("store", True)]
+        assert str(broken.path) in events[0].message
+        assert recorder.asked == []
 
     def test_a_scan_ends_on_a_stage_the_view_can_recognise(self, broken):
         recorder = Recorder()

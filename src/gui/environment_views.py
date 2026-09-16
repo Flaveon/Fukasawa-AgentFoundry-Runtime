@@ -468,8 +468,11 @@ class EnvironmentTab(ctk.CTkFrame):
             self._say(result.refusal or result.summary)
             return
         self._added = result
+        # The graph name, when the service had to change it: somebody about
+        # to write this computer into a graph needs the name that works.
+        saved = f"Saved {self.name_entry.get()} at {result.url}."
         self.saved_label.configure(
-            text=f"Saved {self.name_entry.get()} at {result.url}."
+            text=f"{saved}\n{result.graph_name}" if result.graph_name else saved
         )
         self.save_button.configure(state="disabled")
         self._say("")
