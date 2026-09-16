@@ -32,7 +32,7 @@ runtime continues with the endpoints it can read.
 | 6 | nothing about `model list` | it still says an endpoint "carries no capabilities … see Known gaps" | say where computers are recorded and listed |
 | 7 | spec §9 unchanged | §9 still says an empty store means "every step stays with you" — a phrase §3.1.2 of the same document forbids | the approved words: "no step can be assigned to an agent" |
 | 8 | spec §9's "`node` only as a command noun" | no test checks it | check CLI and tab prose for `node`, *scope*, *endpoint*, *provenance*, *capability*, *VRAM* outside typed commands |
-| 9 | FROZEN check `main...HEAD` | `main` already contains the whole phase, so that diff is empty and proves nothing | check from the phase's base, `3d81d36` |
+| 9 | FROZEN check `main...HEAD` | `main` already contains the whole phase, so that diff is empty and proves nothing | check from the phase's base, `3d81d36` — **wrong, corrected 2026-09-12:** the base is `ae6b775`; `3d81d36` is the end of Task 5, so this check skipped Tasks 1–5. Re-run from `ae6b775` in the final review: no FROZEN path touched |
 
 ## Public history
 

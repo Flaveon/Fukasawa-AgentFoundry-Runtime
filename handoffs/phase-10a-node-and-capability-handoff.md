@@ -26,6 +26,23 @@ recollection.
 
 ## Where things stand
 
+> **2026-09-12/13 — the independent review is done, and its fixes are
+> written.** `3d81d36..main` reviewed closely, the whole phase as context.
+> Ten findings, four of them Important — the worst, a check that *found* a
+> computer saying "Nothing answered" and filing it as a second computer.
+> All ten fixed at the operator's go-ahead, test-first, 24 guards
+> mutation-checked red. Read
+> `reviews/node-and-capability/final-review.md`. The fixes themselves have
+> had no second review.
+>
+> **The phase base is `ae6b775`,** the commit before the design spec. This
+> file used to call `3d81d36` the base of the whole branch; `3d81d36` is the
+> end of Task 5, where the reviewed half of the phase stops. Corrected below
+> and in the completion note.
+>
+> The table and paragraphs below are the 2026-08-27 snapshot, updated
+> through 2026-09-11, and kept as the record.
+
 Branch: `claude/handoff-master-verification-37e5d2`
 Worktree: `.claude/worktrees/handoff-master-verification-37e5d2`
 HEAD at time of writing: `4999df2`
@@ -39,17 +56,16 @@ anywhere in this branch.
 | 3 backend probes | complete, reviewed clean |
 | 4 streaming discovery | complete, reviewed clean |
 | 5 storage + registry | complete, reviewed clean |
-| 6 CLI `node` sub-app | complete, reviewed, fixed — **fix commits never reviewed** |
-| 7 GUI service layer | complete, reviewed, fixed — **fix commits never reviewed** |
-| 8 Environment tab | complete 2026-09-11 — **not independently reviewed**; brief at `reviews/node-and-capability/task-8-brief.md` |
-| 9 doctrine tests, docs, phase note | complete 2026-09-11 — **not independently reviewed**; brief at `reviews/node-and-capability/task-9-brief.md`, note at `implementation/phase-10a-node-capability-completion-note.md` |
+| 6 CLI `node` sub-app | complete, reviewed, fixed — fix commits reviewed 2026-09-12 in the final review, and fixed again |
+| 7 GUI service layer | complete, reviewed, fixed — fix commits reviewed 2026-09-12 in the final review, and fixed again |
+| 8 Environment tab | complete 2026-09-11 — reviewed 2026-09-12 in the final review, and fixed; brief at `reviews/node-and-capability/task-8-brief.md` |
+| 9 doctrine tests, docs, phase note | complete 2026-09-11 — reviewed 2026-09-12 in the final review, and fixed; brief at `reviews/node-and-capability/task-9-brief.md`, note at `implementation/phase-10a-node-capability-completion-note.md` |
 
-**All nine tasks are done (2026-09-11). Next: the Opus review over the whole
-branch, `3d81d36..main`, which the operator scheduled for after Task 9.** Task
-9 found and fixed a gap in the phase itself — recorded computers were never
-wired into the runtime's endpoints — so the review should read that fix too.
-
-Then a final whole-branch review, which the plan already calls for.
+**All nine tasks are done (2026-09-11).** The Opus review the operator
+scheduled for after Task 9 — `3d81d36..main` closely, since everything before
+`3d81d36` was already reviewed, with the whole phase `ae6b775..main` as
+context — ran on 2026-09-12. Its record is
+`reviews/node-and-capability/final-review.md`.
 
 ### The review debt, stated plainly
 
@@ -61,8 +77,13 @@ severity held, and chose to batch rather than keep spending. Do not paper over
 it, and do not pretend those tasks are "reviewed clean".
 
 The plan's final whole-branch review is the natural place to settle it. When
-you get there, review `3d81d36..HEAD` with the knowledge that Tasks 6 and 7's
-fix commits have had no independent pass.
+you get there, review `3d81d36..HEAD` — everything after Task 5 — with the
+knowledge that Tasks 6 and 7's fix commits have had no independent pass, and
+read the whole phase from its base, `ae6b775`, for context.
+
+> **Settled 2026-09-12.** That review happened; see
+> `reviews/node-and-capability/final-review.md`. What remains unreviewed is
+> the review's own fixes.
 
 ---
 
