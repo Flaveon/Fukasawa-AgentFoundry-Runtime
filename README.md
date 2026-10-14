@@ -41,8 +41,7 @@ This repository is the layer that makes them run.
 
 Their source material lives beside this repository (`../FukasawaGPT/`,
 `../agent_foundry_gpt_builder_brief_v_1 (1).md`,
-`../Project_Directory_Standard.md`) and is **historical input, not a
-dependency** — nothing here reads them at build or run time.
+`../Project_Directory_Standard.md`). It is **authoritative product-intent evidence**, not a runtime dependency: nothing here needs to read those files at execution time. See `docs/fukasawa-north-star-v1.0.md` for the owner's intended end-state and the difference between today’s runtime and the future continuous-improvement loop.
 
 LangGraph and DSPy are useful comparison points, not governing architecture.
 Borrow the runtime ideas, not the worldview.
@@ -140,8 +139,7 @@ One file, ~30 MB, no Python needed by the recipient. See
 
 ## Documentation
 
-Start with **`docs/lifecycle-overview.md`** — what this is and why the stages
-are in that order.
+Start with **`docs/fukasawa-north-star-v1.0.md`** for product intent and **`docs/lifecycle-overview.md`** for the implemented lifecycle. The current workflow-governance lifecycle is necessary infrastructure, not the completed continuous-improvement product.
 
 | | |
 |---|---|
@@ -164,7 +162,7 @@ policy*.
 
 These date from the 2026-07-19 planning package and have **not** been updated
 across the nine implementation phases. They record what was intended before the
-code existed, and where they disagree with the code, **the code is right**:
+code existed, and where they disagree with the code, **treat the disagreement as an explicit intent-versus-implementation gap**, not proof that either side is automatically right. Running code and tests define current behavior; owner-approved intent and ADRs govern product direction and safe migration:
 
 `AGENTS.md` · `roadmap.md` · `brief/project-brief.md` · `specs/*.md` ·
 `docs/architecture.md` · `docs/product-principles.md` · `docs/dependencies.md` ·
@@ -203,6 +201,10 @@ Fukasawa-AgentFoundry-Runtime/
 |-- packaging/                 # PyInstaller spec, build script, runtime hook
 `-- tasks/backlog.md
 ```
+
+## Intended end state and source reconciliation
+
+The current implementation is a workflow governance runtime. The eventual Fukasawa product must also **observe, diagnose, simplify, validate improvements, transfer stable reasoning downward, and measure real operator/quality benefits**. Do not mark that loop complete from schema validation alone. Consult `docs/fukasawa-north-star-v1.0.md`, `docs/2026-05-31-quality-orchestrator-source-guide-v1.0.md`, and `docs/source-to-contract-map.md`. Any source disagreement requires a documented gap and owner-approved disposition. Historical planning documents are not automatically executable specifications; nor is implementation automatically a product decision.
 
 ## Still open
 
