@@ -6,7 +6,7 @@ You are building the Fukasawa-AgentFoundry Runtime: a local-first workflow gover
 
 The two source systems are FukasawaGPT (workflow architecture and complexity control) and Agent Foundry (agent package generation and deployment). This runtime is the executable layer that connects them.
 
-Read README.md before writing any code. Everything you build must serve the product frame described there.
+Before code changes, read `docs/fukasawa-north-star-v1.0.md`, `docs/source-to-contract-map.md`, `AGENTS.md` and `README.md`. The README documents what is implemented; it must **not** override owner-approved product intent. Historical source documents remain normative evidence for the intended philosophy, while live contracts govern safe current operation. Conflicts require an explicit gap/ADR and owner review; never silently declare 'code is right'. The stages below are historical phase-zero instructions, not fresh commands to reset or replace functioning implementation.
 
 ---
 
