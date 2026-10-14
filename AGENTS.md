@@ -12,11 +12,14 @@ This project turns FukasawaGPT and Agent Foundry into a ConcordiaPax workflow sc
 
 Read these first:
 
-1. `README.md`
-2. `brief/project-brief.md`
-3. `roadmap.md`
-4. `docs/product-principles.md`
-5. `docs/architecture.md`
+1. `docs/fukasawa-north-star-v1.0.md` (product intent and recovery roadmap)
+2. `docs/2026-05-31-quality-orchestrator-source-guide-v1.0.md` (source location and preserved summary)
+3. `docs/source-to-contract-map.md` (known implementation gaps)
+4. `README.md`
+5. `brief/project-brief.md`
+6. `roadmap.md`
+7. `docs/product-principles.md`
+8. `docs/architecture.md`
 
 Then read source doctrine from:
 
@@ -24,6 +27,14 @@ Then read source doctrine from:
 2. `../FukasawaGPT/Fukasawa_Task_Depth_Framework.md`
 3. `../FukasawaGPT/Workflow_Design_Brief.md`
 4. `../agent_foundry_gpt_builder_brief_v_1 (1).md`
+
+## Intent versus implementation
+
+- **Do not treat 'historical' documents as obsolete product intent or 'the code is right' as a decision rule.** Current code and tests describe current behavior; they do not redefine the owner's desired end-state.
+- Preserve functioning behavior while documenting the source-to-contract gap and seeking owner approval for intent-changing decisions. Do not silently implement an old plan if it conflicts with newer owner decisions or safety requirements.
+- Scope any plan against the continuous-improvement loop: observe -> diagnose -> simplify -> test -> transfer validated capabilities downward -> measure outcome. The validator/runtime is a foundation, not the finished product.
+- Include source reference, intent, implementation carrier, test, risk and proposed resolution for significant changes. Require measured before/after reduction of burden or complexity for optimization claims.
+- No autonomous coding agent may approve its own PR, change governance policies, or deploy unattended to production. Use bounded worktrees, tests, independent review and human approval.
 
 ## Working Rules
 
