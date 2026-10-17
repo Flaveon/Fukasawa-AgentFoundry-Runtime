@@ -1,0 +1,280 @@
+{
+  "hard_stop_utc": "2026-10-18T09:30:00+00:00",
+  "model": "Qwen_Qwen3.5-27B-Q4_K_M.gguf",
+  "not_run": [],
+  "not_run_count": 0,
+  "note": "Retries ONLY the 18 cases that were NOT_RUN in results/baseline-run2.json (run 2's hard stop arrived before they were attempted). Runs 1 and 2 are not repeated here. See PROTOCOL.md Amendment 2.",
+  "per_case": {
+    "2026-06-18-zi2xoz-qwen": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report verdict is HOLD and the operator verdict is NEEDS_REVISION, confirming the run is not ready for publication.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T13:04:13.106563+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 2831,
+        "prompt_tokens": 183,
+        "total_tokens": 3014
+      },
+      "wall_time_seconds": 181.99560714198742
+    },
+    "2026-06-19-5zluoi-qwen": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report identifies critical runtime failures and release holds that contradict the operator's pass verdict.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T13:07:15.102440+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 3785,
+        "prompt_tokens": 178,
+        "total_tokens": 3963
+      },
+      "wall_time_seconds": 243.76391415699618
+    },
+    "2026-06-21-6xnpnd-qwen": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report identifies critical runtime failures and artifact holds that mandate a hold despite the operator's pass verdict.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T13:11:18.866657+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 7554,
+        "prompt_tokens": 178,
+        "total_tokens": 7732
+      },
+      "wall_time_seconds": 488.62075222999556
+    },
+    "2026-06-22-jwxir2-qwen": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report identifies critical runtime failures and artifact holds that mandate a hold despite the operator's pass verdict.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T13:19:27.487695+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 7554,
+        "prompt_tokens": 178,
+        "total_tokens": 7732
+      },
+      "wall_time_seconds": 487.71874299302
+    },
+    "2026-06-22-zxxg0t-qwen": {
+      "adjudication": "ESCALATE",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "ESCALATE\nThe deterministic quality report indicates critical runtime failures and a HOLD verdict that directly contradicts the operator's PASS verdict.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T13:27:35.206792+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 4292,
+        "prompt_tokens": 168,
+        "total_tokens": 4460
+      },
+      "wall_time_seconds": 275.4559432740207
+    },
+    "2026-06-23-jl1vfi-qwen": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report identifies critical runtime failures and release holds that contradict the operator's pass verdict.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T13:32:10.663108+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 3785,
+        "prompt_tokens": 178,
+        "total_tokens": 3963
+      },
+      "wall_time_seconds": 243.09276709600817
+    },
+    "2026-06-24-th9m1a-qwen": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report flags runtime failures and artifact holds that contradict the operator's pass verdict.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T13:36:13.756218+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 4998,
+        "prompt_tokens": 168,
+        "total_tokens": 5166
+      },
+      "wall_time_seconds": 321.129274662002
+    },
+    "2026-06-25-22mg2t-qwen": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report's HOLD verdict and critical runtime failures necessitate holding the run despite the operator's pass recommendation.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T13:41:34.885909+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 5467,
+        "prompt_tokens": 180,
+        "total_tokens": 5647
+      },
+      "wall_time_seconds": 351.9451774129993
+    },
+    "2026-06-26-sie9rv-qwen": {
+      "adjudication": "ESCALATE",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "ESCALATE\nThe deterministic quality report indicates a HOLD verdict with runtime failures, which contradicts the operator's PASS verdict and shipping instructions.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T13:47:26.831467+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 4641,
+        "prompt_tokens": 170,
+        "total_tokens": 4811
+      },
+      "wall_time_seconds": 298.51615850802045
+    },
+    "2026-06-28-bwttks-qwen": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic report indicates a HOLD verdict with runtime failures, and the operator verdict confirms the content needs revision.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T13:52:25.348023+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 3705,
+        "prompt_tokens": 163,
+        "total_tokens": 3868
+      },
+      "wall_time_seconds": 237.9521354979952
+    },
+    "2026-06-29-eibsww-qwen": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report flags critical runtime failures and artifact holds that contradict the operator's pass verdict.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T13:56:23.300570+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 5064,
+        "prompt_tokens": 168,
+        "total_tokens": 5232
+      },
+      "wall_time_seconds": 325.73548762797145
+    },
+    "2026-06-29-k2r6mf-qwen": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report flags critical runtime failures and a HOLD verdict, which takes precedence over the operator's conflicting PASS decision.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T14:01:49.036526+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 5374,
+        "prompt_tokens": 170,
+        "total_tokens": 5544
+      },
+      "wall_time_seconds": 345.8459667239804
+    },
+    "2026-06-30-c4c1oc-qwen": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report explicitly flags a HOLD verdict due to runtime failures, which aligns with the operator's NEEDS_REVISION verdict.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T14:07:34.882928+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 3195,
+        "prompt_tokens": 183,
+        "total_tokens": 3378
+      },
+      "wall_time_seconds": 205.16877309500705
+    },
+    "2026-07-02-irhj4k-qwen": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report identifies critical runtime failures and artifact holds that override the operator's approval and prevent safe publication.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T14:11:00.052126+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 5585,
+        "prompt_tokens": 178,
+        "total_tokens": 5763
+      },
+      "wall_time_seconds": 359.5666373000131
+    },
+    "2026-07-03-dr3o6n-qwen": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report identifies critical runtime failures and artifact holds that override the operator's approval and prevent safe publication.",
+      "split": "held-out",
+      "started_at_utc": "2026-10-17T14:16:59.619239+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 5585,
+        "prompt_tokens": 178,
+        "total_tokens": 5763
+      },
+      "wall_time_seconds": 359.261464419018
+    },
+    "synthetic-adversarial-lowercase-001": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report mandates a HOLD due to an artifact release hold, which takes precedence over the operator's pass verdict.",
+      "split": "synthetic",
+      "started_at_utc": "2026-10-17T14:22:58.881167+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 4872,
+        "prompt_tokens": 145,
+        "total_tokens": 5017
+      },
+      "wall_time_seconds": 312.7864469169872
+    },
+    "synthetic-adversarial-spacing-001": {
+      "adjudication": "HOLD",
+      "ground_truth_label": "CONTRADICTION",
+      "raw_response_text": "HOLD\nThe deterministic quality report explicitly mandates a hold due to artifact release findings, which overrides the operator's conflicting pass verdict.",
+      "split": "synthetic",
+      "started_at_utc": "2026-10-17T14:28:11.668093+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 4796,
+        "prompt_tokens": 146,
+        "total_tokens": 4942
+      },
+      "wall_time_seconds": 308.4884530589916
+    },
+    "synthetic-malformed-missing-verdict-key-001": {
+      "adjudication": "SHIP",
+      "ground_truth_label": "NO_EVIDENCE",
+      "raw_response_text": "SHIP\nThe operator handoff document explicitly indicates a PASS verdict and a decision to ship the Article HTML.",
+      "split": "synthetic",
+      "started_at_utc": "2026-10-17T14:33:20.157047+00:00",
+      "status": "OK",
+      "timeout": 600.0,
+      "usage": {
+        "completion_tokens": 3673,
+        "prompt_tokens": 130,
+        "total_tokens": 3803
+      },
+      "wall_time_seconds": 235.82686997501878
+    }
+  },
+  "retried_count": 18
+}

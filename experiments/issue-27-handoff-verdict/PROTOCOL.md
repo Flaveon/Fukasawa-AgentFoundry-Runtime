@@ -374,6 +374,18 @@ reading its retry list from run 2's `not_run` array instead of run 1's
   numbers separately, with `INFRASTRUCTURE_FAILURE` and `NOT_RUN` always
   broken out rather than folded into each other or into the OK count.
 
+**Disclosure (2026-10-17, on committing run 3's results):**
+`experiments/issue-27-handoff-verdict/rerun_timeouts_run3.py` was written
+and run ONCE — producing `results/baseline-run3.json` — before the script
+itself or its result file was committed to git; both were untracked for
+the duration of that run, the same sequencing as run 2's
+`rerun_timeouts.py` (see the disclosure above). Nothing was altered after
+the fact. Run 3 did not hit its hard stop: **all 18 cases that run 2 left
+`NOT_RUN` resolved `OK`** this time (run 3 started at 13:04 UTC on
+2026-10-17, well inside its 2026-10-18 09:30 UTC hard stop, and finished
+long before it). As of run 3, every one of the 44 Baseline B cases has a
+real `OK` answer — zero remain `INFRASTRUCTURE_FAILURE` or `NOT_RUN`.
+
 ## What this experiment does not show
 
 * It does not fix the pipeline. `~/pipeline` and `~/substack` are never
