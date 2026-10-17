@@ -1114,6 +1114,14 @@ class TestMalformedFileUserinfoNeverLeaks:
     pydantic validation message -- neither was ever read as an address by
     `address_problem`/`has_userinfo`, which only look at a well-formed
     one, so this is a second, independent sweep over the finished message.
+
+    The last four shapes (``folded-scalar`` on) are last check's remaining
+    gap: a regex scrubber cannot anchor on an ``@`` that YAML folded a
+    space in front of, that an unencoded ``/`` or a ``'`` sits oddly next
+    to, or that PyYAML's own context snippet truncated away entirely. The
+    fix for those is structural -- ``_what()``, the pydantic branch and
+    the YAML branch no longer quote file content at all, by location or
+    by shape instead -- so these are no longer a scrubber's job to catch.
     """
 
     SECRET = "s3cret"
@@ -1126,23 +1134,55 @@ class TestMalformedFileUserinfoNeverLeaks:
         f"    url: http://y:1\n",
         f'nodes:\n  box:\n    label: x\n    kind: ollama\n    url: ["{URL}"]\n',
         f"nodes:\n  box:\n    label: x\n    kind: ollama\n    url: {URL}: x\n",
+        # Folded multi-line scalar: YAML inserts a space before the "@".
+        f"nodes:\n  kitchen: >\n    http://alice:{SECRET}\n    @10.0.0.9\n",
+        # An unencoded "/" in the password: the regex that used to scrub
+        # this left everything up to and including the "/" exposed, which
+        # is this whole secret plus more, so it is placed first.
+        f"nodes:\n  kitchen: http://alice:{SECRET}/more@10.0.0.9\n",
+        # A "'" in the password flips Python's repr() to double quotes,
+        # past which the old regex stopped -- again placed first so any
+        # part leaking at all still contains the whole secret.
+        f"nodes:\n  kitchen: \"http://alice:{SECRET}'more@10.0.0.9\"\n",
+        # A line long enough that PyYAML's own context snippet truncates
+        # before reaching the "@" at all.
+        "nodes:\n  box:\n    label: x\n    kind: ollama\n    url: "
+        f"http://alice:{SECRET}{'A' * 100}@10.0.0.9: x\n",
     ], ids=[
         "nodes-as-scalar", "consent-as-scalar", "misspelled-field",
         "url-as-list", "yaml-error-on-url-line",
+        "folded-scalar", "unencoded-slash", "apostrophe-in-password",
+        "yaml-error-truncated-before-at",
     ])
     def test_the_secret_never_reaches_any_output(self, store_path, content):
         store_path.write_text(content, encoding="utf-8")
 
+        def assert_clean(output: str) -> None:
+            assert self.SECRET not in output, output
+            # The structural fix suppresses the *whole* value, not only
+            # the part a regex could have anchored on -- the host is the
+            # easy, unambiguous way to tell "nothing of the value leaked"
+            # from "only the vulnerable part happened not to this time".
+            assert "10.0.0.9" not in output, output
+
         listing = CliRunner().invoke(app, ["node", "list"])
-        assert self.SECRET not in listing.output, listing.output
+        assert_clean(listing.output)
 
         as_json = CliRunner().invoke(app, ["node", "list", "--json"])
-        assert self.SECRET not in as_json.output, as_json.output
+        assert_clean(as_json.output)
+
+        shown = CliRunner().invoke(app, ["node", "show", "anything"])
+        assert_clean(shown.output)
+
+        scanned = CliRunner().invoke(
+            app, ["node", "scan", "--scope", "this-machine", "--json"]
+        )
+        assert_clean(scanned.output)
 
         from src.gui.services import nodes as svc
 
         desktop = svc.list_nodes(NodeStore(store_path))
-        assert self.SECRET not in desktop.refusal
+        assert_clean(desktop.refusal)
 
 
 class TestAddAndForget:

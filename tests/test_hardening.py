@@ -603,6 +603,75 @@ class TestUserinfoNeverLeaksIntoAFailedRun:
         assert result.exit_code == 0, result.output
         assert "s3cret" not in result.output
 
+    @pytest.mark.parametrize("nodes_yaml", [
+        "nodes: http://alice:s3cret@10.0.0.9\n",
+        "consent: http://alice:s3cret@10.0.0.9\n",
+        "nodes:\n  box:\n    adress: http://alice:s3cret@10.0.0.9\n"
+        "    label: x\n    kind: ollama\n    url: http://y:1\n",
+        'nodes:\n  box:\n    label: x\n    kind: ollama\n'
+        '    url: ["http://alice:s3cret@10.0.0.9"]\n',
+        "nodes:\n  box:\n    label: x\n    kind: ollama\n"
+        "    url: http://alice:s3cret@10.0.0.9: x\n",
+        "nodes:\n  kitchen: >\n    http://alice:s3cret\n    @10.0.0.9\n",
+        "nodes:\n  kitchen: http://alice:s3cret/more@10.0.0.9\n",
+        "nodes:\n  kitchen: \"http://alice:s3cret'more@10.0.0.9\"\n",
+        "nodes:\n  box:\n    label: x\n    kind: ollama\n    url: "
+        "http://alice:s3cret" + "A" * 100 + "@10.0.0.9: x\n",
+    ], ids=[
+        "nodes-as-scalar", "consent-as-scalar", "misspelled-field",
+        "url-as-list", "yaml-error-on-url-line",
+        "folded-scalar", "unencoded-slash", "apostrophe-in-password",
+        "yaml-error-truncated-before-at",
+    ])
+    def test_a_malformed_nodes_file_never_leaks_through_model_list_either(
+        self, tmp_path, monkeypatch, nodes_yaml
+    ):
+        """`model list` reads `nodes.yaml` too (through `merged_endpoints`'s
+        `on_unreadable` callback), by a completely separate route from
+        `node list` -- every one of the ten shapes above is checked here
+        as well, not only on the route the earlier repro happened to use."""
+        from typer.testing import CliRunner
+
+        from src import cli
+
+        home = _home(tmp_path, monkeypatch)
+        (home / "nodes.yaml").write_text(nodes_yaml, encoding="utf-8")
+        result = CliRunner().invoke(cli.app, ["model", "list"])
+        assert result.exit_code == 0, result.output
+        assert "s3cret" not in result.output
+        assert "10.0.0.9" not in result.output
+
+    @pytest.mark.parametrize("model_endpoints_yaml", [
+        "endpoints:\n  gpu: >\n    http://alice:s3cret\n    @10.0.0.9\n",
+        "endpoints:\n  gpu: http://alice:s3cret/more@10.0.0.9\n",
+        "endpoints:\n  gpu: \"http://alice:s3cret'more@10.0.0.9\"\n",
+        "endpoints:\n  gpu:\n    kind: ollama\n    url: "
+        "http://alice:s3cret" + "A" * 100 + "@10.0.0.9: x\n",
+    ], ids=[
+        "folded-scalar", "unencoded-slash", "apostrophe-in-password",
+        "yaml-error-truncated-before-at",
+    ])
+    def test_a_malformed_model_endpoints_file_never_leaks_either(
+        self, tmp_path, monkeypatch, model_endpoints_yaml
+    ):
+        """The same four shapes as for `nodes.yaml`, through the YAML
+        parser `legacy_endpoints` uses on this file directly -- an
+        independent parse of independent content, so each needed its own
+        check that the structural fix (``yaml_problem_location``) covers
+        it too."""
+        from typer.testing import CliRunner
+
+        from src import cli
+
+        home = _home(tmp_path, monkeypatch)
+        (home / "model_endpoints.yaml").write_text(
+            model_endpoints_yaml, encoding="utf-8"
+        )
+        result = CliRunner().invoke(cli.app, ["model", "list"])
+        assert result.exit_code == 0, result.output
+        assert "s3cret" not in result.output
+        assert "10.0.0.9" not in result.output
+
 
 class TestNodeDoctrine:
     """What must stay true of recorded computers however the feature grows.

@@ -29,22 +29,57 @@ DEFAULT_HOME = Path(os.environ.get("FUKASAWA_HOME", "~/.fukasawa")).expanduser()
 
 
 def _what(value) -> str:
-    """Name what was found where something else belonged, for a person.
+    """Name the *shape* of what was found where something else belonged,
+    for a person -- never the value itself.
 
     A hand-edited file's own scalar can be whatever a person wrote there,
-    including a url naming a user name or password -- this is the only
-    place that scalar is ever about to be quoted back verbatim, so it is
-    swept for that shape before it is (final re-review finding 1's
-    residual leak: a *malformed* record's own text, not an address this
-    module was ever asked to read as one).
+    including a url naming a user name or password, and quoting it back
+    -- even through a scrubber -- kept leaking it in shapes a regex could
+    not anchor on: a YAML fold inserts a space before the ``@``, an
+    unencoded ``/`` or a ``'`` in the text changes what `repr()` produces,
+    and none of those read as "userinfo" to a pattern built to recognise
+    one (last check's residual leak). The fix is structural: this never
+    had file content to leak in the first place. The shape -- "a single
+    value", "a list", and so on -- plus the path and the key this sits
+    under (already named by every caller) is enough to find the line and
+    fix it.
     """
-    from src.nodes.discovery import scrub_userinfo
-
     if value is None:
         return "nothing"
     if isinstance(value, list):
         return "a list"
-    return f"the single value {scrub_userinfo(repr(value))}"
+    if isinstance(value, dict):
+        return "a mapping"
+    if isinstance(value, bool):
+        return "true or false"
+    if isinstance(value, (int, float)):
+        return "a number"
+    return "a single value"
+
+
+def yaml_problem_location(exc: yaml.YAMLError) -> str:
+    """Describe a YAML problem by *where* it is, never by quoting the line
+    it is on.
+
+    ``str(exc)`` builds a context snippet straight from the file's own
+    text -- the one shape a regex scrubber could not reliably catch,
+    since PyYAML can fold it, truncate it before an ``@``, or simply quote
+    it however it likes (last check's residual leak). ``problem`` is
+    PyYAML's own short description of *what* is wrong ("mapping values
+    are not allowed here"), never a copy of the text itself, and
+    ``problem_mark`` is the line and column -- everything a person needs
+    to go find the line and fix it, with nothing from the line repeated
+    back. Every error ``yaml.safe_load`` actually raises for bad syntax
+    (``ScannerError``, ``ParserError``, ...) carries both; the fallback
+    below is for a bare ``yaml.YAMLError`` that, in principle, might not.
+    """
+    problem = getattr(exc, "problem", None)
+    if problem is None:
+        return "the file is not valid YAML"
+    mark = getattr(exc, "problem_mark", None)
+    if mark is not None:
+        return f"{problem} (line {mark.line + 1}, column {mark.column + 1})"
+    return problem
 
 
 def unusable_message(path: Path, exc: Exception) -> str:
@@ -63,18 +98,23 @@ def unusable_message(path: Path, exc: Exception) -> str:
     different instruction after one that had already said what to do
     (re-review nit).
 
-    Every branch is swept for userinfo before it is returned: a
-    *malformed* file's own text (``_what()``'s quoted scalar), a pydantic
-    validation message (``input_value=...``), or a PyYAML context snippet
-    can all echo a secret that was never read as an address, only as text
-    (final re-review finding 1's residual leak).
+    A YAML syntax error is described by location (``yaml_problem_location``),
+    never by ``str(exc)``'s own context snippet of the file's text, and a
+    pydantic validation error (raised from ``load()`` as a ``ValueError``)
+    is already built from ``loc``/``msg`` there, never ``input_value`` --
+    both are the structural fix for last check's residual leak, where a
+    regex scrubber kept missing a secret that PyYAML or pydantic had
+    folded, truncated, or quoted in a shape the pattern could not anchor
+    on. ``scrub_userinfo`` is kept here too, as a backstop over whatever
+    this function did not itself build (an ``OSError``'s own message, for
+    one) -- not as the only line of defence.
     """
     from src.nodes.discovery import scrub_userinfo
 
     if isinstance(exc, AmbiguousAddressError):
         return scrub_userinfo(str(exc))
     if isinstance(exc, yaml.YAMLError):
-        detail = f"{path} is not valid YAML: {exc}"
+        detail = f"{path} is not valid YAML: {yaml_problem_location(exc)}"
     elif isinstance(exc, OSError):
         detail = f"{path} could not be opened: {exc}"
     else:
@@ -218,7 +258,20 @@ class NodeStore:
             ]
             consent = ScanConsent.model_validate(raw.get("consent") or {})
         except ValidationError as exc:
-            raise ValueError(f"{self.path} does not match the contract — {exc}") from exc
+            # Built from `loc` and `msg` only, never `str(exc)`: pydantic's
+            # own rendering includes `input_value=...` for the field that
+            # failed, which can be the very url a person must never see
+            # echoed back (last check's residual leak -- the structural
+            # fix, same reasoning as `_what()` above). `loc`/`msg` say
+            # which field and what kind of problem without repeating what
+            # was typed into it.
+            problems = "; ".join(
+                f"{'.'.join(str(p) for p in err['loc']) or '(root)'}: {err['msg']}"
+                for err in exc.errors()
+            )
+            raise ValueError(
+                f"{self.path} does not match the contract — {problems}"
+            ) from exc
         return nodes, consent
 
     def _check_shape(self, raw) -> None:

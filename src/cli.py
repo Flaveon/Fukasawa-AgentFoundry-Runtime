@@ -886,20 +886,30 @@ def _model_endpoints() -> "ModelEndpointRegistry":
         does not name the file itself.
         """
         from src.nodes.discovery import scrub_userinfo
+        from src.nodes.store import yaml_problem_location
 
-        detail = str(exc)
-        if isinstance(exc, (OSError, yaml.YAMLError)) or str(path) not in detail:
-            detail = f"{path} could not be read: {detail}"
-        # `detail` is a full sentence on its own (`legacy_endpoints` and
-        # `NodeStore.load` end theirs with a period), and this appends
-        # another clause rather than starting a new sentence -- stripping
-        # one trailing period first is what keeps that from reading "...and
-        # it does not., so it is left out." (re-review nit).
-        detail = detail.rstrip(".")
-        # Swept for userinfo before it is printed: a *malformed* entry's own
-        # text (a pydantic or YAML message quoting it back) can still name
-        # one, and this is the one path that builds its sentence outside
-        # `unusable_message` (final re-review finding 1's residual leak).
+        if isinstance(exc, yaml.YAMLError):
+            # By location, never `str(exc)`'s own context snippet of the
+            # file's text -- the structural fix for last check's residual
+            # leak, same reasoning as `unusable_message`'s YAML branch.
+            detail = f"{path} could not be read: {yaml_problem_location(exc)}"
+        else:
+            detail = str(exc)
+            if isinstance(exc, OSError) or str(path) not in detail:
+                detail = f"{path} could not be read: {detail}"
+            # `detail` is a full sentence on its own (`legacy_endpoints` and
+            # `NodeStore.load` end theirs with a period), and this appends
+            # another clause rather than starting a new sentence --
+            # stripping one trailing period first is what keeps that from
+            # reading "...and it does not., so it is left out." (re-review
+            # nit).
+            detail = detail.rstrip(".")
+        # Swept for userinfo before it is printed: a *malformed* entry's
+        # own key (never its value, now that `legacy_endpoints` and
+        # `NodeStore.load` build these messages from shape and location
+        # only) could in principle still be read back here, so this stays
+        # as a backstop, not the only line of defence (final re-review
+        # finding 1).
         detail = scrub_userinfo(detail)
         # Named, not left as a bare "it": the previous wording left the one
         # entry's own address as the only thing "it" could plausibly mean,

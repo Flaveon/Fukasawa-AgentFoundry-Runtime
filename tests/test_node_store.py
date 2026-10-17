@@ -97,22 +97,28 @@ class TestAFileOfTheWrongShape:
             store.load()
         assert str(store.path) in str(exc.value)
 
-    def test_a_quoted_scalar_naming_a_password_is_scrubbed_at_the_source(
+    def test_a_quoted_scalar_naming_a_password_is_never_quoted_at_all(
         self, store
     ):
-        """Final check's residual leak: `_what()` quotes a hand-edited
-        file's own scalar back verbatim, which can be a tainted url even
-        though nothing here ever read it as an address. Checked on
-        ``store.load()``'s raw exception, before ``unusable_message``
-        gets a chance to scrub it too -- this is `_what()`'s own layer,
-        independent of that one."""
+        """Last check's structural fix: `_what()` used to quote a
+        hand-edited file's own scalar back verbatim, which could be a
+        tainted url even though nothing here ever read it as an address --
+        and a regex scrubber applied to that quote kept missing shapes it
+        could not anchor on (a YAML fold, an unencoded ``/``, a ``'`` that
+        flips `repr()` to double quotes, re-review rounds 2-4). `_what()`
+        now never quotes the value at all, only its shape, so there is
+        nothing left for any of those shapes to slip through."""
         store.path.write_text(
             "nodes:\n  box: http://alice:s3cret@10.0.0.9\n", encoding="utf-8"
         )
         with pytest.raises(ValueError) as exc:
             store.load()
-        assert "s3cret" not in str(exc.value)
-        assert "10.0.0.9" in str(exc.value)
+        message = str(exc.value)
+        assert "s3cret" not in message
+        assert "alice" not in message
+        assert "10.0.0.9" not in message
+        assert "a single value" in message
+        assert str(store.path) in message
 
     def test_an_unknown_top_level_key_names_it(self, store):
         """I3: a typo (`node:` for `nodes:`) must not read as "no computers".
