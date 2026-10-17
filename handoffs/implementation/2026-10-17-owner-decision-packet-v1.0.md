@@ -174,3 +174,15 @@ satisfies Gate G, or Jules's pass is still required, is your decision.**
 This run prepared PRs, ran independent reviews and confirmed CI, but merging
 was refused by the session's permission policy ("merge without review"). Each
 PR lists its reviews; merging is yours.
+
+## 12. Paused runs from before the brief-pinning fix
+
+**What is true now (on `fix/gate-g-review-findings`).** A paused run now
+continues only under the brief it started with. Runs started before the fix
+carry no record of which brief that was, so they are refused — the safe
+default — and the refusal says how to start a fresh run; the old run stays in
+the ledger as history. **Question:** should there also be an explicit,
+recorded override ("continue under the current brief", with who decided and
+why, written to the append-only ledger, like accepting a risk)? *Recommended:*
+no, unless you have paused runs you need to finish — a fresh run loses
+nothing the ledger needs, and every override is one more way round a guard.
