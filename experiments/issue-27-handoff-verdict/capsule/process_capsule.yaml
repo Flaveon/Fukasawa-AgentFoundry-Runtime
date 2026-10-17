@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# Issue #27 — Handoff/quality-report consistency check. This is a capsule
+# for PROMOTION REVIEW, not a promoted capability. See ROLLOUT.md in this
+# directory: "Not promoted. Requires owner review and approval (issue #27
+# checklist item 6)." Validated against AgentCapsuleContract
+# (src/schemas/agent_package.py:110) — the design-time transfer contract,
+# distinct from the runtime's own ProcessCapsule (one execution instance).
+task_name: "q2c-duath-handoff-quality-report-consistency: flag a Duath operator
+  handoff that authorizes shipping (or claims an Angela PASS) for a run whose
+  deterministic quality-report.json verdict is HOLD, for the same run_id."
+owner_agent: package-consistency-checker
+workflow_id: q2c-duath-handoff-quality-report-consistency
+maturity: draft
+depth_level: 0
+inputs:
+  - name: duath operator handoff text for one run_id
+    type: markdown text or null
+    required: true
+    source: "~/substack/<date>/support/<run_id>-duath-operator-handoff.md (private, not read by this capsule directly — caller's job)"
+  - name: parsed quality-report.json for the SAME run_id
+    type: dict or null
+    required: true
+    source: "~/substack/deploy/<MM_DD_YY>/<run_id>/quality-report.json (private, not read by this capsule directly — caller's job)"
+steps:
+  - name: "parse the handoff's 'Angela verdict:' line and '## Shipping Decision' bullet lines"
+    depth_level: 0
+    deterministic: true
+  - name: "read the quality report's 'verdict' field (PASS/HOLD), treating anything else as absent"
+    depth_level: 0
+    deterministic: true
+  - name: "if the report verdict is HOLD, compare: does the handoff claim Angela PASS, or does any
+      Shipping Decision line's value authorize shipping (case/whitespace-insensitive, prose-aware)"
+    depth_level: 0
+    deterministic: true
+  - name: "if either document could not be read, parsed, or lacks the fields needed for comparison,
+      return ABSTAIN with an escalation to a human operator — never CONSISTENT"
+    depth_level: 0
+    deterministic: true
+known_failures:
+  - failure: quality report is missing, unreadable, or has no valid verdict field
+    signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator"
+    response: a human reads the raw files directly; this capsule makes no claim about them
+  - failure: handoff is missing, empty, or unreadable
+    signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator"
+    response: a human reads the raw handoff directly; this capsule makes no claim about it
+  - failure: handoff is readable but has neither an Angela verdict line nor a Shipping Decision section
+    signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator"
+    response: treat as an unreviewed handoff, not as a passing one
+  - failure: this capsule's scope does not cover a PASS report with an over-conservative handoff
+    signal: ConsistencyVerdict.CONSISTENT is returned even when the handoff is needlessly cautious
+    response: "documented boundary, not a bug -- see package_consistency.py's docstring; out of scope
+      for issue 27, which is specifically about over-authorization against a HOLD, not under-authorization
+      against a PASS"
+escalation_rules:
+  - condition: ConsistencyVerdict.ABSTAIN (any of the known_failures above)
+    target: human operator
+    requested_checks: read the raw handoff and quality-report.json for this run_id directly; do not
+      assume either document is correct
+output_schema:
+  status: "BLOCK | CONSISTENT | ABSTAIN"
+  evidence: "each contradicted handoff line, verbatim, for BLOCK; the specific missing/malformed field
+    for ABSTAIN; nothing additional for CONSISTENT"
+  confidence: "not scored — this is a deterministic function; the same inputs always produce the same
+    output, so there is no probabilistic confidence to report"
+  recommended_next_step: "BLOCK -> do not publish, correct the handoff or the run; CONSISTENT -> no
+    action; ABSTAIN -> escalate to the human operator named in escalation_rules"
