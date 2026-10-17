@@ -8,12 +8,14 @@ The Phase 3 exit criteria, made executable:
 * repeated failures are visible in the run ledger.
 """
 
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
 from src.foundry.generator import generate_packages
+from src.foundry.validator import validate_package
 from src.governance.evals import load_eval_case, run_eval_case
 from src.governance.maturity import PromotionRefusedError, assess, promote
 from src.runtime.handoff import write_handoff
@@ -124,6 +126,204 @@ class TestEvalRunner:
             handoff_dir=tmp_path / "empty",
         )
         assert result.overall is CheckOutcome.FAIL
+
+
+def _package_snapshot(pkg: Path) -> dict:
+    """Byte contents of every file a promotion can rewrite.
+
+    Used to prove a refused or interrupted promotion left the package
+    exactly as it found it — a comparison that only means something if it
+    covers every file `promote()` touches, so the list here must track
+    `_render_maturity_declarations`/`_render_mandatory_eval_checks`/
+    `_render_learning_log_entry` in `src/governance/maturity.py`.
+    """
+    names = ("SKILL.md", "process_capsule.yaml", "manifest.json", "evals.yaml", "learning_log.md")
+    return {name: (pkg / name).read_bytes() for name in names}
+
+
+def _run_to_completion(runtime, brief) -> None:
+    """Start and fully advance one extra run to PUBLISHED (and therefore
+    RunStatus.COMPLETE), for tests that need several complete runs on the
+    ledger."""
+    capsule, run = runtime.start(brief)
+    for state, ev in [
+        ("DRAFT_READY", "~/substack/draft.md"),
+        ("EDITOR_REVIEW", "submitted, 1500 words"),
+        ("APPROVED", "editor sign-off"),
+        ("PUBLISHED", "final.md -> ~/substack/"),
+    ]:
+        capsule = runtime.advance(brief, capsule, state, evidence=ev, run=run)
+
+
+class TestPromotionIsAtomic:
+    """Gate G findings F-M1 and F-M2: a refused promotion must not change the
+    package, and an interrupted one must never leave it in a state that is
+    neither the old maturity nor the new one."""
+
+    def test_blank_reviewer_leaves_the_package_untouched(self, world):
+        ledger, runtime, brief, writer, run, handoff_dir = world
+        before = _package_snapshot(writer)
+        with pytest.raises(PromotionRefusedError, match="human reviewer"):
+            promote(writer, ledger, reviewed_by="   ")
+        assert _package_snapshot(writer) == before
+        assert ledger.promotions_for("writer-agent") == []
+
+    def test_unmet_criteria_leaves_the_package_untouched(self, world):
+        ledger, runtime, brief, writer, run, handoff_dir = world
+        before = _package_snapshot(writer)
+        with pytest.raises(PromotionRefusedError, match="unmet criteria"):
+            promote(writer, ledger, reviewed_by="flaveon")
+        assert _package_snapshot(writer) == before
+        assert ledger.promotions_for("writer-agent") == []
+
+    def test_missing_rationale_leaves_the_package_untouched(self, world):
+        ledger, runtime, brief, writer, run, handoff_dir = world
+        _run_all_cases(ledger, run, writer, handoff_dir)
+        promote(writer, ledger, reviewed_by="flaveon")  # draft -> tested
+        before = _package_snapshot(writer)
+        before_rows = len(ledger.promotions_for("writer-agent"))
+        with pytest.raises(PromotionRefusedError, match="rationale"):
+            promote(writer, ledger, reviewed_by="flaveon")
+        assert _package_snapshot(writer) == before
+        assert len(ledger.promotions_for("writer-agent")) == before_rows
+
+    def test_already_validated_leaves_the_package_untouched(self, world):
+        ledger, runtime, brief, writer, run, handoff_dir = world
+        # Hand-set rather than earned: cheaper than climbing the full ladder,
+        # and `assess()` returns at Maturity.VALIDATED before reading
+        # anything else, so this is enough to reach the refusal under test.
+        manifest = json.loads((writer / "manifest.json").read_text())
+        manifest["maturity"] = "validated"
+        (writer / "manifest.json").write_text(json.dumps(manifest))
+        before = _package_snapshot(writer)
+        with pytest.raises(PromotionRefusedError, match="already"):
+            promote(writer, ledger, reviewed_by="flaveon")
+        assert _package_snapshot(writer) == before
+        assert ledger.promotions_for("writer-agent") == []
+
+    def test_ledger_write_failure_leaves_old_state_everywhere(self, world, monkeypatch):
+        """F-M2 fault injection: the ledger commit happens before any file is
+        touched, so a failure there must leave every file at the old
+        maturity and record no promotion."""
+        ledger, runtime, brief, writer, run, handoff_dir = world
+        _run_all_cases(ledger, run, writer, handoff_dir)
+        before = _package_snapshot(writer)
+
+        def boom(*a, **k):
+            raise RuntimeError("ledger write failed mid-promotion")
+
+        monkeypatch.setattr(ledger, "record_promotion", boom)
+        with pytest.raises(RuntimeError, match="ledger write failed"):
+            promote(writer, ledger, reviewed_by="flaveon")
+        monkeypatch.undo()
+
+        assert _package_snapshot(writer) == before, (
+            "no file may change before the ledger commits the promotion"
+        )
+        assert ledger.promotions_for("writer-agent") == []
+
+    def test_staging_failure_leaves_no_promotion_row_and_files_unchanged(
+        self, world, monkeypatch
+    ):
+        """Gate G re-review finding R3: staging must happen, in full,
+        *before* the ledger row — not after it. Fault-inject a disk-full
+        -style failure while a temp file is being written (the staging
+        phase, which runs before record_promotion is ever called) and
+        confirm zero promotion rows, every file byte-identical, and no
+        orphaned temp file left behind.
+        """
+        ledger, runtime, brief, writer, run, handoff_dir = world
+        _run_all_cases(ledger, run, writer, handoff_dir)
+        before = _package_snapshot(writer)
+
+        real_write_text = Path.write_text
+
+        def flaky_write_text(self, *a, **k):
+            if ".promotion-tmp-" in self.name:
+                raise OSError("disk full while staging")
+            return real_write_text(self, *a, **k)
+
+        monkeypatch.setattr(Path, "write_text", flaky_write_text)
+        with pytest.raises(OSError, match="disk full while staging"):
+            promote(writer, ledger, reviewed_by="flaveon")
+        monkeypatch.undo()
+
+        assert _package_snapshot(writer) == before, (
+            "staging must fail before any live file or the ledger changes"
+        )
+        assert ledger.promotions_for("writer-agent") == []
+        assert not list(writer.glob("*.promotion-tmp-*")), (
+            "a failed staging attempt must clean up its own temp files"
+        )
+
+    def test_partial_file_swap_after_ledger_commit_is_surfaced_not_silent(
+        self, world, monkeypatch
+    ):
+        """F-M2's documented residual risk, proven rather than assumed: once
+        the ledger row commits, a crash during the file swap can leave the
+        ledger ahead of the files. `manifest.json` is swapped last for
+        exactly this reason — the mismatch then shows up as a concrete,
+        actionable validator finding on the very next check, instead of two
+        maturities quietly disagreeing forever.
+        """
+        ledger, runtime, brief, writer, run, handoff_dir = world
+        _run_all_cases(ledger, run, writer, handoff_dir)
+
+        import src.governance.maturity as maturity_module
+
+        real_replace = maturity_module.os.replace
+
+        def flaky_replace(src, dst):
+            if str(dst).endswith("manifest.json"):
+                raise OSError("disk died right before the last replace")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(maturity_module.os, "replace", flaky_replace)
+        with pytest.raises(OSError, match="disk died"):
+            promote(writer, ledger, reviewed_by="flaveon")
+        monkeypatch.undo()
+
+        # The ledger already committed — it is the one step that cannot be
+        # undone once it happens.
+        history = ledger.promotions_for("writer-agent")
+        assert len(history) == 1
+        assert history[0]["to_maturity"] == "tested"
+
+        # manifest.json never got swapped (it was last in line), so it still
+        # disagrees with SKILL.md and process_capsule.yaml, which did. That
+        # disagreement is exactly what the next validation reports — visible
+        # and repairable, not a silent split.
+        manifest = json.loads((writer / "manifest.json").read_text())
+        assert manifest["maturity"] == "draft"
+        findings = validate_package(writer)
+        assert any("maturity disagrees" in f for f in findings), findings
+
+        # Nothing is left half-written: the swap either fully replaced a
+        # file or left the original untouched (plus the orphaned temp file
+        # it never got to replace with).
+        assert (writer / "SKILL.md").read_text().count("maturity: tested") == 1
+        leftover_temp = list(writer.glob("manifest.json.promotion-tmp-*"))
+        assert len(leftover_temp) == 1
+
+    def test_rationale_reaches_the_promotions_ledger(self, world):
+        """F-M3: the rationale text passed to a tested -> validated
+        promotion must land in the append-only ledger row, not just the
+        learning log."""
+        ledger, runtime, brief, writer, run, handoff_dir = world
+        _run_all_cases(ledger, run, writer, handoff_dir)
+        promote(writer, ledger, reviewed_by="flaveon")  # draft -> tested
+
+        # `world` already produced one COMPLETE run; two more clear the
+        # "3+ complete runs" criterion for tested -> validated.
+        _run_to_completion(runtime, brief)
+        _run_to_completion(runtime, brief)
+
+        rationale = "level 1 rejected: drafting needs a frame; level 2 adopted as-is"
+        promote(writer, ledger, reviewed_by="flaveon", rationale=rationale)
+
+        history = ledger.promotions_for("writer-agent")
+        assert history[-1]["to_maturity"] == "validated"
+        assert history[-1]["rationale"] == rationale
 
 
 class TestMaturity:

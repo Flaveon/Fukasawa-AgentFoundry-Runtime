@@ -53,6 +53,13 @@ def _parse_skill_front_matter(text: str) -> dict:
 
 
 def _check_required_files(pkg: Path) -> list[str]:
+    """Every file on the Agent Foundry standard list must be present.
+
+    A package missing one of its required files cannot be read by the rest
+    of this validator, let alone deployed — this check runs first so that
+    a missing file is reported plainly instead of as a cascade of confusing
+    failures from every check downstream of it.
+    """
     findings: list[str] = []
     for name in PACKAGE_FILES:
         if not (pkg / name).exists():
@@ -61,6 +68,12 @@ def _check_required_files(pkg: Path) -> list[str]:
 
 
 def _validate_manifest(pkg: Path) -> tuple[list[str], AgentPackageManifest | None]:
+    """manifest.json must parse and satisfy its schema.
+
+    The manifest is the machine-readable summary other tooling (and the
+    checks below) read from; a manifest that fails its own schema cannot be
+    trusted to describe the rest of the package correctly.
+    """
     findings: list[str] = []
     manifest = None
     try:
@@ -73,6 +86,13 @@ def _validate_manifest(pkg: Path) -> tuple[list[str], AgentPackageManifest | Non
 
 
 def _validate_capsule(pkg: Path) -> tuple[list[str], AgentCapsuleContract | None]:
+    """process_capsule.yaml must parse and satisfy the capsule contract.
+
+    This is where the depth-level ceiling on individual steps is enforced
+    by the schema itself (`AgentCapsuleContract` rejects a step above its
+    own depth_level) — a capsule that fails to validate here means the
+    agent's actual work instructions may already exceed its declared depth.
+    """
     findings: list[str] = []
     capsule = None
     try:
@@ -88,6 +108,11 @@ def _validate_capsule(pkg: Path) -> tuple[list[str], AgentCapsuleContract | None
 
 
 def _validate_skill(pkg: Path) -> tuple[list[str], dict | None]:
+    """SKILL.md's front matter must parse and declare the four fields the
+    cross-file agreement check (`_check_agreements`) depends on: agent,
+    maturity, depth_level and workspace_profile. A SKILL.md a human can read
+    but a machine cannot parse is, for governance purposes, undeclared.
+    """
     findings: list[str] = []
     skill = None
     try:
@@ -105,6 +130,16 @@ def _validate_skill(pkg: Path) -> tuple[list[str], dict | None]:
 def _check_agreements(
     manifest: AgentPackageManifest, capsule: AgentCapsuleContract, skill: dict
 ) -> list[str]:
+    """depth_level, agent name and maturity must agree across SKILL.md,
+    manifest.json and process_capsule.yaml.
+
+    This is the check that makes a declared depth boundary mean something:
+    an agent cannot quietly promote itself (in depth or maturity) by editing
+    only one of the three files that are each supposed to say the same
+    thing. Only called once all three have parsed into real objects —
+    comparing a value against a file that failed to parse would just be
+    comparing against `None`.
+    """
     findings: list[str] = []
     declared = {
         "SKILL.md": skill.get("depth_level"),
@@ -141,11 +176,41 @@ def _check_agreements(
 
 
 def _validate_evals(pkg: Path, manifest: AgentPackageManifest | None) -> list[str]:
+    """evals.yaml must declare the three mandatory doctrine checks, and a
+    package claiming any maturity beyond draft must show an overall pass.
+
+    A package cannot promote itself past draft by editing manifest.json
+    alone while evals.yaml still says the work is unverified — that is the
+    gate `src/governance/maturity.py` relies on this check to enforce. A
+    malformed or wrongly-shaped evals.yaml (not a mapping at all, e.g. a
+    YAML list) is reported as a finding here rather than raised as an
+    exception: the shape is wrong in the same way a missing mandatory check
+    is wrong, and both must fail closed instead of crashing the validator.
+    """
     findings: list[str] = []
     evals_overall = None
     try:
         evals = yaml.safe_load((pkg / "evals.yaml").read_text(encoding="utf-8"))
+        if evals is not None and not isinstance(evals, dict):
+            findings.append(
+                f"evals.yaml must be a mapping with a 'checks' key, not a "
+                f"{type(evals).__name__} — the three doctrine checks cannot "
+                f"be located"
+            )
+            evals = None
         checks = (evals or {}).get("checks", {})
+        if not isinstance(checks, dict):
+            # A list of check names, or a string that happens to contain
+            # them, would otherwise pass the `required not in checks` test
+            # below by membership or substring match — true, and useless:
+            # there is no per-check 'result'/'evidence' to read. Report the
+            # shape and treat it the same as "no checks at all".
+            findings.append(
+                f"evals.yaml 'checks' must be a mapping of check name to "
+                f"result, not a {type(checks).__name__} — the mandatory "
+                f"checks cannot be located"
+            )
+            checks = {}
         for required in MANDATORY_EVAL_CHECKS:
             if required not in checks:
                 findings.append(
@@ -167,9 +232,22 @@ def _validate_evals(pkg: Path, manifest: AgentPackageManifest | None) -> list[st
 
 
 def _validate_permissions(pkg: Path) -> list[str]:
+    """permissions.json must declare at least one path the agent may touch.
+
+    Doctrine is blunt about this: an agent with undefined paths is
+    incomplete, not merely under-specified. A permissions.json that is not
+    a JSON object at all (e.g. a list) is reported as a finding here rather
+    than raised as an exception — the wrong shape fails closed the same way
+    an empty 'paths' mapping does.
+    """
     findings: list[str] = []
     try:
         permissions = json.loads((pkg / "permissions.json").read_text(encoding="utf-8"))
+        if not isinstance(permissions, dict):
+            return [
+                f"permissions.json must be a JSON object with a 'paths' "
+                f"key, not a {type(permissions).__name__}"
+            ]
         if not permissions.get("paths"):
             findings.append(
                 "permissions.json defines no paths — agents with undefined "
@@ -181,6 +259,13 @@ def _validate_permissions(pkg: Path) -> list[str]:
 
 
 def _validate_soul(pkg: Path, manifest: AgentPackageManifest | None) -> list[str]:
+    """On a C-Pax workspace, SOUL.md must declare doctrine inheritance.
+
+    A C-Pax agent's behavioral identity is supposed to come from the
+    project's shared doctrine.md, not be invented per agent; this check
+    only applies once the manifest has parsed and named the workspace
+    profile, since there is nothing to check an undeclared profile against.
+    """
     findings: list[str] = []
     if manifest and manifest.workspace_profile == "c-pax":
         soul = (pkg / "SOUL.md").read_text(encoding="utf-8")
