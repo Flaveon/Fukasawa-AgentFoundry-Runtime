@@ -41,7 +41,7 @@ from baseline import (  # reuse run 1/2's exact prompt/registry/poster code, unm
 )
 
 EXPERIMENT_DIR = Path(__file__).resolve().parent
-RESULTS_DIR = EXPERIMENT_DIR / "results"
+RESULTS_DIR = EXPERIMENT_DIR / "results" / "v1"  # v1 is archived; this script only ever reproduces v1
 RUN2_PATH = RESULTS_DIR / "baseline-run2.json"
 RUN3_PATH = RESULTS_DIR / "baseline-run3.json"
 

@@ -1,9 +1,11 @@
 # Issue #27 — Handoff/Quality-Report Verdict Consistency: Experiment Protocol
 
-Frozen before any rule exists in `src/governance/`. This file, the dataset,
-and the baselines (`baseline.py`, `results/baseline-run1.json`,
-`results/donor-diagnosis-run1.json`) are committed together, before Commit 2
-(the rule, its tests, and the shadow run) touches any code under `src/`.
+This dataset and its baselines were FROZEN as a commit boundary (Commit 1:
+`baseline.py`, `results/baseline-run1.json`, `results/donor-diagnosis-run1.json`)
+before any rule code was *committed* under `src/governance/` — it was not,
+in fact, written before the rule existed in the working tree at all; see
+the Disclosure immediately below, which says so precisely rather than
+leaving the header's "before any rule exists" claim uncorrected.
 
 ### Disclosure (2026-10-17)
 
@@ -385,6 +387,60 @@ the fact. Run 3 did not hit its hard stop: **all 18 cases that run 2 left
 2026-10-17, well inside its 2026-10-18 09:30 UTC hard stop, and finished
 long before it). As of run 3, every one of the 44 Baseline B cases has a
 real `OK` answer — zero remain `INFRASTRUCTURE_FAILURE` or `NOT_RUN`.
+
+## Amendment 3 (post-review)
+
+An independent review of commits `8b7bc0f..c1eb681` (full report in the
+implementer's working notes; summarized in `CANDIDATES.md` and this
+amendment) found CHANGES_REQUIRED: 2 High findings, 4 Medium, several Low.
+The most important: the rule (`src/governance/package_consistency.py`)
+**fails open** — it only abstains when BOTH the Angela line and the
+Shipping Decision section are completely absent; any OTHER unparseable or
+adversarially-shaped input (markup, emoji, homoglyphs, fullwidth
+characters, unrecognized bullet markers, header drift, a blank line
+splitting a section, a second section, a duplicate Angela line, a
+qualified PASS claim like "PASSED" or "PASS - zero failures", an Angela
+value of UNKNOWN, a PASS report that still lists findings) is read as "not
+ship" / "not PASS" and returns `CONSISTENT` — the one answer this rule
+must never give when it cannot actually tell. This is being fixed. Before
+touching the rule, the following is committed first, as a record-keeping
+step, per the review process:
+
+* **v1 is archived, not deleted.** `results/treatment.json` and
+  `results/comparison.md` as they stood at commit `c1eb681`, plus
+  `results/baseline-run{1,2,3}.json` and `results/donor-diagnosis-run{1,2}.json`,
+  move to `results/v1/` (same filenames, new directory) in the same commit
+  as this amendment. They remain the complete, honest record of the v1
+  rule's behavior and of Baseline A/B on the same dataset. Nothing in
+  `results/v1/` is edited after the move.
+* **The rule is revised to v2** to close the fail-open gap: an allowlist
+  of recognized shapes and values, with anything outside that allowlist
+  routed to `ABSTAIN` rather than silently read as "not ship". v2 is
+  evaluated on the exact same frozen dataset (`dataset/`) as v1 — no new
+  real or synthetic cases are added for this revision — and its results
+  are written fresh to `results/treatment.json` / `results/comparison.md`
+  (v1's copies, under `results/v1/`, are untouched).
+* **v2's labels are assigned post-hoc, after the rule was rewritten to
+  know what it needs to parse.** This is disclosed, not hidden: the
+  dataset's ground-truth labels (`dataset/manifest.json`) were not
+  re-derived independently of the rule before this rewrite — see M1 below
+  for why neither v1's nor v2's numbers on this dataset are evidence of
+  generalization to inputs no one has looked at yet.
+* **M1, stated plainly:** `CANDIDATES.md` already said the rule's
+  parsing decisions were "arrived at through hand iteration against the
+  real 35-case corpus" — that corpus is ALL 35 real cases, including every
+  one of the 23 labelled `held-out`. The held-out split was never
+  held out from the person writing the rule. Neither v1's nor v2's
+  `held-out` numbers in `results/comparison.md` are evidence the rule
+  generalizes to handoffs it was not shaped against — they show it
+  handles cases from the same corpus its parsing logic was tuned on.
+  Additionally: the 35 real cases are not 35 independent examples. They
+  reduce to **4 distinct rule inputs** (Angela PASS or NEEDS_REVISION,
+  crossed with Interactive Tool "ship" or "do not ship"), all against a
+  HOLD report — the real corpus has zero verdict variety and most of its
+  apparent sample size is repetition, not variety. `results/comparison.md`
+  states this beside the split table rather than reporting "23/23" without
+  context.
 
 ## What this experiment does not show
 

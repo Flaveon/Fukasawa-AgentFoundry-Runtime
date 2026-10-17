@@ -44,7 +44,7 @@ from src.kernel.models import ModelAdapter, ModelEndpointRegistry, http_post_jso
 
 EXPERIMENT_DIR = Path(__file__).resolve().parent
 DATASET_DIR = EXPERIMENT_DIR / "dataset"
-RESULTS_DIR = EXPERIMENT_DIR / "results"
+RESULTS_DIR = EXPERIMENT_DIR / "results" / "v1"  # v1 is archived; this script only ever reproduces v1
 
 MODEL_ID = "Qwen_Qwen3.5-27B-Q4_K_M.gguf"
 ENDPOINT_NAME = "local-llama"

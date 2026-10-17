@@ -4,7 +4,9 @@
 
 SHADOW ONLY. This script:
 * reads the dataset fixtures under dataset/ (read-only),
-* reads results/baseline.json (read-only, written by baseline.py),
+* reads the archived v1 baseline/donor results under results/v1/ (read-only,
+  written once by baseline.py / rerun_timeouts.py / rerun_timeouts_run3.py —
+  see PROTOCOL.md's Amendment 3 for why they moved there),
 * calls src.governance.package_consistency.check_package_consistency — pure,
   deterministic, no model, no network,
 * writes ONLY results/treatment.json and results/comparison.md.
