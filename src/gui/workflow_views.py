@@ -71,6 +71,7 @@ class _Fields:
     #: The ledger database path typed into the database entry.
     db: str
 
+
 PRIMARY = "#A855F7"
 SECONDARY = "#FF6EC7"
 MUTED = ("gray45", "gray60")
@@ -565,8 +566,10 @@ class WorkflowTab(ctk.CTkFrame):
 
     # ------------------------------------------------ synchronous operations
     #
-    # Each returns a service result and touches no widget, so a test can call
-    # it directly with no display and no thread.
+    # Each returns a service result. Given a ``fields`` snapshot it touches no
+    # widget, which is how the worker runs it; called with none, it reads the
+    # entry boxes itself, which only the UI thread (or a test standing in for
+    # it) may do.
 
     def _db(self) -> str:
         """The ledger path the operator typed, or the default."""

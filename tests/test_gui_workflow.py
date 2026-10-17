@@ -802,7 +802,21 @@ def _shared_window():
 
 @pytest.fixture()
 def app_window(_shared_window):
-    """The shared window, reset to a known state for each test."""
+    """The shared window, reset to a known state for each test.
+
+    Collects garbage first, on this thread. A Tk object caught in a reference
+    cycle -- a ``tkinter.font.Font`` from a rebuilt widget, say -- is deleted
+    by whichever thread the collector happens to run on, and its ``__del__``
+    calls Tk. When that is a worker, Tk hands the call to the main thread and
+    waits; a test drains queues instead of running ``mainloop``, so nobody
+    answers and the worker hangs. On CI's Tcl that stalled every Environment
+    look after the widget-heavy regression test above. A real window runs
+    ``mainloop``, which answers, so this is the harness's hazard, not the
+    product's -- and it is settled here, before each test, on the UI thread.
+    """
+    import gc
+
+    gc.collect()
     tab = _shared_window.workflow_tab
     tab.select_stage("draft")
     tab.set_fields(workflow_entry="", draft_entry="", db_entry="")
@@ -944,13 +958,16 @@ class TestView:
         monkeypatch.setattr(tab, "_show", spy_show)
 
         tab.on_import()
-        # on_import returned before the (still-gated) service call finished
-        # — that is the property under test. A blocking implementation would
-        # have delivered the result before this line runs.
-        assert not captured
-        assert tab._busy
-
-        gate.set()
+        try:
+            # on_import returned before the (still-gated) service call
+            # finished — that is the property under test. A blocking
+            # implementation would have delivered the result before this line.
+            assert not captured
+            assert tab._busy
+        finally:
+            # Released even when an assertion fails, so a blocked worker never
+            # delivers its result into a later test on the shared window.
+            gate.set()
         pump(tab, captured)
         assert captured and captured[0].ok
         assert "substack-publication" in tab.shown()
@@ -972,6 +989,10 @@ class TestView:
         typed into the boxes, catching a different mistake: capturing the
         snapshot correctly but then not passing it through to the service
         call.
+
+        What it does not see: a worker touching any *other* widget (the
+        results box, a table). Only the three entries are instrumented, so for
+        those the guard is CI's stricter Tcl, which refuses the call outright.
         """
         import threading
         from types import SimpleNamespace
