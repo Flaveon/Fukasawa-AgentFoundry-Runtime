@@ -17,6 +17,7 @@ That is the privacy promise this feature makes, and it is enforced here rather
 than in the interface, so no caller can skip it.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterator, Optional
@@ -80,17 +81,63 @@ def _kind_words(kind: NodeKind) -> str:
     return KIND_WORDS[kind]
 
 
+def _split_authority(base: str) -> tuple[str, str, str, str]:
+    """Split a ``_normalise``d URL into ``(scheme, "user:pw@" or "", host[:port], the rest)``.
+
+    "The rest" is a path, a query, a fragment, or any mix of the three. The
+    authority -- userinfo and host[:port] -- ends where that starts: the
+    first ``/``, ``?`` or ``#``, whichever comes first. That boundary is
+    found *first*, over the whole post-scheme string, before anything looks
+    for an ``@``: userinfo is only ever found *inside* the authority, and
+    looking for it over the whole string instead read one out of a path or
+    a query that merely happened to contain ``@`` (``http://box/p@x``,
+    ``http://box?a=@b``), splitting a real path character off as if it
+    were a user name and sending the look that resulted to port 80 -- the
+    exact failure finding this boundary first exists to prevent, just one
+    character later. A ``#`` with no ``/`` or ``?`` anywhere
+    (``http://box#frag``) was missed the same way before it was added here.
+
+    Written by hand rather than with ``urllib.parse``: this module is one of
+    the two the whole-network-access guard (``tests/test_hardening.py``)
+    allows to import anything under ``urllib`` at all, and a parsing-only
+    submodule is not the exception that rule exists to catch.
+    """
+    scheme, _, after_scheme = base.partition("://")
+    end = len(after_scheme)
+    for mark in ("/", "?", "#"):
+        found = after_scheme.find(mark)
+        if found != -1:
+            end = min(end, found)
+    authority, rest = after_scheme[:end], after_scheme[end:]
+    # `rpartition` finds the *last* "@" within the authority alone, so a
+    # user name may itself contain one; this is used only to keep an
+    # already-stored, pre-policy record readable (`address_for` is still
+    # called on every record for comparison) -- `address_problem` refuses
+    # any *new* address naming userinfo before it ever reaches here.
+    userinfo, sep, netloc = authority.rpartition("@")
+    prefix = f"{userinfo}{sep}"  # "" when there was no "@"
+    return scheme, prefix, netloc, rest
+
+
 def _names_a_port(base: str) -> bool:
     """Whether a base URL from ``_normalise`` already says which port to use.
 
-    Only the host part is read, not a path after it. A bracketed IPv6
-    address is full of colons and names a port only after its closing
-    bracket.
+    Only the host part is read, never userinfo, a path, a query or a
+    fragment. A bracketed IPv6 address is full of colons and names a port
+    only after its closing bracket; an *unbracketed* one (a bare ``::1``) is
+    full of colons with no brackets at all, which is not "host:port" either
+    -- it names no port, the same as a plain host, and needs bracketing
+    before a port can be appended (``address_for``). Either form naming an
+    *empty* port (``box:``, ``[::1]:``) is read the same as naming none:
+    reading one back a second time must not keep a colon with nothing after
+    it, the same invariant ``_normalise`` states for a trailing slash.
     """
-    netloc = base.split("//", 1)[1].split("/", 1)[0]
+    _scheme, _prefix, netloc, _rest = _split_authority(base)
     if netloc.startswith("["):
-        return "]:" in netloc
-    return ":" in netloc
+        return "]:" in netloc and not netloc.endswith("]:")
+    if netloc.count(":") > 1:
+        return False
+    return ":" in netloc and not netloc.endswith(":")
 
 
 def address_for(host: str, kind: NodeKind) -> str:
@@ -100,12 +147,148 @@ def address_for(host: str, kind: NodeKind) -> str:
     full URL, or a host that already names a port, is kept exactly as given. A
     bare host gets the port that kind of program listens on by default, since
     nothing has been asked which port it actually uses.
+
+    Reading an address twice must give what reading it once gave (the same
+    invariant ``_normalise`` states). The port used to be appended to the
+    *whole string*, which is right only when there is nothing after the host:
+    ``http://box/v1`` became ``http://box/v1:11434`` -- a port on
+    the path, not the host, so the look it produced still went to port 80 --
+    and reading that result again appended a second port the same way (m2).
+    The port is placed into the host part ``_split_authority`` finds instead.
     """
     base = _normalise(host)
     if _names_a_port(base):
         return base
     port = next(p for p, k in PORTS if k is kind)
-    return f"{base}:{port}"
+    scheme, prefix, netloc, rest = _split_authority(base)
+    if netloc.endswith(":"):
+        # An empty port names none; drop it rather than keep ":port" twice.
+        netloc = netloc[:-1]
+    if not netloc.startswith("[") and netloc.count(":") >= 1:
+        # A bare (unbracketed) IPv6 host: bracket it so the port being
+        # appended is not read as one more field of the address itself.
+        netloc = f"[{netloc}]"
+    return f"{scheme}://{prefix}{netloc}:{port}{rest}"
+
+
+#: Shown wherever a freshly typed address names a user name or password.
+#: Never built from the typed value -- the whole point is that the secret
+#: must not be echoed back in a message that might be displayed or logged
+#: (orchestrator policy, re-review finding 1). ``urllib`` does not even
+#: turn "user:pw@host" into Basic auth -- no ``Authorization`` header is
+#: ever sent -- so keeping it bought no function and cost a plaintext
+#: secret written to ``nodes.yaml``, printed by every listing, and copied
+#: into a failed run's ledger note.
+USERINFO_REFUSED = (
+    "Leave the user name and password out of the address. Fukasawa "
+    "cannot send them, and they would be saved in plain text."
+)
+
+#: Shown for an address this program cannot use at all -- not a userinfo
+#: refusal, but a port that is not a number, more than one of them, or
+#: brackets with something after them it does not recognise. Garbage in
+#: is refused rather than guessed at and silently sent somewhere wrong.
+MALFORMED_ADDRESS = "That address is not one this program can use. Check it and try again."
+
+
+def has_userinfo(host: str) -> bool:
+    """Whether this address names a user name and/or a password.
+
+    Checked on a freshly typed address before it is saved (``address_problem``
+    calls this), and on an address already stored, to refuse *using* a
+    record an older build or a hand edit left with one (``NodeStore.load``
+    still reads such a record; nothing here stops that) -- it is read
+    through ``_normalise``/``_split_authority`` exactly as any other
+    address is, so this never raises on its own.
+    """
+    _scheme, prefix, _netloc, _rest = _split_authority(_normalise(host))
+    return bool(prefix)
+
+
+def redact_userinfo(url: str) -> str:
+    """Hide a user name and password a *stored* address holds, for display.
+
+    Never raises and returns ``url`` unchanged when there is nothing to
+    hide. Used wherever a record's address reaches a screen or a log --
+    ``node list``, ``node show``, ``model list``, a card, a notice -- so an
+    old record naming one is still visible enough to find and fix, without
+    the secret itself ever being shown again.
+    """
+    base = _normalise(url)
+    scheme, prefix, netloc, rest = _split_authority(base)
+    if not prefix:
+        return url
+    return f"{scheme}://…@{netloc}{rest}"
+
+
+#: Matches userinfo wherever it appears in free text, not only in an
+#: address this module already knows is one -- a stored file's own
+#: content, or a third-party library's exception message (PyYAML,
+#: pydantic), can quote a secret back inside a sentence that is otherwise
+#: about something else entirely (final re-review finding 1's residual
+#: leak: ``node list`` on a *malformed* file echoed the bad entry's raw
+#: value, which could still be a tainted url). The scheme is optional --
+#: a YAML parser's own context snippet can truncate it -- and the
+#: character classes exclude quotes so a value already inside `'...'` or
+#: `"..."` is still found starting just after the quote.
+_USERINFO_IN_TEXT = re.compile(r"(?:\w+://)?[^\s/@'\"]+(?::[^\s/@'\"]*)?@")
+
+
+def scrub_userinfo(text: str) -> str:
+    """Replace every ``[scheme://]user[:pw]@`` this text contains with
+    ``…@``.
+
+    Unlike ``has_userinfo``/``redact_userinfo``, this does not parse one
+    known address -- it sweeps arbitrary text (an error message built from
+    a stored file's own content, or a library's exception text) for
+    anything shaped like userinfo, because by the time such a message is
+    being shown, there is no single field left to read it from. Applied to
+    every user-facing message built from file content or a third-party
+    exception (``unusable_message``, the endpoint-file warning, and
+    anywhere a pydantic or YAML error string reaches a screen).
+    """
+    return _USERINFO_IN_TEXT.sub("…@", text)
+
+
+def address_problem(host: str) -> Optional[str]:
+    """Why a freshly typed address should be refused, or ``None`` when it
+    is fine to use.
+
+    Checked at the point a person is about to save or reach for an address
+    -- before it is normalised into a port-bearing one, let alone written
+    down -- never on one already stored: a record a hand edit or an older
+    build left malformed must still load however it was written
+    (``NodeStore.load``); only a *new* one is held to this.
+
+    Two refusals, named separately because they call for different
+    corrections: userinfo (``USERINFO_REFUSED``), and a handful of shapes
+    that are not a usable address at all -- a non-numeric port, more than
+    one of them, or something after a bracketed host's ``]`` that is not
+    ``:<port>``. The "more than one colon" check is skipped when the host
+    has no ``.`` in it: a bare IPv6 host (``::1``) is also full of colons
+    with no brackets, and ``address_for`` already brackets that case
+    rather than refuses it -- a dotted host with more than one colon
+    (``10.0.0.9:11434:1``) is not that, so it is still caught.
+    """
+    base = _normalise(host)
+    _scheme, prefix, netloc, _rest = _split_authority(base)
+    if prefix:
+        return USERINFO_REFUSED
+    if netloc.startswith("["):
+        close = netloc.find("]")
+        if close == -1:
+            return MALFORMED_ADDRESS
+        after = netloc[close + 1:]
+        if after and not (after.startswith(":") and after[1:].isdigit()):
+            return MALFORMED_ADDRESS
+        return None
+    if "." in netloc and netloc.count(":") > 1:
+        return MALFORMED_ADDRESS
+    if ":" in netloc and not netloc.endswith(":"):
+        port = netloc.rsplit(":", 1)[1]
+        if not port.isdigit():
+            return MALFORMED_ADDRESS
+    return None
 
 
 def candidate_addresses(scope: ScanScope, host: str) -> list[tuple[str, NodeKind]]:

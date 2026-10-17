@@ -874,12 +874,55 @@ def _model_endpoints() -> "ModelEndpointRegistry":
     store = _node_store()
 
     def left_out(path, exc) -> None:
-        """Name the file that could not be read, and what that costs."""
-        what = ("The recorded computers in " if path == store.path else "")
+        """Name the file that could not be used, and what that costs.
+
+        ``legacy_endpoints`` and ``NodeStore.load`` already name the path in
+        the ``ValueError`` they raise for a file that parsed fine but is
+        shaped wrong -- that message starts ``<path> ...``. Leading with
+        "<path> could not be read" in front of it said the path twice and
+        called a file that *was* read, just wrongly shaped, "could not be
+        read" (m6). That lead-in is used only when it is true: an
+        ``OSError``, or a ``yaml.YAMLError`` that (unlike the two above)
+        does not name the file itself.
+        """
+        from src.nodes.discovery import scrub_userinfo
+        from src.nodes.store import yaml_problem_location
+
+        if isinstance(exc, yaml.YAMLError):
+            # By location, never `str(exc)`'s own context snippet of the
+            # file's text -- the structural fix for last check's residual
+            # leak, same reasoning as `unusable_message`'s YAML branch.
+            detail = f"{path} could not be read: {yaml_problem_location(exc)}"
+        else:
+            detail = str(exc)
+            if isinstance(exc, OSError) or str(path) not in detail:
+                detail = f"{path} could not be read: {detail}"
+            # `detail` is a full sentence on its own (`legacy_endpoints` and
+            # `NodeStore.load` end theirs with a period), and this appends
+            # another clause rather than starting a new sentence --
+            # stripping one trailing period first is what keeps that from
+            # reading "...and it does not., so it is left out." (re-review
+            # nit).
+            detail = detail.rstrip(".")
+        # Swept for userinfo before it is printed: a *malformed* entry's
+        # own key (never its value, now that `legacy_endpoints` and
+        # `NodeStore.load` build these messages from shape and location
+        # only) could in principle still be read back here, so this stays
+        # as a backstop, not the only line of defence (final re-review
+        # finding 1).
+        detail = scrub_userinfo(detail)
+        # Named, not left as a bare "it": the previous wording left the one
+        # entry's own address as the only thing "it" could plausibly mean,
+        # when what is actually void is every name the whole file would
+        # otherwise have given -- one bad entry in `model_endpoints.yaml`
+        # takes every other entry in it down too (re-review nit).
+        tail = (
+            "so the recorded computers are left out"
+            if path == store.path else
+            "so nothing in this file is used until that is fixed"
+        )
         console.print(
-            f"[yellow]{what}{escape(str(path))} could not be read, so "
-            f"{'they are' if what else 'what it lists is'} left out:[/yellow] "
-            f"{escape(str(exc))}",
+            f"[yellow]{escape(detail)}, {tail}.[/yellow]",
             soft_wrap=True,
         )
 
@@ -1303,6 +1346,7 @@ def model_list() -> None:
     — is the difference between a configurable product and one that looks
     hardcoded.
     """
+    from src.nodes.discovery import redact_userinfo
     from src.security.trust import DEFAULT_TRUST_ROOT
 
     registry = _model_endpoints()
@@ -1312,7 +1356,12 @@ def model_list() -> None:
     table.add_column("URL")
     for name in registry.names():
         ep = registry.get(name)
-        table.add_row(ep.name, ep.kind, ep.url)
+        # A belt-and-suspenders redaction: `merged_endpoints` already
+        # leaves out any computer, and `legacy_endpoints` already refuses
+        # any `model_endpoints.yaml` entry, naming a user name or
+        # password, so nothing reaching this table should have one. If one
+        # ever does, it is still never shown.
+        table.add_row(ep.name, ep.kind, redact_userinfo(ep.url))
     console.print(table)
     console.print(
         "Reference these by name in a graph's model node: "
@@ -1480,10 +1529,23 @@ def node_scan(
     they arrive rather than in a block at the end, because a scan takes time
     and a person watching one deserves to see it happening.
     """
+    from src.nodes.store import unusable_message
     from src.schemas.node import ScanScope
 
     store = _node_store()
-    recorded, existing = _loaded(store)
+    try:
+        recorded, existing = store.load()
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        # `_loaded` prints the yellow, human sentence whatever `--json`
+        # says, which is right for every other command here (none of them
+        # takes `--json`) but was the one gap left in this one (re-review
+        # finding 7, optional).
+        message = unusable_message(store.path, exc)
+        if as_json:
+            _emit_json({"ok": False, "error": "input", "message": message})
+        else:
+            console.print(f"[yellow]{escape(message)}[/yellow]", soft_wrap=True)
+        raise typer.Exit(1)
 
     # Set on one path only: the person answered the menu. Two different acts
     # reach "not looking" and they are answered differently -- see the NONE
@@ -1566,6 +1628,21 @@ def node_scan(
             raise typer.Exit(1)
         host = typer.prompt("Address of the computer")
 
+    if chosen is ScanScope.NAMED_HOST:
+        from src.nodes.discovery import address_problem
+
+        problem = address_problem(host)
+        if problem:
+            # The same shape every other `--json` input refusal in this
+            # file gives, not the prose sentence regardless of `--json`
+            # (re-review nit) -- this is checked before `_run_scan` ever
+            # starts a stream, so there is no event shape to match yet.
+            if as_json:
+                _emit_json({"ok": False, "error": "input", "message": problem})
+            else:
+                console.print(f"[yellow]{escape(problem)}[/yellow]")
+            raise typer.Exit(1)
+
     _run_scan(store, chosen, host, label=label, as_json=as_json)
 
 
@@ -1594,10 +1671,22 @@ def _run_scan(
     if not as_json:
         console.print("")
     found = []
+    # The one `finished` event discovery ever yields is held back rather
+    # than printed as it arrives: printing it here, before a record is
+    # even upserted, was `finished: true` arriving *before* a later refusal
+    # for one of the findings it had just reported (final re-review finding
+    # 3) -- a `--json` reader watching for the stream's end would stop
+    # right there and never see the refusal that follows. It is printed
+    # last instead, once every finding has had its turn at being saved,
+    # carrying `ok=False` if any of them was refused.
+    closing = None
     for event in _discover(chosen, host):
+        if event.finished:
+            closing = event
+            if event.node is not None and event.node not in found:
+                found.append(event.node)
+            continue
         message = event.message
-        if on_nothing and event.finished and not found:
-            message = on_nothing
         if as_json:
             # A plain print, not console.print: Rich wraps to the window and
             # would split a message in two. Not `_emit_json` either — that
@@ -1628,11 +1717,30 @@ def _run_scan(
             "Name each one in the desktop's Environment tab, or in nodes.yaml."
         )
         label = ""
+    from src.nodes.store import unusable_message
+
+    # One computer's address being ambiguous (review finding I2) must not
+    # cost every OTHER address this same scan found: the loop used to stop
+    # at the first refusal, so which finding survived depended on the order
+    # `discover` happened to yield them in (re-review r4). Each is tried, a
+    # refusal is reported and the rest still get their turn; the exit code
+    # at the end says whether anything was lost.
+    refused: list[str] = []
     for node in found:
         if label:
             node.label = label
             node.provenance["label"] = Provenance.DECLARED
-        stored = store.upsert(node)
+        try:
+            stored = store.upsert(node)
+        except (OSError, yaml.YAMLError, ValueError) as exc:
+            message = unusable_message(store.path, exc)
+            refused.append(message)
+            if as_json:
+                print(jsonlib.dumps({"stage": "store", "message": message,
+                                     "ok": False, "finished": False}))
+            else:
+                console.print(f"[yellow]{escape(message)}[/yellow]", soft_wrap=True)
+            continue
         if label and stored.label != label:
             # A computer already recorded keeps its name (design §6.0).
             notes.append(
@@ -1647,6 +1755,25 @@ def _run_scan(
         else:
             console.print(f"\n{escape(note)}", soft_wrap=True)
 
+    # Now, last: the held-back closing event. `on_nothing` replaces its
+    # message the same way it always has -- nothing was found, exactly as
+    # when this was decided inline -- and its `ok` now also answers for
+    # every finding's own attempt at being saved, not only for whether
+    # discovery itself reached anything.
+    if closing is not None:
+        message = closing.message
+        if on_nothing and not found:
+            message = on_nothing
+        ok = closing.ok and not refused
+        if as_json:
+            print(jsonlib.dumps({
+                "stage": closing.stage, "message": message,
+                "ok": ok, "finished": True,
+            }))
+        else:
+            mark = "  [green]OK[/green]" if ok else "  [yellow]--[/yellow]"
+            console.print(f"{mark}  {escape(message)}")
+
     # The summary panel is prose for a person: labelled rows, rounded word
     # figures, and a consequence sentence. Under --json it would land inside
     # the stream as several lines that are not objects, and only ever on a
@@ -1654,6 +1781,11 @@ def _run_scan(
     # reaches it, and the leak hides behind the success case.
     if found and not as_json:
         _render_summary(store.load()[0])
+    if refused:
+        # Everything that could be saved was; this says the scan still did
+        # not fully succeed, the same exit code `_loaded` uses for a store
+        # that cannot be used.
+        raise typer.Exit(1)
     return found
 
 
@@ -1675,7 +1807,7 @@ def _type_it_in(store, recorded, label: str) -> None:
     Design §3.8 writes the same flow down for the desktop, so the two front
     ends ask the same things in the same order.
     """
-    from src.nodes.discovery import address_for
+    from src.nodes.discovery import address_for, address_problem
     from src.nodes.summary import (
         KIND_WORDS,
         MAY_I_CONTACT,
@@ -1694,6 +1826,10 @@ def _type_it_in(store, recorded, label: str) -> None:
 
     name = typer.prompt("What should I call it?", default=label or None)
     address = typer.prompt("Address of the computer")
+    problem = address_problem(address)
+    if problem:
+        console.print(f"[yellow]{escape(problem)}[/yellow]")
+        raise typer.Exit(1)
     console.print("Which is running on it?")
     kinds = {str(i): kind for i, kind in enumerate(KIND_WORDS, start=1)}
     for number, kind in kinds.items():
@@ -1810,18 +1946,77 @@ def node_list(
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
     """Show every computer Fukasawa has been told about."""
-    nodes, _consent = _loaded(_node_store())
+    from src.nodes.discovery import has_userinfo, redact_userinfo
+    from src.nodes.store import duplicate_groups, unusable_message
+
+    store = _node_store()
+    try:
+        nodes, _consent = store.load()
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        # `_loaded` always prints the yellow, human sentence, whatever
+        # `--json` says, so a program parsing this command's output hit
+        # prose instead of an object (m6). Answered here instead, in the
+        # same shape `_fail_input` already gives every other input problem
+        # in this file (`"error": "input", "message": ...`), not a shape of
+        # its own -- re-review nit.
+        message = unusable_message(store.path, exc)
+        if as_json:
+            _emit_json({"ok": False, "error": "input", "message": message})
+        else:
+            console.print(f"[yellow]{escape(message)}[/yellow]", soft_wrap=True)
+        raise typer.Exit(1)
     if as_json:
-        _emit_json({"nodes": [n.model_dump(mode="json") for n in nodes]})
+        # A record an older build or a hand edit left with a user name or
+        # password in its address is redacted here too -- `--json` is read
+        # by a program, but whatever that program does with it (print it,
+        # log it) is exactly the exposure this redaction exists to stop
+        # (final re-review finding 1).
+        dumped = []
+        for n in nodes:
+            payload = n.model_dump(mode="json")
+            payload["url"] = redact_userinfo(n.url)
+            dumped.append(payload)
+        _emit_json({"nodes": dumped})
         return
 
     from src.nodes.summary import human_words, model_count, source_label
 
+    # Ordinarily nothing: `upsert` refuses to create this pair. A store
+    # written before that held, or edited by hand, can still carry one in,
+    # and the person deserves to know before "Check again" tells them the
+    # hard way -- it refuses that write too, but only once they press it
+    # (review finding I2).
+    for ids in duplicate_groups(nodes):
+        console.print(
+            f"[red]{escape(' and '.join(ids))} are recorded at the same "
+            f"address.[/red] A look cannot tell which one it means. Remove "
+            f"one with [cyan]fukasawa node forget <id>[/cyan].",
+            soft_wrap=True,
+        )
+
+    # Likewise ordinarily nothing: every entry route refuses userinfo
+    # before it is ever saved. A record an older build or a hand edit left
+    # with one is never used to reach anything (`registry.merged_endpoints`
+    # leaves it out, `check_node` refuses it) -- said here, by id, with its
+    # address redacted, so the person can still find and fix it.
+    for n in nodes:
+        if has_userinfo(n.url):
+            console.print(
+                f"[red]{escape(n.node_id)} names a user name or password "
+                f"in its address.[/red] It is not used to reach anything "
+                f"until that is removed. Run [cyan]fukasawa node forget "
+                f"{escape(n.node_id)}[/cyan], or add it again with a clean "
+                f"address.",
+                soft_wrap=True,
+            )
+
     for node in nodes:
         # Label and address are both typed by a person; escape() keeps a
         # square bracket in either from being read as formatting.
+        # `redact_userinfo` is a no-op on an address with nothing to hide.
         console.print(
-            f"\n[bold]{escape(node.label)}[/bold]  [dim]{escape(node.url)}[/dim]"
+            f"\n[bold]{escape(node.label)}[/bold]  "
+            f"[dim]{escape(redact_userinfo(node.url))}[/dim]"
         )
         console.print(f"  Models it can run    {model_count(node)}")
         if node.max_context_length:
@@ -1841,11 +2036,21 @@ def node_show(node_id: str = typer.Argument(..., help="Which computer.")) -> Non
         console.print(f"[red]Nothing stored called '{escape(node_id)}'.[/red]")
         raise typer.Exit(1)
 
+    from src.nodes.discovery import has_userinfo, redact_userinfo
     from src.nodes.summary import human_bytes, human_rate, human_words, status_of
 
     console.print(
-        f"\n[bold]{escape(match.label)}[/bold]  [dim]{escape(match.url)}[/dim]"
+        f"\n[bold]{escape(match.label)}[/bold]  "
+        f"[dim]{escape(redact_userinfo(match.url))}[/dim]"
     )
+    if has_userinfo(match.url):
+        console.print(
+            f"[red]This computer's address names a user name or password.[/red] "
+            f"It is not used to reach anything until that is removed. Run "
+            f"[cyan]fukasawa node forget {escape(match.node_id)}[/cyan], or "
+            f"add it again with a clean address.",
+            soft_wrap=True,
+        )
     # The desktop card's three states, not yes/no: "no" for a computer nobody
     # has contacted claimed it was silent, and the panel counts an unchecked
     # computer and not a silent one (§3.6; review finding 6).
@@ -1868,11 +2073,19 @@ def node_add(
     url: str = typer.Option(..., "--url", help="Base URL it answers on."),
 ) -> None:
     """Add a computer by hand, without looking for it."""
-    from src.nodes.discovery import address_for
+    from src.nodes.discovery import address_for, address_problem
     from src.schemas.node import NodeKind
 
     if kind not in {k.value for k in NodeKind}:
         console.print(f"[red]'{escape(kind)}' is not one of: ollama, llamacpp[/red]")
+        raise typer.Exit(1)
+
+    # Checked before `address_for` ever reads it, so the refusal is this
+    # sentence and not whatever the address became after a port was added
+    # to it (final re-review finding 1).
+    problem = address_problem(url)
+    if problem:
+        console.print(f"[yellow]{escape(problem)}[/yellow]")
         raise typer.Exit(1)
 
     # Read the way the desktop's `add_node` and the typed-in route read an

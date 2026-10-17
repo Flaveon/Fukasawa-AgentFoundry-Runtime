@@ -66,6 +66,22 @@ class TestList:
         payload = json.loads(result.output)
         assert payload["nodes"][0]["node_id"] == "home-pc"
 
+    def test_json_on_an_unusable_file_is_still_json(self, store_path):
+        """m6: `_loaded` printed the yellow sentence regardless of `--json`,
+        so a program reading this command's output got prose instead of an
+        object. The shape is the one `_fail_input` already gives every
+        other input problem in this file -- `"error": "input"`, the prose
+        in `message`, not a shape of its own (re-review nit) -- and the
+        same exit code."""
+        store_path.write_text("- one\n- two\n", encoding="utf-8")
+        result = CliRunner().invoke(app, ["node", "list", "--json"])
+        assert result.exit_code == 1, result.output
+        payload = json.loads(result.output)
+        assert set(payload) == {"ok", "error", "message"}
+        assert payload["ok"] is False
+        assert payload["error"] == "input"
+        assert str(store_path) in payload["message"]
+
     def test_json_survives_a_narrow_terminal_and_a_label_full_of_brackets(
         self, store_path
     ):
@@ -84,6 +100,133 @@ class TestList:
         )
         payload = json.loads(result.output)
         assert payload["nodes"][0]["label"] == stored
+
+
+class TestAStoreAlreadyHoldingTwoAtOneAddress:
+    """I2: a pre-fix build or a hand edit left two ids at one address.
+
+    `node list` must still work on it -- so must `node forget` -- and a
+    write that would have to guess which one a look means is refused rather
+    than guessed.
+    """
+
+    @staticmethod
+    def _seed_duplicate(store_path):
+        store = NodeStore(store_path)
+        store.save([
+            InferenceNode(node_id="kitchen-box", label="Kitchen Box",
+                         kind=NodeKind.OLLAMA, url="http://10.0.0.9",
+                         reachable=False),
+            InferenceNode(node_id="ollama-10-0-0-9-11434",
+                         label="Ollama on 10.0.0.9", kind=NodeKind.OLLAMA,
+                         url="http://10.0.0.9:11434", reachable=True),
+        ], ScanConsent())
+
+    def test_list_still_works_and_names_both_ids(self, store_path):
+        self._seed_duplicate(store_path)
+        result = CliRunner().invoke(app, ["node", "list"])
+        assert result.exit_code == 0, result.output
+        assert "kitchen-box" in result.output
+        assert "ollama-10-0-0-9-11434" in result.output
+        assert "same address" in result.output
+        assert "node forget" in result.output
+
+    def test_forgetting_one_still_works(self, store_path):
+        self._seed_duplicate(store_path)
+        result = CliRunner().invoke(app, ["node", "forget", "kitchen-box"])
+        assert result.exit_code == 0, result.output
+        remaining = [n.node_id for n in NodeStore(store_path).load()[0]]
+        assert remaining == ["ollama-10-0-0-9-11434"]
+
+    def test_a_scan_that_would_have_to_guess_is_refused_not_crashed(
+        self, store_path, monkeypatch
+    ):
+        """A look reaching that address must not misattribute the finding to
+        whichever of the two record `recorded_at` happens to find first."""
+        from src.nodes.discovery import DiscoveryEvent
+
+        found = InferenceNode(
+            node_id="ollama-10-0-0-9-11434", label="Ollama on 10.0.0.9",
+            kind=NodeKind.OLLAMA, url="http://10.0.0.9:11434", reachable=True,
+        )
+
+        def fake(scope, host="", **kw):
+            yield DiscoveryEvent("done", "Found 1 computer.", node=found,
+                                 finished=True)
+
+        self._seed_duplicate(store_path)
+        monkeypatch.setattr("src.cli._discover", fake)
+        result = CliRunner().invoke(
+            app, ["node", "scan", "--scope", "named-host",
+                  "--host", "10.0.0.9"]
+        )
+        assert result.exit_code == 1, result.output
+        assert "kitchen-box" in result.output
+        assert "ollama-10-0-0-9-11434" in result.output
+        # Refused, not guessed: neither record changed.
+        nodes = {n.node_id: n for n in NodeStore(store_path).load()[0]}
+        assert nodes["ollama-10-0-0-9-11434"].reachable is True
+        assert nodes["kitchen-box"].reachable is False
+
+    @pytest.mark.parametrize("ports", [(11434, 8081), (8081, 11434)])
+    def test_an_unrelated_finding_survives_the_refusal(
+        self, store_path, monkeypatch, ports
+    ):
+        """Re-review r4: one ambiguous address must not cost findings at
+        OTHER addresses in the same scan. The loop used to stop at the
+        first refusal, so which finding survived depended on the order
+        `discover` happened to yield them in -- tested both ways. The
+        duplicate pair has to sit at the address `--scope this-machine`
+        actually reaches (127.0.0.1), unlike `_seed_duplicate`'s, or no
+        scan here would ever find its way into the ambiguity at all."""
+        NodeStore(store_path).save([
+            InferenceNode(node_id="home", label="Home", kind=NodeKind.OLLAMA,
+                         url="127.0.0.1:11434"),
+            InferenceNode(node_id="ollama-127-0-0-1-11434",
+                         label="Ollama on this computer", kind=NodeKind.OLLAMA,
+                         url="http://127.0.0.1:11434"),
+        ], ScanConsent())
+        TestNamingWhatIsFound._finds(monkeypatch, *ports)
+        result = CliRunner().invoke(
+            app, ["node", "scan", "--scope", "this-machine"]
+        )
+        assert result.exit_code == 1, result.output
+        ids = [n.node_id for n in NodeStore(store_path).load()[0]]
+        assert any("llamacpp" in i for i in ids), (
+            "an unrelated finding was lost because a different address "
+            "was refused first"
+        )
+
+    def test_the_json_streams_closing_event_last_and_reflects_the_refusal(
+        self, store_path, monkeypatch
+    ):
+        """Final re-review finding 3: the closing event used to print as
+        soon as discovery itself finished, before either finding had been
+        saved -- a `--json` reader watching for `finished: true` to know
+        the stream was done saw success and stopped, never seeing the
+        refusal line that followed it for real."""
+        NodeStore(store_path).save([
+            InferenceNode(node_id="home", label="Home", kind=NodeKind.OLLAMA,
+                         url="127.0.0.1:11434"),
+            InferenceNode(node_id="ollama-127-0-0-1-11434",
+                         label="Ollama on this computer", kind=NodeKind.OLLAMA,
+                         url="http://127.0.0.1:11434"),
+        ], ScanConsent())
+        TestNamingWhatIsFound._finds(monkeypatch, 11434, 8081)
+        result = CliRunner().invoke(
+            app, ["node", "scan", "--scope", "this-machine", "--json"]
+        )
+        assert result.exit_code == 1, result.output
+        events = [json.loads(line) for line in result.output.splitlines() if line]
+        finished_indexes = [i for i, e in enumerate(events) if e["finished"]]
+        assert finished_indexes == [len(events) - 1], (
+            "finished:true must appear exactly once, and last"
+        )
+        assert events[-1]["ok"] is False, (
+            "the closing event must say the scan did not fully succeed"
+        )
+        # The refusal line itself is somewhere before it, not after.
+        assert any(e["stage"] == "store" and not e["ok"] for e in events[:-1])
 
 
 class TestShow:
@@ -147,6 +290,21 @@ class TestScan:
         result = CliRunner().invoke(app, ["node", "scan", "--scope", "none", "--yes"])
         assert result.exit_code == 3, result.output
         assert "permission" in result.output.lower()
+
+    def test_json_on_an_unusable_file_is_still_json(self, store_path):
+        """Re-review finding 7: this was the one remaining `--json` command
+        reading the store through `_loaded`, which prints the yellow
+        sentence whatever `--json` says."""
+        store_path.write_text("hello\n", encoding="utf-8")
+        result = CliRunner().invoke(
+            app, ["node", "scan", "--scope", "this-machine", "--json"]
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(result.output)
+        assert set(payload) == {"ok", "error", "message"}
+        assert payload["ok"] is False
+        assert payload["error"] == "input"
+        assert str(store_path) in payload["message"]
 
     def test_an_unknown_scope_is_a_user_error(self, store_path):
         result = CliRunner().invoke(app, ["node", "scan", "--scope", "wat", "--yes"])
@@ -308,6 +466,21 @@ class TestNamingWhatIsFound:
         result = CliRunner().invoke(app, self.SCAN + ["--label", "Garage"])
         assert NodeStore(store_path).load()[0][0].label == "Home PC"
         assert "already recorded as Home PC" in " ".join(result.output.split())
+
+    def test_a_label_on_an_unnamed_computer_does_not_claim_it_was_given(
+        self, store_path, monkeypatch
+    ):
+        """I1, introduced by this same fix: `--label` over a record nobody
+        has named yet keeps the machine-made text (as the test above checks
+        for a person-given one) -- but must not mark *that* text "you told
+        me". `_run_scan` sets DECLARED on the node it hands to `upsert`
+        before `upsert` knows whether the text it keeps is this one's."""
+        self._finds(monkeypatch, 11434)
+        CliRunner().invoke(app, self.SCAN)  # first scan, no label at all
+        CliRunner().invoke(app, self.SCAN + ["--label", "Garage"])
+        stored = NodeStore(store_path).load()[0][0]
+        assert stored.label == "Ollama on this computer"
+        assert stored.source_of("label").value != "DECLARED"
 
 
 class TestTheConsentPrompt:
@@ -832,6 +1005,184 @@ class TestAFileThatCannotBeUsed:
             prose = prose.replace(line, "")
         for rule in (jargon_in, judgements_in, ownership_in):
             assert rule(prose) == [], prose
+
+
+class TestUserinfoIsRefused:
+    """Final re-review finding 1: a typed user name and password are
+    refused, never saved -- `urllib` never turns "user:pw@host" into Basic
+    auth, so keeping it bought no function and cost a plaintext secret.
+    """
+
+    SECRET = "s3cret"
+
+    def test_node_add_refuses_it_without_saving_or_echoing_it(self, store_path):
+        result = CliRunner().invoke(app, [
+            "node", "add", "--label", "Box", "--kind", "ollama",
+            "--url", f"http://alice:{self.SECRET}@10.0.0.9",
+        ])
+        assert result.exit_code == 1, result.output
+        assert self.SECRET not in result.output
+        assert NodeStore(store_path).load()[0] == []
+        assert not store_path.exists() or self.SECRET not in (
+            store_path.read_text(encoding="utf-8")
+        )
+
+    def test_node_scan_host_refuses_it(self, store_path, monkeypatch):
+        def looked(*_a, **_k):
+            raise AssertionError("a look ran on a refused address")
+
+        monkeypatch.setattr("src.cli._discover", looked)
+        result = CliRunner().invoke(app, [
+            "node", "scan", "--scope", "named-host",
+            "--host", f"alice:{self.SECRET}@10.0.0.9",
+        ])
+        assert result.exit_code == 1, result.output
+        assert self.SECRET not in result.output
+
+    def test_node_scan_host_refuses_it_as_json(self, store_path, monkeypatch):
+        """Re-review nit: this refusal happens before `_run_scan` opens its
+        event stream at all, so it must give the same `{"ok","error",
+        "message"}` shape every other `--json` input refusal here does,
+        not the prose sentence regardless of `--json`."""
+        def looked(*_a, **_k):
+            raise AssertionError("a look ran on a refused address")
+
+        monkeypatch.setattr("src.cli._discover", looked)
+        result = CliRunner().invoke(app, [
+            "node", "scan", "--scope", "named-host",
+            "--host", f"alice:{self.SECRET}@10.0.0.9", "--json",
+        ])
+        assert result.exit_code == 1, result.output
+        payload = json.loads(result.output)
+        assert payload["ok"] is False
+        assert payload["error"] == "input"
+        assert self.SECRET not in payload["message"]
+
+    def test_the_typed_in_route_refuses_it(self, store_path, monkeypatch):
+        """``typer.prompt`` echoes a person's own keystrokes back at them as
+        they type -- the same as any terminal, with or without this
+        refusal -- so the secret appears once, in that echo, in
+        ``result.output``. What matters is that it is never saved, never
+        looked up, and never repeated in *this program's own* refusal
+        line."""
+        def looked(*_a, **_k):
+            raise AssertionError("a look ran on a refused address")
+
+        monkeypatch.setattr("src.cli._discover", looked)
+        result = CliRunner().invoke(
+            app, ["node", "scan"],
+            input=f"4\nBox\nalice:{self.SECRET}@10.0.0.9\n",
+        )
+        assert result.exit_code == 1, result.output
+        assert "Leave the user name and password out" in result.output
+        # Exactly once: the terminal's own echo of what was typed, not a
+        # second copy of it in this program's own refusal sentence.
+        assert result.output.count(self.SECRET) == 1
+        assert NodeStore(store_path).load()[0] == []
+
+    def test_a_record_already_tainted_is_redacted_everywhere_it_is_shown(
+        self, store_path
+    ):
+        """Load must still work -- the person needs to see the record to
+        fix it -- but the secret itself is never shown again."""
+        NodeStore(store_path).save([
+            InferenceNode(node_id="tainted", label="Tainted Box",
+                         kind=NodeKind.OLLAMA,
+                         url=f"http://alice:{self.SECRET}@10.0.0.9:11434"),
+        ], ScanConsent())
+
+        listing = CliRunner().invoke(app, ["node", "list"])
+        assert listing.exit_code == 0, listing.output
+        assert self.SECRET not in listing.output
+        assert "tainted" in listing.output
+        assert "node forget" in listing.output
+
+        as_json = CliRunner().invoke(app, ["node", "list", "--json"])
+        assert self.SECRET not in as_json.output
+        payload = json.loads(as_json.output)
+        assert self.SECRET not in payload["nodes"][0]["url"]
+
+        shown = CliRunner().invoke(app, ["node", "show", "tainted"])
+        assert shown.exit_code == 0, shown.output
+        assert self.SECRET not in shown.output
+        assert "node forget" in shown.output
+
+
+class TestMalformedFileUserinfoNeverLeaks:
+    """Final check's residual leak: a *malformed* `nodes.yaml` can still
+    echo a secret back through `_what()`'s quoted scalar, or through a
+    pydantic validation message -- neither was ever read as an address by
+    `address_problem`/`has_userinfo`, which only look at a well-formed
+    one, so this is a second, independent sweep over the finished message.
+
+    The last four shapes (``folded-scalar`` on) are last check's remaining
+    gap: a regex scrubber cannot anchor on an ``@`` that YAML folded a
+    space in front of, that an unencoded ``/`` or a ``'`` sits oddly next
+    to, or that PyYAML's own context snippet truncated away entirely. The
+    fix for those is structural -- ``_what()``, the pydantic branch and
+    the YAML branch no longer quote file content at all, by location or
+    by shape instead -- so these are no longer a scrubber's job to catch.
+    """
+
+    SECRET = "s3cret"
+    URL = f"http://alice:{SECRET}@10.0.0.9"
+
+    @pytest.mark.parametrize("content", [
+        f"nodes: {URL}\n",
+        f"consent: {URL}\n",
+        f"nodes:\n  box:\n    adress: {URL}\n    label: x\n    kind: ollama\n"
+        f"    url: http://y:1\n",
+        f'nodes:\n  box:\n    label: x\n    kind: ollama\n    url: ["{URL}"]\n',
+        f"nodes:\n  box:\n    label: x\n    kind: ollama\n    url: {URL}: x\n",
+        # Folded multi-line scalar: YAML inserts a space before the "@".
+        f"nodes:\n  kitchen: >\n    http://alice:{SECRET}\n    @10.0.0.9\n",
+        # An unencoded "/" in the password: the regex that used to scrub
+        # this left everything up to and including the "/" exposed, which
+        # is this whole secret plus more, so it is placed first.
+        f"nodes:\n  kitchen: http://alice:{SECRET}/more@10.0.0.9\n",
+        # A "'" in the password flips Python's repr() to double quotes,
+        # past which the old regex stopped -- again placed first so any
+        # part leaking at all still contains the whole secret.
+        f"nodes:\n  kitchen: \"http://alice:{SECRET}'more@10.0.0.9\"\n",
+        # A line long enough that PyYAML's own context snippet truncates
+        # before reaching the "@" at all.
+        "nodes:\n  box:\n    label: x\n    kind: ollama\n    url: "
+        f"http://alice:{SECRET}{'A' * 100}@10.0.0.9: x\n",
+    ], ids=[
+        "nodes-as-scalar", "consent-as-scalar", "misspelled-field",
+        "url-as-list", "yaml-error-on-url-line",
+        "folded-scalar", "unencoded-slash", "apostrophe-in-password",
+        "yaml-error-truncated-before-at",
+    ])
+    def test_the_secret_never_reaches_any_output(self, store_path, content):
+        store_path.write_text(content, encoding="utf-8")
+
+        def assert_clean(output: str) -> None:
+            assert self.SECRET not in output, output
+            # The structural fix suppresses the *whole* value, not only
+            # the part a regex could have anchored on -- the host is the
+            # easy, unambiguous way to tell "nothing of the value leaked"
+            # from "only the vulnerable part happened not to this time".
+            assert "10.0.0.9" not in output, output
+
+        listing = CliRunner().invoke(app, ["node", "list"])
+        assert_clean(listing.output)
+
+        as_json = CliRunner().invoke(app, ["node", "list", "--json"])
+        assert_clean(as_json.output)
+
+        shown = CliRunner().invoke(app, ["node", "show", "anything"])
+        assert_clean(shown.output)
+
+        scanned = CliRunner().invoke(
+            app, ["node", "scan", "--scope", "this-machine", "--json"]
+        )
+        assert_clean(scanned.output)
+
+        from src.gui.services import nodes as svc
+
+        desktop = svc.list_nodes(NodeStore(store_path))
+        assert_clean(desktop.refusal)
 
 
 class TestAddAndForget:
