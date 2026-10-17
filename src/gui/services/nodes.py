@@ -49,7 +49,7 @@ import yaml
 
 from src.gui.services.workflow import Outcome
 from src.nodes.discovery import address_for, discover
-from src.nodes.store import NodeStore, recorded_at, unusable_message
+from src.nodes.store import NodeStore, duplicate_groups, recorded_at, unusable_message
 from src.nodes.summary import (
     KIND_WORDS,
     MAY_I_CONTACT,
@@ -181,6 +181,11 @@ class NodeListResult(Outcome):
     rows: list[NodeRowView] = field(default_factory=list)
     summary_rows: list[tuple[str, str]] = field(default_factory=list)
     consequence: str = ""
+    #: Ordinarily empty: `upsert` refuses to create this pair. Set when the
+    #: store already holds two or more ids at one address -- a pre-fix build
+    #: or a hand edit -- so the tab can tell the person before "Check again"
+    #: refuses the write that pair causes (review finding I2).
+    duplicate_notice: str = ""
 
 
 @dataclass
@@ -277,12 +282,19 @@ def list_nodes(store: Optional[NodeStore] = None) -> NodeListResult:
             ok=False, summary=UNUSABLE_FILE, refusal=_unusable(target.path, exc)
         )
     summary = summarise(nodes)
+    dupes = duplicate_groups(nodes)
+    notice = " ".join(
+        f"{' and '.join(ids)} are recorded at the same address. A look "
+        f"cannot tell which one it means. Forget one to fix it."
+        for ids in dupes
+    )
     return NodeListResult(
         ok=True,
         summary=f"{len(nodes)} computer(s) recorded." if nodes else "None recorded yet.",
         rows=[_row(n) for n in nodes],
         summary_rows=[(r.label, r.value) for r in summary.rows],
         consequence=summary.consequence,
+        duplicate_notice=notice,
     )
 
 

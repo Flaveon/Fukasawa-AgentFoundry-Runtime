@@ -332,8 +332,24 @@ class TestRecordedComputersAreUsable:
         assert "kitchen-box" in result.output
         assert "mine" in result.output, "model_endpoints.yaml stopped resolving"
 
+    def test_an_unparseable_computers_file_is_named_and_left_out(
+        self, tmp_path, monkeypatch
+    ):
+        """A graph that uses no recorded computer must still run.
+
+        This one really could not be read: `nodes: [oops` is not valid YAML
+        at all, so `yaml.safe_load` never returns anything for `NodeStore` to
+        check the shape of.
+        """
+        result = TestEndpointsAreDiscoverable()._run(
+            tmp_path, monkeypatch, exists=True, nodes="nodes: [oops\n"
+        )
+        assert result.exit_code == 0, result.output
+        assert "could not be read" in result.output
+        assert "nodes.yaml" in result.output
+        assert "mine" in result.output
+
     @pytest.mark.parametrize("nodes", [
-        "nodes: [oops\n",
         # YAML of the wrong shape, which raised AttributeError or TypeError
         # straight past the warning below (review finding 2).
         "- one\n- two\n",
@@ -341,27 +357,27 @@ class TestRecordedComputersAreUsable:
         "nodes:\n  - label: x\n",
         "nodes:\n  home-pc:\n",
     ])
-    def test_unreadable_computers_are_named_and_left_out(
+    def test_a_misshapen_computers_file_is_named_once_and_left_out(
         self, tmp_path, monkeypatch, nodes
     ):
-        """A graph that uses no recorded computer must still run."""
+        """Parsed fine, shaped wrong -- not the same failure as above (m6).
+
+        `NodeStore.load` already names the file in the `ValueError` it
+        raises for these ("<path> should start with `consent:` and
+        `nodes:`...", and so on). Leading with "<path> could not be read" in
+        front of that said the path twice and called a file that *was* read,
+        just wrongly shaped, "could not be read".
+        """
         result = TestEndpointsAreDiscoverable()._run(
             tmp_path, monkeypatch, exists=True, nodes=nodes
         )
         assert result.exit_code == 0, result.output
-        assert "could not be read" in result.output
-        assert "nodes.yaml" in result.output
+        assert "could not be read" not in result.output
+        assert result.output.count("nodes.yaml") == 1
         assert "mine" in result.output
 
-    @pytest.mark.parametrize("text", [
-        "endpoints: [oops\n",
-        "- one\n",
-        "endpoints:\n  - mine\n",
-        "endpoints:\n  mine: http://x:11434\n",
-        "endpoints:\n  mine:\n    url: http://x:11434\n",
-    ])
-    def test_a_broken_endpoint_file_is_named_and_left_out(
-        self, tmp_path, monkeypatch, text
+    def test_an_unparseable_endpoint_file_is_named_and_left_out(
+        self, tmp_path, monkeypatch
     ):
         """The same rule as for `nodes.yaml`, for the other file.
 
@@ -369,7 +385,47 @@ class TestRecordedComputersAreUsable:
         which held when `model list` crashed with a ParserError and printed
         nothing at all (review finding 7). Every graph run crashed the same
         way. The exit code and the recorded computer are what make it able
-        to fail.
+        to fail. `endpoints: [oops` really could not be read: it is not
+        valid YAML at all.
+        """
+        from typer.testing import CliRunner
+
+        from src import cli
+
+        home = _home(tmp_path, monkeypatch)
+        _record(home)
+        (home / "model_endpoints.yaml").write_text(
+            "endpoints: [oops\n", encoding="utf-8"
+        )
+        result = CliRunner().invoke(cli.app, ["model", "list"])
+        assert result.exit_code == 0, repr(result.exception)
+        prose = " ".join(result.output.split())
+        assert "model_endpoints.yaml could not be read" in prose.replace(
+            str(home) + "/", "")
+        assert "recorded computers" not in result.output
+        assert "kitchen-box" in result.output, "the computers were left out too"
+        assert cli._model_endpoints().get("kitchen-box").url == RECORDED_URL
+
+    @pytest.mark.parametrize("text", [
+        "- one\n",
+        "endpoints:\n  - mine\n",
+        "endpoints:\n  mine: http://x:11434\n",
+        "endpoints:\n  mine:\n    url: http://x:11434\n",
+        # m4: an unquoted numeric name reads as an int. `model list`'s
+        # `sorted()` over that mapping used to crash with a bare TypeError,
+        # not reach this warning at all -- `exit_code == 0` is the part of
+        # this parametrised test that would have caught it.
+        "endpoints:\n  7:\n    kind: ollama\n    url: http://x:11434\n",
+    ])
+    def test_a_misshapen_endpoint_file_is_named_once_and_left_out(
+        self, tmp_path, monkeypatch, text
+    ):
+        """Parsed fine, shaped wrong -- not the same failure as above (m6).
+
+        `legacy_endpoints` already names the file in the `ValueError` it
+        raises for these. Leading with "<path> could not be read" in front
+        of that said the path twice and called a file that *was* read, just
+        wrongly shaped, "could not be read".
         """
         from typer.testing import CliRunner
 
@@ -380,9 +436,14 @@ class TestRecordedComputersAreUsable:
         (home / "model_endpoints.yaml").write_text(text, encoding="utf-8")
         result = CliRunner().invoke(cli.app, ["model", "list"])
         assert result.exit_code == 0, repr(result.exception)
-        prose = " ".join(result.output.split())
-        assert "model_endpoints.yaml could not be read" in prose.replace(
-            str(home) + "/", "")
+        # The warning is the first thing printed; everything after it,
+        # including "Configured in: <path>", names the path again for an
+        # unrelated reason, so only the warning itself is checked for the
+        # double-naming m6 is about.
+        warning = result.output.split("\n\n", 1)[0]
+        prose = " ".join(warning.split()).replace(str(home) + "/", "")
+        assert "could not be read" not in prose
+        assert prose.count("model_endpoints.yaml") == 1
         assert "recorded computers" not in result.output
         assert "kitchen-box" in result.output, "the computers were left out too"
         assert cli._model_endpoints().get("kitchen-box").url == RECORDED_URL

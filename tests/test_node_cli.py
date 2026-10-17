@@ -66,6 +66,18 @@ class TestList:
         payload = json.loads(result.output)
         assert payload["nodes"][0]["node_id"] == "home-pc"
 
+    def test_json_on_an_unusable_file_is_still_json(self, store_path):
+        """m6: `_loaded` printed the yellow sentence regardless of `--json`,
+        so a program reading this command's output got prose instead of an
+        object. One object, an `error` field naming the file, exit 1 --
+        the same shape every other `--json` refusal in this program uses."""
+        store_path.write_text("- one\n- two\n", encoding="utf-8")
+        result = CliRunner().invoke(app, ["node", "list", "--json"])
+        assert result.exit_code == 1, result.output
+        payload = json.loads(result.output)
+        assert payload["ok"] is False
+        assert str(store_path) in payload["error"]
+
     def test_json_survives_a_narrow_terminal_and_a_label_full_of_brackets(
         self, store_path
     ):
@@ -84,6 +96,73 @@ class TestList:
         )
         payload = json.loads(result.output)
         assert payload["nodes"][0]["label"] == stored
+
+
+class TestAStoreAlreadyHoldingTwoAtOneAddress:
+    """I2: a pre-fix build or a hand edit left two ids at one address.
+
+    `node list` must still work on it -- so must `node forget` -- and a
+    write that would have to guess which one a look means is refused rather
+    than guessed.
+    """
+
+    @staticmethod
+    def _seed_duplicate(store_path):
+        store = NodeStore(store_path)
+        store.save([
+            InferenceNode(node_id="kitchen-box", label="Kitchen Box",
+                         kind=NodeKind.OLLAMA, url="http://10.0.0.9",
+                         reachable=False),
+            InferenceNode(node_id="ollama-10-0-0-9-11434",
+                         label="Ollama on 10.0.0.9", kind=NodeKind.OLLAMA,
+                         url="http://10.0.0.9:11434", reachable=True),
+        ], ScanConsent())
+
+    def test_list_still_works_and_names_both_ids(self, store_path):
+        self._seed_duplicate(store_path)
+        result = CliRunner().invoke(app, ["node", "list"])
+        assert result.exit_code == 0, result.output
+        assert "kitchen-box" in result.output
+        assert "ollama-10-0-0-9-11434" in result.output
+        assert "same address" in result.output
+        assert "node forget" in result.output
+
+    def test_forgetting_one_still_works(self, store_path):
+        self._seed_duplicate(store_path)
+        result = CliRunner().invoke(app, ["node", "forget", "kitchen-box"])
+        assert result.exit_code == 0, result.output
+        remaining = [n.node_id for n in NodeStore(store_path).load()[0]]
+        assert remaining == ["ollama-10-0-0-9-11434"]
+
+    def test_a_scan_that_would_have_to_guess_is_refused_not_crashed(
+        self, store_path, monkeypatch
+    ):
+        """A look reaching that address must not misattribute the finding to
+        whichever of the two record `recorded_at` happens to find first."""
+        from src.nodes.discovery import DiscoveryEvent
+
+        found = InferenceNode(
+            node_id="ollama-10-0-0-9-11434", label="Ollama on 10.0.0.9",
+            kind=NodeKind.OLLAMA, url="http://10.0.0.9:11434", reachable=True,
+        )
+
+        def fake(scope, host="", **kw):
+            yield DiscoveryEvent("done", "Found 1 computer.", node=found,
+                                 finished=True)
+
+        self._seed_duplicate(store_path)
+        monkeypatch.setattr("src.cli._discover", fake)
+        result = CliRunner().invoke(
+            app, ["node", "scan", "--scope", "named-host",
+                  "--host", "10.0.0.9"]
+        )
+        assert result.exit_code == 1, result.output
+        assert "kitchen-box" in result.output
+        assert "ollama-10-0-0-9-11434" in result.output
+        # Refused, not guessed: neither record changed.
+        nodes = {n.node_id: n for n in NodeStore(store_path).load()[0]}
+        assert nodes["ollama-10-0-0-9-11434"].reachable is True
+        assert nodes["kitchen-box"].reachable is False
 
 
 class TestShow:
@@ -308,6 +387,21 @@ class TestNamingWhatIsFound:
         result = CliRunner().invoke(app, self.SCAN + ["--label", "Garage"])
         assert NodeStore(store_path).load()[0][0].label == "Home PC"
         assert "already recorded as Home PC" in " ".join(result.output.split())
+
+    def test_a_label_on_an_unnamed_computer_does_not_claim_it_was_given(
+        self, store_path, monkeypatch
+    ):
+        """I1, introduced by this same fix: `--label` over a record nobody
+        has named yet keeps the machine-made text (as the test above checks
+        for a person-given one) -- but must not mark *that* text "you told
+        me". `_run_scan` sets DECLARED on the node it hands to `upsert`
+        before `upsert` knows whether the text it keeps is this one's."""
+        self._finds(monkeypatch, 11434)
+        CliRunner().invoke(app, self.SCAN)  # first scan, no label at all
+        CliRunner().invoke(app, self.SCAN + ["--label", "Garage"])
+        stored = NodeStore(store_path).load()[0][0]
+        assert stored.label == "Ollama on this computer"
+        assert stored.source_of("label").value != "DECLARED"
 
 
 class TestTheConsentPrompt:

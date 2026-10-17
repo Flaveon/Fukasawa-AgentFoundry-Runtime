@@ -80,14 +80,37 @@ def _kind_words(kind: NodeKind) -> str:
     return KIND_WORDS[kind]
 
 
+def _split_authority(base: str) -> tuple[str, str, str]:
+    """Split a ``_normalise``d URL into ``(scheme, host[:port], the rest)``.
+
+    "The rest" is a path, a query, or both, after the host -- taken whole,
+    since nothing here needs to look inside it, only to know where the host
+    part ends. That end is the first ``/`` or ``?``, whichever comes first;
+    splitting on ``/`` alone (the previous reading) left a bare query string
+    (``http://box?x=1``, no ``/`` anywhere) read as part of the host.
+
+    Written by hand rather than with ``urllib.parse``: this module is one of
+    the two the whole-network-access guard (``tests/test_hardening.py``)
+    allows to import anything under ``urllib`` at all, and a parsing-only
+    submodule is not the exception that rule exists to catch.
+    """
+    scheme, _, after_scheme = base.partition("://")
+    end = len(after_scheme)
+    for mark in ("/", "?"):
+        found = after_scheme.find(mark)
+        if found != -1:
+            end = min(end, found)
+    return scheme, after_scheme[:end], after_scheme[end:]
+
+
 def _names_a_port(base: str) -> bool:
     """Whether a base URL from ``_normalise`` already says which port to use.
 
-    Only the host part is read, not a path after it. A bracketed IPv6
-    address is full of colons and names a port only after its closing
-    bracket.
+    Only the host part is read, never a path or a query after it. A
+    bracketed IPv6 address is full of colons and names a port only after
+    its closing bracket.
     """
-    netloc = base.split("//", 1)[1].split("/", 1)[0]
+    _scheme, netloc, _rest = _split_authority(base)
     if netloc.startswith("["):
         return "]:" in netloc
     return ":" in netloc
@@ -100,12 +123,21 @@ def address_for(host: str, kind: NodeKind) -> str:
     full URL, or a host that already names a port, is kept exactly as given. A
     bare host gets the port that kind of program listens on by default, since
     nothing has been asked which port it actually uses.
+
+    Reading an address twice must give what reading it once gave (the same
+    invariant ``_normalise`` states). The port used to be appended to the
+    *whole string*, which is right only when there is nothing after the host:
+    ``http://box/v1`` became ``http://box/v1:11434`` -- a port on
+    the path, not the host, so the look it produced still went to port 80 --
+    and reading that result again appended a second port the same way (m2).
+    The port is placed into the host part ``_split_authority`` finds instead.
     """
     base = _normalise(host)
     if _names_a_port(base):
         return base
     port = next(p for p, k in PORTS if k is kind)
-    return f"{base}:{port}"
+    scheme, netloc, rest = _split_authority(base)
+    return f"{scheme}://{netloc}:{port}{rest}"
 
 
 def candidate_addresses(scope: ScanScope, host: str) -> list[tuple[str, NodeKind]]:

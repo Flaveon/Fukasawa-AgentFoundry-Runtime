@@ -5,8 +5,8 @@
 import pytest
 import yaml
 
-from src.nodes.registry import merged_endpoints
-from src.nodes.store import NodeStore
+from src.nodes.registry import legacy_endpoints, merged_endpoints
+from src.nodes.store import NodeStore, duplicate_groups
 from src.schemas.node import (
     HostCapability,
     InferenceNode,
@@ -78,6 +78,14 @@ WRONG_SHAPES = {
     "computers as a list": "nodes:\n  - label: x\n",
     "a computer with nothing under it": "nodes:\n  home-pc:\n",
     "the permission as a word": "consent: yes\n",
+    # Review finding I3: a misspelled top-level key reads as *no* computers
+    # rather than a refusal -- `raw.get("nodes")` is simply absent -- and the
+    # next write, which only ever writes what `load()` handed back, erased
+    # the ones a person wrote by hand under the misspelled key.
+    "a misspelled top-level key": (
+        "node:\n  garage:\n    label: Garage\n    kind: ollama\n"
+        "    url: http://10.0.0.9:11434\n"
+    ),
 }
 
 
@@ -85,6 +93,30 @@ class TestAFileOfTheWrongShape:
     @pytest.mark.parametrize("text", WRONG_SHAPES.values(), ids=WRONG_SHAPES.keys())
     def test_it_is_refused_by_name(self, store, text):
         store.path.write_text(text, encoding="utf-8")
+        with pytest.raises(ValueError) as exc:
+            store.load()
+        assert str(store.path) in str(exc.value)
+
+    def test_an_unknown_top_level_key_names_it(self, store):
+        """I3: a typo (`node:` for `nodes:`) must not read as "no computers".
+
+        Without this, `raw.get("nodes")` is simply absent, the typo'd key is
+        never looked at, and the next write erases whatever is written
+        under it -- `save()` only ever writes what `load()` handed back.
+        """
+        store.path.write_text(
+            "node:\n  garage:\n    label: Garage\n    kind: ollama\n"
+            "    url: http://10.0.0.9:11434\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError) as exc:
+            store.load()
+        assert "node" in str(exc.value)
+
+    def test_a_non_utf8_file_names_itself(self, store):
+        """m5: without this, `str(UnicodeDecodeError)` reaches the person
+        with no path in it at all -- every other refusal names the file."""
+        store.path.write_bytes(b"nodes:\n  a:\n    label: \xff\n")
         with pytest.raises(ValueError) as exc:
             store.load()
         assert str(store.path) in str(exc.value)
@@ -140,6 +172,26 @@ class TestUpsert:
         assert nodes[0].source_of("host.vram_bytes") is Provenance.DECLARED
         assert nodes[0].backend_version == "0.6"
 
+    def test_a_rescan_with_label_does_not_claim_a_machine_made_name(self, store):
+        """I1 (introduced by fix 4): the merge always keeps `existing.label`
+        -- `node scan --label` over a record nobody has named yet must not
+        mark *that* text as person-given. `--label`'s own DECLARED source
+        was being written onto the kept, machine-made text regardless."""
+        store.upsert(node(label="Ollama on this computer"))  # no provenance
+        merged = store.upsert(node(label="Garage",
+                                   provenance={"label": Provenance.DECLARED}))
+        assert merged.label == "Ollama on this computer"
+        assert merged.source_of("label") is not Provenance.DECLARED
+
+    def test_a_rescan_with_label_leaves_a_person_given_name_declared(self, store):
+        """The other half: a name already marked as given keeps that mark."""
+        store.upsert(node(label="Kitchen Box",
+                          provenance={"label": Provenance.DECLARED}))
+        merged = store.upsert(node(label="Garage",
+                                   provenance={"label": Provenance.DECLARED}))
+        assert merged.label == "Kitchen Box"
+        assert merged.source_of("label") is Provenance.DECLARED
+
     def test_forget_removes_one(self, store):
         store.upsert(node())
         assert store.forget("home-pc") is True
@@ -184,6 +236,70 @@ class TestAddressesSpelledDifferently:
         store.upsert(node(node_id="llamacpp-10-0-0-9-8081", kind=NodeKind.LLAMACPP,
                           url="http://10.0.0.9:8081"))
         assert len(store.load()[0]) == 2
+
+
+class TestAStoreAlreadyHoldingTwoAtOneAddress:
+    """I2: the pair ``upsert`` exists to prevent, left behind by a pre-fix
+    build (``node add`` then one scan) or a hand edit. ``load()`` accepts
+    it -- refusing to load would also break ``node forget`` and ``node
+    list`` on the one store that most needs them -- but a further write
+    that would have to guess which of the two a finding belongs to is
+    refused instead of guessing wrong.
+    """
+
+    @staticmethod
+    def _seeded(store):
+        """What finding 1 (pre-fix) left behind for ``http://10.0.0.9``."""
+        store.save([
+            node(node_id="kitchen-box", label="Kitchen Box",
+                 url="http://10.0.0.9", reachable=False,
+                 provenance={"label": Provenance.DECLARED,
+                             "url": Provenance.DECLARED}),
+            node(node_id="ollama-10-0-0-9-11434", label="Ollama on 10.0.0.9",
+                 url="http://10.0.0.9:11434", reachable=True),
+        ], ScanConsent())
+
+    def test_loading_such_a_store_still_works(self, store):
+        self._seeded(store)
+        nodes, _ = store.load()
+        assert {n.node_id for n in nodes} == {"kitchen-box", "ollama-10-0-0-9-11434"}
+
+    def test_a_write_that_would_have_to_guess_is_refused_naming_both_ids(
+        self, store
+    ):
+        self._seeded(store)
+        with pytest.raises(ValueError) as exc:
+            store.upsert(node(node_id="ollama-10-0-0-9-11434",
+                              url="http://10.0.0.9:11434", backend_version="0.6"))
+        message = str(exc.value)
+        assert "kitchen-box" in message
+        assert "ollama-10-0-0-9-11434" in message
+        assert "forget" in message
+        # Refused, not guessed: neither record was touched.
+        nodes = {n.node_id: n for n in store.load()[0]}
+        assert nodes["ollama-10-0-0-9-11434"].reachable is True
+        assert nodes["kitchen-box"].reachable is False
+
+    def test_forgetting_either_one_still_works(self, store):
+        self._seeded(store)
+        assert store.forget("kitchen-box") is True
+        assert [n.node_id for n in store.load()[0]] == ["ollama-10-0-0-9-11434"]
+
+    def test_the_pair_is_reported_as_a_duplicate_group(self, store):
+        self._seeded(store)
+        nodes, _ = store.load()
+        assert duplicate_groups(nodes) == [
+            ["kitchen-box", "ollama-10-0-0-9-11434"]
+        ]
+
+    def test_an_unrelated_write_is_not_affected(self, store):
+        """The ambiguity is per-address. A different computer is unaffected."""
+        self._seeded(store)
+        store.upsert(node(node_id="garage-pc", label="Garage PC",
+                          url="http://10.0.0.1:11434"))
+        assert {n.node_id for n in store.load()[0]} == {
+            "kitchen-box", "ollama-10-0-0-9-11434", "garage-pc",
+        }
 
 
 class TestMarkSilent:
@@ -289,6 +405,39 @@ class TestNamesTheRuntimeAlreadyUses:
         merged = store.upsert(node(node_id="ollama-10-0-0-9-11434",
                                    url="http://10.0.0.9:11434"))
         assert merged.node_id == "local-ollama"
+
+    def test_one_malformed_entry_does_not_un_reserve_the_others(self, store):
+        """m1, review finding 3 reopened: a file with one bad entry used to
+        reserve *no* names from it at all -- `legacy_endpoints` refuses the
+        whole file, and the old `names_in_use` caught that refusal and gave
+        back an empty set, so a hand-written `gpu-box` beside a typo'd
+        `spare` was silently replaced the moment a computer took its name."""
+        (store.path.parent / "model_endpoints.yaml").write_text(
+            "endpoints:\n  gpu-box:\n    kind: ollama\n"
+            "    url: http://10.0.0.5:11434\n"
+            "  spare:\n    url: http://10.0.0.8:11434\n",  # missing `kind:`
+            encoding="utf-8",
+        )
+        stored = store.upsert(node(node_id="gpu-box", kind=NodeKind.LLAMACPP,
+                                   url="http://10.0.0.9:8081"))
+        assert stored.node_id == "gpu-box-2", (
+            "the hand-written gpu-box was replaced, not the newcomer renamed"
+        )
+
+    def test_an_unquoted_numeric_name_is_refused_by_name(self, store):
+        """m4: YAML reads an unquoted `7:` as the integer 7, not the text
+        "7". `ModelEndpointRegistry.names()` -- FROZEN, in `src/kernel/` --
+        then calls `sorted()` on a mapping with both int and str keys and
+        raises a bare `TypeError`, not a message naming the file. Caught
+        here, before that mapping is ever built."""
+        path = store.path.parent / "model_endpoints.yaml"
+        path.write_text(
+            "endpoints:\n  7:\n    kind: ollama\n    url: http://10.0.0.9:11434\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError) as exc:
+            legacy_endpoints(path)
+        assert str(path) in str(exc.value)
 
 
 class TestEndpointResolution:

@@ -172,9 +172,14 @@ class TestTypedAddresses:
 
     #: Ways a person really types an address. The trailing-slash and
     #: capitalised forms are what a browser's address bar hands over; the
-    #: bracketed one is how an IPv6 address is written in a URL.
+    #: bracketed one is how an IPv6 address is written in a URL. The last
+    #: two carry a path and a query with no port named -- a port appended
+    #: after the whole string, rather than into the host, landed on the
+    #: path instead (m2): ``http://box/v1`` became ``http://box/v1:11434``,
+    #: which both names no real port and changes again on a second read.
     TYPED = ["box", "box:9000", "http://box:9000/", "box/", "box:9000/",
-             "HTTP://box:9000", "Http://box/", "[::1]", "[::1]:9000"]
+             "HTTP://box:9000", "Http://box/", "[::1]", "[::1]:9000",
+             "box/v1", "box?x=1"]
 
     def test_a_trailing_slash_does_not_become_part_of_the_host(self):
         """``10.0.0.9/`` once became ``http://10.0.0.9/:11434`` -- a path, not
@@ -190,6 +195,15 @@ class TestTypedAddresses:
     def test_an_ipv6_address_is_not_mistaken_for_one_naming_a_port(self):
         assert address_for("[::1]", NodeKind.OLLAMA) == "http://[::1]:11434"
         assert address_for("[::1]:9000", NodeKind.OLLAMA) == "http://[::1]:9000"
+
+    def test_a_port_is_inserted_into_the_host_not_appended_after_a_path(self):
+        """m2: ``http://box/v1`` named no port, so one was appended after the
+        whole string -- ``http://box/v1:11434`` -- which is a port on the
+        path, reaches nothing on 11434, and still goes to port 80."""
+        assert address_for("box/v1", NodeKind.OLLAMA) == "http://box:11434/v1"
+
+    def test_a_port_is_inserted_before_a_query_not_appended_after_it(self):
+        assert address_for("box?x=1", NodeKind.OLLAMA) == "http://box:11434?x=1"
 
     @pytest.mark.parametrize("typed", TYPED)
     @pytest.mark.parametrize("kind", list(NodeKind))

@@ -472,6 +472,77 @@ class TestWhatTheEnvironmentTabNeeds:
         assert recorder.asked == []
 
 
+class TestAStoreAlreadyHoldingTwoAtOneAddress:
+    """I2: what finding 1 (pre-fix) left behind for one address, or a hand
+    edit can leave the same way. ``upsert`` refuses the pair going forward;
+    this is the store that already has it.
+    """
+
+    @staticmethod
+    def _seed(store):
+        store.save([
+            InferenceNode(node_id="kitchen-box", label="Kitchen Box",
+                         kind=NodeKind.OLLAMA, url="http://10.0.0.9",
+                         reachable=False,
+                         provenance={"label": Provenance.DECLARED,
+                                     "url": Provenance.DECLARED}),
+            InferenceNode(node_id="ollama-10-0-0-9-11434",
+                         label="Ollama on 10.0.0.9", kind=NodeKind.OLLAMA,
+                         url="http://10.0.0.9:11434", reachable=True),
+        ], ScanConsent())
+
+    def test_listing_still_works_and_names_both_ids(self, store):
+        self._seed(store)
+        result = service.list_nodes(store)
+        assert result.ok
+        assert {r.node_id for r in result.rows} == {
+            "kitchen-box", "ollama-10-0-0-9-11434"}
+        assert "kitchen-box" in result.duplicate_notice
+        assert "ollama-10-0-0-9-11434" in result.duplicate_notice
+
+    def test_forgetting_either_one_still_works(self, store):
+        self._seed(store)
+        result = service.forget_node("kitchen-box", store)
+        assert result.ok
+        assert [n.node_id for n in store.load()[0]] == ["ollama-10-0-0-9-11434"]
+
+    def test_a_check_that_would_have_to_guess_is_refused_not_misattributed(
+        self, store
+    ):
+        """What review finding I2 reproduces: a look at the record that
+        answers must not update the *other* record and then read the one
+        that just answered as silent. `recorded_at` would have picked
+        `kitchen-box` -- first in the list, at the same address -- and
+        `check_node`'s own by-id lookup never gets a chance to tell the two
+        apart, because the write it would judge never completes."""
+        self._seed(store)
+        recorder = Recorder(answering={"10.0.0.9:11434"})
+        events = list(service.check_node("ollama-10-0-0-9-11434", store,
+                                         fetch=recorder, post=recorder.post))
+        last = events[-1]
+        assert last.stage == "store"
+        assert not last.ok and last.finished
+        assert "kitchen-box" in last.message
+        assert "ollama-10-0-0-9-11434" in last.message
+        # Refused, not guessed: neither record changed.
+        nodes = {n.node_id: n for n in store.load()[0]}
+        assert nodes["ollama-10-0-0-9-11434"].reachable is True, (
+            "the record that answered must not be read back as silent"
+        )
+        assert nodes["kitchen-box"].reachable is False
+
+    def test_the_pair_is_named_whichever_one_is_checked(self, store):
+        """Not an artefact of which id happens to be asked for -- checking
+        the *other* record in the pair hits the same ambiguous write."""
+        self._seed(store)
+        recorder = Recorder(answering={"10.0.0.9:11434"})
+        events = list(service.check_node("kitchen-box", store,
+                                         fetch=recorder, post=recorder.post))
+        assert events[-1].stage == "store"
+        assert "ollama-10-0-0-9-11434" in events[-1].message
+        assert "kitchen-box" in events[-1].message
+
+
 class TestAddingByHand:
     def test_a_typed_computer_is_stored_and_marked_as_typed(self, store):
         assert service.add_node("Kitchen Box", "ollama",

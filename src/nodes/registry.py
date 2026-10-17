@@ -45,6 +45,15 @@ def legacy_endpoints(path: Path) -> dict[str, dict]:
             f"by its details, and they are not written that way."
         )
     for name, spec in entries.items():
+        if not isinstance(name, str):
+            # `sorted()` over a mapping that mixes an int key with the string
+            # ones already here is where this surfaced: `model list` crashed
+            # with a bare `TypeError`, not a message naming the file (m4).
+            # Caught by name before `spec` is even looked at.
+            raise ValueError(
+                f"{path}: an endpoint's name under `endpoints:` should be "
+                f"text, and {name!r} is not. Quote it, e.g. \"{name}\"."
+            )
         if not (isinstance(spec, dict) and isinstance(spec.get("kind"), str)
                 and isinstance(spec.get("url"), str)):
             raise ValueError(
@@ -52,6 +61,35 @@ def legacy_endpoints(path: Path) -> dict[str, dict]:
                 f"`url:` written under it."
             )
     return dict(entries)
+
+
+def _legacy_names(path: Path) -> set[str]:
+    """Every name written under ``endpoints:``, regardless of whether its
+    own details are well-formed.
+
+    ``names_in_use`` only has to know which ids are already spoken for -- not
+    whether each entry resolves to a usable endpoint, which is
+    ``legacy_endpoints``'s job and stays strict for the callers that read an
+    entry's contents (``model list``, a graph run). Reusing that strict
+    reading here meant one malformed entry reserved *no* names from the
+    file, so a hand-written ``gpu-box`` was silently replaced by a computer
+    once another, unrelated entry in the same file had a typo (review
+    finding 3's class, reopened -- m1). A file that cannot be opened or is
+    not YAML still contributes nothing, matching ``names_in_use``'s existing
+    rule for that case.
+    """
+    if not path.exists():
+        return set()
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return set()
+    if not isinstance(raw, dict):
+        return set()
+    entries = raw.get("endpoints")
+    if not isinstance(entries, dict):
+        return set()
+    return {name for name in entries if isinstance(name, str)}
 
 
 def names_in_use(legacy_path: Path) -> set[str]:
@@ -63,15 +101,13 @@ def names_in_use(legacy_path: Path) -> set[str]:
     that name to a different machine (review finding 3). ``NodeStore`` gives
     a new computer a suffix instead.
 
-    An endpoint file that cannot be read contributes no names: the runtime
-    leaves it out too, so none of them is in use.
+    An endpoint file that cannot be opened or is not YAML contributes no
+    names: the runtime leaves it out too, so none of them is in use. One
+    that parses but holds a malformed entry still reserves its *other*,
+    well-formed names (``_legacy_names``, m1) -- only the entries actually
+    used to resolve a graph need to be strict about shape.
     """
-    names = set(DEFAULT_ENDPOINTS)
-    try:
-        names |= set(legacy_endpoints(legacy_path))
-    except (OSError, yaml.YAMLError, ValueError):
-        pass
-    return names
+    return set(DEFAULT_ENDPOINTS) | _legacy_names(legacy_path)
 
 
 def merged_endpoints(
