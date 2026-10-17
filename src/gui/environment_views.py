@@ -667,6 +667,9 @@ class EnvironmentTab(ctk.CTkFrame):
             self._poll_id = None
         worker, self._worker = self._worker, None
         if worker is not None and worker.is_alive():
+            # Bounded on purpose: a worker caught finishing a Tk object's
+            # __del__ needs this thread to answer, and it cannot while it
+            # waits here, so closing can pause up to five seconds, not hang.
             worker.join(timeout=5.0)
         super().destroy()
 
