@@ -51,6 +51,15 @@ def _content_hash(text: str) -> str:
     just a cheap way to tell "the same brief" from "an edited one"."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
+
+#: Per ADR-002, every new row added by rows created after the original
+#: schema gets a `schema_version` so a future shape change has something to
+#: branch on. `workflow_snapshots` and `run_brief_pins` are internal to the
+#: ledger (no Pydantic contract backs them), so this is a plain constant
+#: rather than a model default — "1" for the same reason the human &
+#: cooperative workflow contracts are "1" in docs/migration-notes.md.
+_LEDGER_ROW_SCHEMA_VERSION = "1"
+
 #: Tables that record history rather than current state. Nothing in them is
 #: ever rewritten: a wrong entry is corrected by a later entry on top, never by
 #: editing the record of what was believed at the time.
@@ -70,6 +79,7 @@ _APPEND_ONLY_TABLES = (
     "cooperation_assessments",
     "cooperative_workflows",
     "workflow_snapshots",
+    "run_brief_pins",
 )
 
 _TABLE_SCHEMAS = {
@@ -95,7 +105,9 @@ _TABLE_SCHEMAS = {
     # One row per *distinct* brief content ever saved for a workflow id,
     # content-hashed and dated. `workflows` above only ever holds the latest
     # snapshot — this is what lets a resume tell "the brief never changed"
-    # apart from "the brief was silently edited after this run began".
+    # apart from "the brief was silently edited after this run began". Read
+    # by `current_brief_hash` (what's current now) and `brief_hash_at` (the
+    # fallback pin for a run that predates `run_brief_pins` below).
     "workflow_snapshots": (
         {
             "snapshot_id": int,
@@ -103,8 +115,26 @@ _TABLE_SCHEMAS = {
             "content_hash": str,
             "saved_at": str,
             "brief_json": str,
+            "schema_version": str,
         },
         "snapshot_id",
+    ),
+    # The explicit pin: which brief content a run started under, recorded by
+    # the CLI immediately after the frozen `start()` returns. This is the
+    # primary source `_refuse_if_brief_drifted` (src/cli.py) reads; the
+    # `saved_at <= created_at` lookup in `brief_hash_at` above is only a
+    # fallback for runs persisted before this table existed, and is subject
+    # to clock skew in a way an explicit pin is not.
+    "run_brief_pins": (
+        {
+            "pin_id": int,
+            "run_id": str,
+            "workflow_id": str,
+            "content_hash": str,
+            "pinned_at": str,
+            "schema_version": str,
+        },
+        "pin_id",
     ),
     "runs": (
         {
@@ -331,6 +361,52 @@ def _pk_columns(table: str) -> tuple:
     return (pk,) if isinstance(pk, str) else tuple(pk)
 
 
+def _is_single_integer_pk(table: str) -> bool:
+    """Whether a table's primary key is one column, declared `int`.
+
+    sqlite_utils makes a lone integer primary key an alias for SQLite's
+    rowid, which is the specific case `_replace_guard_when` below has to
+    treat specially (see its docstring). A composite key, or a single
+    column declared `str`, does not have this problem.
+    """
+    columns, pk = _TABLE_SCHEMAS[table]
+    return isinstance(pk, str) and columns[pk] is int
+
+
+def _replace_guard_when(table: str) -> str:
+    """The `WHEN` expression for a table's `_no_replace` trigger.
+
+    The base condition is "a row with this primary key already exists" —
+    that is what makes `INSERT OR REPLACE` (or `OR IGNORE`, or an explicit
+    `ON CONFLICT`) over an existing key indistinguishable from a rewrite,
+    and triggers it regardless of which conflict-resolution clause the
+    statement used.
+
+    For a single-column integer primary key specifically, one more clause
+    is needed. Omitting that column lets SQLite auto-number it (the normal,
+    overwhelmingly common case: `record_event`, `record_promotion`, ...),
+    but *inside a BEFORE INSERT trigger*, `NEW.<pk>` reads as SQLite's
+    placeholder for "not chosen yet" — observable as `-1` — because the
+    real rowid is not assigned until after triggers run. Without excluding
+    it, the very first ordinary auto-numbered insert after any row happens
+    to carry id `-1` (by hand, or from an import) would match that row's
+    `-1` and be refused as a replace, and so would every insert after it:
+    the guard would have jammed the audit trail shut. Excluding `-1`
+    leaves a row that explicitly claims id `-1` unprotected against being
+    replaced by another explicit `-1` — an acceptable, narrow trade against
+    silently refusing every future legitimate insert.
+    """
+    exists_clause = (
+        f"EXISTS (SELECT 1 FROM {table} WHERE "
+        + " AND ".join(f"{col} = NEW.{col}" for col in _pk_columns(table))
+        + ")"
+    )
+    if _is_single_integer_pk(table):
+        pk = _pk_columns(table)[0]
+        return f"NEW.{pk} IS NOT NULL AND NEW.{pk} <> -1 AND {exists_clause}"
+    return exists_clause
+
+
 #: One trigger per table forbidding UPDATE, and one forbidding DELETE. Both
 #: fire unconditionally: there is no column value for which rewriting or
 #: erasing a row is allowed.
@@ -352,15 +428,12 @@ _APPEND_ONLY_TRIGGERS = [
     # happens to turn it on for its own connection, which is why this gap is
     # easy to miss in this codebase's own tests). A BEFORE INSERT trigger has
     # no such dependency: it fires for every insert path regardless of the
-    # conflict-resolution clause, so it is checked here instead, keyed on
-    # whether a row with the same primary key already exists.
+    # conflict-resolution clause, so it is checked here instead. See
+    # `_replace_guard_when` for what the condition actually is.
     f"""
     CREATE TRIGGER IF NOT EXISTS {table}_no_replace
     BEFORE INSERT ON {table}
-    WHEN EXISTS (
-        SELECT 1 FROM {table}
-        WHERE {" AND ".join(f"{col} = NEW.{col}" for col in _pk_columns(table))}
-    )
+    WHEN {_replace_guard_when(table)}
     BEGIN SELECT RAISE(ABORT, '{table} is append-only: replaces are forbidden'); END;
     """
     for table in _APPEND_ONLY_TABLES
@@ -459,6 +532,7 @@ class RunLedger:
                     "content_hash": content_hash,
                     "saved_at": datetime.now(timezone.utc).isoformat(),
                     "brief_json": brief_json,
+                    "schema_version": _LEDGER_ROW_SCHEMA_VERSION,
                 }
             )
 
@@ -484,12 +558,22 @@ class RunLedger:
         """The content hash of the brief snapshot that was current at a
         given moment, or None if no snapshot exists at or before that time.
 
-        This is how a run pins the exact brief it started under without
-        `start()` (frozen) ever needing to record anything extra: the run's
-        own `created_at` is already an immutable timestamp, and `save_workflow`
+        This was the original way to pin the brief a run started under
+        without `start()` (frozen) needing to record anything extra — the
+        run's own `created_at` is an immutable timestamp, and `save_workflow`
         is always called (by `start()`) just before a run's `created_at` is
-        set — so asking "what was current at `run.created_at`" and asking
-        "what was current the instant this run began" are the same question.
+        set, so "what was current at `run.created_at`" and "what was current
+        the instant this run began" should be the same question.
+
+        They stop being the same question if the system clock steps
+        backwards between the run starting and a later save: a brief saved
+        under an earlier clock reading can then appear to have been current
+        all along. `pin_run_brief`/`pinned_brief_hash` below record the pin
+        explicitly instead of inferring it from a clock reading, and close
+        that hole for any run pinned that way. This method remains only as
+        the fallback for a run persisted before `run_brief_pins` existed —
+        `_refuse_if_brief_drifted` in src/cli.py tries the explicit pin
+        first and only falls back to this lookup when none exists.
         """
         at_iso = at.astimezone(timezone.utc).isoformat()
         rows = list(
@@ -497,6 +581,37 @@ class RunLedger:
                 "workflow_id = ? and saved_at <= ?",
                 [workflow_id, at_iso],
                 order_by="saved_at desc, snapshot_id desc",
+            )
+        )
+        return rows[0]["content_hash"] if rows else None
+
+    def pin_run_brief(self, run_id: str, workflow_id: str, content_hash: str) -> None:
+        """Record, explicitly and permanently, which brief content a run
+        started under.
+
+        Called once, by the CLI's `run`/`graph run` commands, right after
+        the frozen `start()` returns — never by `start()` itself, which is
+        FROZEN. This is the primary source `_refuse_if_brief_drifted` reads:
+        an explicit pin cannot be fooled by a clock moving backwards the way
+        the `brief_hash_at` time-lookup can.
+        """
+        self.db["run_brief_pins"].insert(
+            {
+                "run_id": run_id,
+                "workflow_id": workflow_id,
+                "content_hash": content_hash,
+                "pinned_at": datetime.now(timezone.utc).isoformat(),
+                "schema_version": _LEDGER_ROW_SCHEMA_VERSION,
+            }
+        )
+
+    def pinned_brief_hash(self, run_id: str) -> Optional[str]:
+        """The explicitly pinned brief hash for a run, or None if this run
+        was never pinned (predates `pin_run_brief`, or the CLI command that
+        started it failed to call it)."""
+        rows = list(
+            self.db["run_brief_pins"].rows_where(
+                "run_id = ?", [run_id], order_by="pin_id desc"
             )
         )
         return rows[0]["content_hash"] if rows else None

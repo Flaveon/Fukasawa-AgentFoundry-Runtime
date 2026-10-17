@@ -14,7 +14,13 @@ import sqlite3
 
 import pytest
 
-from src.runtime.ledger import _APPEND_ONLY_TABLES, _TABLE_SCHEMAS, RunLedger, _pk_columns
+from src.runtime.ledger import (
+    _APPEND_ONLY_TABLES,
+    _TABLE_SCHEMAS,
+    RunLedger,
+    _is_single_integer_pk,
+    _pk_columns,
+)
 
 
 @pytest.fixture()
@@ -130,6 +136,7 @@ class TestAppendOnlyCoversEveryTable:
             "cooperation_assessments",
             "cooperative_workflows",
             "workflow_snapshots",
+            "run_brief_pins",
         }
 
 
@@ -172,3 +179,39 @@ class TestTriggersReattachOnOldDatabases:
         assert len(restored) == 3 * len(_APPEND_ONLY_TABLES)
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             sqlite3.connect(str(dbpath)).execute("DELETE FROM ledger")
+
+
+class TestNegativeOneRowidPlaceholderIsExcluded:
+    """Gate G re-review finding R4.
+
+    Inside a BEFORE INSERT trigger, SQLite's placeholder for an
+    integer-primary-key column that was *omitted* (left to be auto-numbered)
+    reads as -1 — the real rowid is not chosen until after triggers run.
+    `_no_replace`'s WHEN clause has to treat `-1` as "no match" or a single
+    row that happens to carry id -1 (hand-inserted, or restored from an
+    import) would make every later ordinary, auto-numbered insert look like
+    a replace of that row, and get refused — jamming the audit trail shut.
+    """
+
+    @pytest.mark.parametrize(
+        "table", [t for t in _APPEND_ONLY_TABLES if _is_single_integer_pk(t)]
+    )
+    def test_a_row_at_id_negative_one_does_not_jam_later_ordinary_inserts(
+        self, ledger, table
+    ):
+        pk = _pk_columns(table)[0]
+        poisoned = _sample_row(table)
+        poisoned[pk] = -1
+        ledger.db[table].insert(poisoned)
+
+        # The exact regression: an ordinary, auto-numbered insert through
+        # the public sqlite_utils API must still succeed afterward.
+        ledger.db[table].insert(_sample_row(table, variant="after-minus-one"))
+        assert len(list(ledger.db[table].rows)) == 2
+
+    def test_record_event_still_works_after_a_row_at_id_negative_one(self, ledger):
+        ledger.db["ledger"].insert({**_sample_row("ledger"), "event_id": -1})
+        # Before the fix, this raised sqlite3.IntegrityError("... replaces
+        # are forbidden") even though it is a plain, unrelated insert.
+        ledger.record_event("c1", "w1", None, "S1", "owner", "ev", True)
+        assert len(ledger.history("w1")) == 1
