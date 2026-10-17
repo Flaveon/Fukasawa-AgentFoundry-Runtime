@@ -28,6 +28,7 @@ from src.nodes.discovery import (
     discover,
     has_userinfo,
     redact_userinfo,
+    scrub_userinfo,
 )
 from src.schemas.node import NodeKind, ScanScope
 
@@ -336,6 +337,29 @@ class TestUserinfoAndMalformedAddresses:
     def test_redaction_is_idempotent(self):
         once = redact_userinfo("http://alice:s3cret@10.0.0.9:11434")
         assert redact_userinfo(once) == once
+
+    @pytest.mark.parametrize("text", [
+        "it has the single value 'http://alice:s3cret@10.0.0.9'",
+        "input_value='http://alice:s3cret@10.0.0.9'",
+        "input_value=['http://alice:s3cret@10.0.0.9']",
+        'while scanning ... tp://alice:s3cret@10.0.0.9:11434: x',
+        "nodes: http://alice:s3cret@10.0.0.9",
+        "consent: http://alice:s3cret@10.0.0.9",
+    ])
+    def test_scrub_userinfo_removes_it_from_arbitrary_text(self, text):
+        """Final re-review's residual leak: a *malformed* file's own
+        content, or a pydantic/YAML exception's message, can still quote a
+        secret back -- this is swept over free text rather than one known
+        address field, because by the time a message like this is built
+        there is no single field left to read it from."""
+        scrubbed = scrub_userinfo(text)
+        assert "alice" not in scrubbed
+        assert "s3cret" not in scrubbed
+
+    def test_scrub_userinfo_leaves_ordinary_text_alone(self):
+        assert scrub_userinfo("10.0.0.9:11434 should start with `nodes:`") == (
+            "10.0.0.9:11434 should start with `nodes:`"
+        )
 
 
 class TestTheStream:

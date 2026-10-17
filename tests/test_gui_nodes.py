@@ -657,6 +657,29 @@ class TestUserinfoIsRefused:
         )
         assert "10.0.0.9:11434" in row.url
 
+    def test_the_duplicate_address_notice_also_redacts_a_tainted_pair(
+        self, store
+    ):
+        """Final check nit: `_ambiguity_message` names each computer by
+        label and address -- two hand-edited records sharing the same
+        userinfo and host are a duplicate pair *and* each one's address
+        still needs redacting there, not only on its own card. Nothing
+        covered this combination before."""
+        store.save([
+            InferenceNode(node_id="kitchen-box", label="Kitchen Box",
+                         kind=NodeKind.OLLAMA,
+                         url=f"http://alice:{self.SECRET}@10.0.0.9"),
+            InferenceNode(node_id="garage-box", label="Garage Box",
+                         kind=NodeKind.OLLAMA,
+                         url=f"http://alice:{self.SECRET}@10.0.0.9:11434"),
+        ], ScanConsent())
+        result = service.list_nodes(store)
+        assert result.ok
+        assert self.SECRET not in result.duplicate_notice
+        assert "Kitchen Box" in result.duplicate_notice
+        assert "Garage Box" in result.duplicate_notice
+        assert "10.0.0.9:11434" in result.duplicate_notice
+
 
 class TestAddingByHand:
     def test_a_typed_computer_is_stored_and_marked_as_typed(self, store):

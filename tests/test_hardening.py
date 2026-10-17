@@ -548,6 +548,61 @@ class TestUserinfoNeverLeaksIntoAFailedRun:
         assert "s3cret" not in result.output
         assert "tainted" not in result.output
 
+    def test_a_tainted_model_endpoints_entry_leaves_the_whole_file_out(
+        self, tmp_path, monkeypatch
+    ):
+        """Final check's residual leak and wording nit: `legacy_endpoints`
+        builds this ValueError straight from the entry's own url, and the
+        warning used to print `str(exc)` unscrubbed, so the secret reached
+        `model list` even though the tainted node path (above) never does.
+        The warning also used to say just "so it is left out", with
+        nothing to say *what* -- this names the file and says every entry
+        in it, not only the tainted one, is void."""
+        from typer.testing import CliRunner
+
+        from src import cli
+
+        home = _home(tmp_path, monkeypatch)
+        (home / "model_endpoints.yaml").write_text(
+            "endpoints:\n"
+            "  ok:\n    kind: ollama\n    url: http://10.0.0.1:11434\n"
+            "  gpu:\n    kind: ollama\n"
+            "    url: http://alice:s3cret@10.0.0.9:11434\n",
+            encoding="utf-8",
+        )
+        result = CliRunner().invoke(cli.app, ["model", "list"])
+        assert result.exit_code == 0, result.output
+        assert "s3cret" not in result.output
+        assert "nothing in this file is used" in result.output
+        assert "model_endpoints.yaml" in result.output
+        # The whole file is void, not only the tainted entry: the other,
+        # well-formed "ok" endpoint it defined must not resolve either --
+        # its distinctive address is the clean signal, not its name.
+        assert "10.0.0.1" not in result.output
+
+    def test_a_yaml_error_near_a_password_in_model_endpoints_is_scrubbed(
+        self, tmp_path, monkeypatch
+    ):
+        """Final check's residual leak: unlike the well-formed-entry case
+        above (whose own message never echoes the url), a YAML *syntax*
+        error near the url line makes PyYAML quote the surrounding text
+        back in its own context snippet -- and `left_out` builds this
+        warning straight from `str(exc)`, outside `unusable_message`, so
+        it needed its own scrub."""
+        from typer.testing import CliRunner
+
+        from src import cli
+
+        home = _home(tmp_path, monkeypatch)
+        (home / "model_endpoints.yaml").write_text(
+            "endpoints:\n  gpu:\n    kind: ollama\n"
+            "    url: http://alice:s3cret@10.0.0.9: x\n",
+            encoding="utf-8",
+        )
+        result = CliRunner().invoke(cli.app, ["model", "list"])
+        assert result.exit_code == 0, result.output
+        assert "s3cret" not in result.output
+
 
 class TestNodeDoctrine:
     """What must stay true of recorded computers however the feature grows.

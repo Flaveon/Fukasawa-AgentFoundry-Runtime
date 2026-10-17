@@ -17,6 +17,7 @@ That is the privacy promise this feature makes, and it is enforced here rather
 than in the interface, so no caller can skip it.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterator, Optional
@@ -218,6 +219,35 @@ def redact_userinfo(url: str) -> str:
     if not prefix:
         return url
     return f"{scheme}://…@{netloc}{rest}"
+
+
+#: Matches userinfo wherever it appears in free text, not only in an
+#: address this module already knows is one -- a stored file's own
+#: content, or a third-party library's exception message (PyYAML,
+#: pydantic), can quote a secret back inside a sentence that is otherwise
+#: about something else entirely (final re-review finding 1's residual
+#: leak: ``node list`` on a *malformed* file echoed the bad entry's raw
+#: value, which could still be a tainted url). The scheme is optional --
+#: a YAML parser's own context snippet can truncate it -- and the
+#: character classes exclude quotes so a value already inside `'...'` or
+#: `"..."` is still found starting just after the quote.
+_USERINFO_IN_TEXT = re.compile(r"(?:\w+://)?[^\s/@'\"]+(?::[^\s/@'\"]*)?@")
+
+
+def scrub_userinfo(text: str) -> str:
+    """Replace every ``[scheme://]user[:pw]@`` this text contains with
+    ``…@``.
+
+    Unlike ``has_userinfo``/``redact_userinfo``, this does not parse one
+    known address -- it sweeps arbitrary text (an error message built from
+    a stored file's own content, or a library's exception text) for
+    anything shaped like userinfo, because by the time such a message is
+    being shown, there is no single field left to read it from. Applied to
+    every user-facing message built from file content or a third-party
+    exception (``unusable_message``, the endpoint-file warning, and
+    anywhere a pydantic or YAML error string reaches a screen).
+    """
+    return _USERINFO_IN_TEXT.sub("…@", text)
 
 
 def address_problem(host: str) -> Optional[str]:

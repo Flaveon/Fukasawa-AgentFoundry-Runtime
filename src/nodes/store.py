@@ -29,12 +29,22 @@ DEFAULT_HOME = Path(os.environ.get("FUKASAWA_HOME", "~/.fukasawa")).expanduser()
 
 
 def _what(value) -> str:
-    """Name what was found where something else belonged, for a person."""
+    """Name what was found where something else belonged, for a person.
+
+    A hand-edited file's own scalar can be whatever a person wrote there,
+    including a url naming a user name or password -- this is the only
+    place that scalar is ever about to be quoted back verbatim, so it is
+    swept for that shape before it is (final re-review finding 1's
+    residual leak: a *malformed* record's own text, not an address this
+    module was ever asked to read as one).
+    """
+    from src.nodes.discovery import scrub_userinfo
+
     if value is None:
         return "nothing"
     if isinstance(value, list):
         return "a list"
-    return f"the single value {value!r}"
+    return f"the single value {scrub_userinfo(repr(value))}"
 
 
 def unusable_message(path: Path, exc: Exception) -> str:
@@ -52,16 +62,24 @@ def unusable_message(path: Path, exc: Exception) -> str:
     "correct that file" tail is left off -- appended, it read as a second,
     different instruction after one that had already said what to do
     (re-review nit).
+
+    Every branch is swept for userinfo before it is returned: a
+    *malformed* file's own text (``_what()``'s quoted scalar), a pydantic
+    validation message (``input_value=...``), or a PyYAML context snippet
+    can all echo a secret that was never read as an address, only as text
+    (final re-review finding 1's residual leak).
     """
+    from src.nodes.discovery import scrub_userinfo
+
     if isinstance(exc, AmbiguousAddressError):
-        return str(exc)
+        return scrub_userinfo(str(exc))
     if isinstance(exc, yaml.YAMLError):
         detail = f"{path} is not valid YAML: {exc}"
     elif isinstance(exc, OSError):
         detail = f"{path} could not be opened: {exc}"
     else:
         detail = str(exc)
-    return (
+    return scrub_userinfo(
         f"{detail}\n"
         "Correct that file, or move it aside and record the computers again."
     )

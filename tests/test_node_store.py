@@ -97,6 +97,23 @@ class TestAFileOfTheWrongShape:
             store.load()
         assert str(store.path) in str(exc.value)
 
+    def test_a_quoted_scalar_naming_a_password_is_scrubbed_at_the_source(
+        self, store
+    ):
+        """Final check's residual leak: `_what()` quotes a hand-edited
+        file's own scalar back verbatim, which can be a tainted url even
+        though nothing here ever read it as an address. Checked on
+        ``store.load()``'s raw exception, before ``unusable_message``
+        gets a chance to scrub it too -- this is `_what()`'s own layer,
+        independent of that one."""
+        store.path.write_text(
+            "nodes:\n  box: http://alice:s3cret@10.0.0.9\n", encoding="utf-8"
+        )
+        with pytest.raises(ValueError) as exc:
+            store.load()
+        assert "s3cret" not in str(exc.value)
+        assert "10.0.0.9" in str(exc.value)
+
     def test_an_unknown_top_level_key_names_it(self, store):
         """I3: a typo (`node:` for `nodes:`) must not read as "no computers".
 

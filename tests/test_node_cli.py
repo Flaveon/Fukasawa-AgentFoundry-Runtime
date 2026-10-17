@@ -1039,6 +1039,25 @@ class TestUserinfoIsRefused:
         assert result.exit_code == 1, result.output
         assert self.SECRET not in result.output
 
+    def test_node_scan_host_refuses_it_as_json(self, store_path, monkeypatch):
+        """Re-review nit: this refusal happens before `_run_scan` opens its
+        event stream at all, so it must give the same `{"ok","error",
+        "message"}` shape every other `--json` input refusal here does,
+        not the prose sentence regardless of `--json`."""
+        def looked(*_a, **_k):
+            raise AssertionError("a look ran on a refused address")
+
+        monkeypatch.setattr("src.cli._discover", looked)
+        result = CliRunner().invoke(app, [
+            "node", "scan", "--scope", "named-host",
+            "--host", f"alice:{self.SECRET}@10.0.0.9", "--json",
+        ])
+        assert result.exit_code == 1, result.output
+        payload = json.loads(result.output)
+        assert payload["ok"] is False
+        assert payload["error"] == "input"
+        assert self.SECRET not in payload["message"]
+
     def test_the_typed_in_route_refuses_it(self, store_path, monkeypatch):
         """``typer.prompt`` echoes a person's own keystrokes back at them as
         they type -- the same as any terminal, with or without this
@@ -1087,6 +1106,43 @@ class TestUserinfoIsRefused:
         assert shown.exit_code == 0, shown.output
         assert self.SECRET not in shown.output
         assert "node forget" in shown.output
+
+
+class TestMalformedFileUserinfoNeverLeaks:
+    """Final check's residual leak: a *malformed* `nodes.yaml` can still
+    echo a secret back through `_what()`'s quoted scalar, or through a
+    pydantic validation message -- neither was ever read as an address by
+    `address_problem`/`has_userinfo`, which only look at a well-formed
+    one, so this is a second, independent sweep over the finished message.
+    """
+
+    SECRET = "s3cret"
+    URL = f"http://alice:{SECRET}@10.0.0.9"
+
+    @pytest.mark.parametrize("content", [
+        f"nodes: {URL}\n",
+        f"consent: {URL}\n",
+        f"nodes:\n  box:\n    adress: {URL}\n    label: x\n    kind: ollama\n"
+        f"    url: http://y:1\n",
+        f'nodes:\n  box:\n    label: x\n    kind: ollama\n    url: ["{URL}"]\n',
+        f"nodes:\n  box:\n    label: x\n    kind: ollama\n    url: {URL}: x\n",
+    ], ids=[
+        "nodes-as-scalar", "consent-as-scalar", "misspelled-field",
+        "url-as-list", "yaml-error-on-url-line",
+    ])
+    def test_the_secret_never_reaches_any_output(self, store_path, content):
+        store_path.write_text(content, encoding="utf-8")
+
+        listing = CliRunner().invoke(app, ["node", "list"])
+        assert self.SECRET not in listing.output, listing.output
+
+        as_json = CliRunner().invoke(app, ["node", "list", "--json"])
+        assert self.SECRET not in as_json.output, as_json.output
+
+        from src.gui.services import nodes as svc
+
+        desktop = svc.list_nodes(NodeStore(store_path))
+        assert self.SECRET not in desktop.refusal
 
 
 class TestAddAndForget:

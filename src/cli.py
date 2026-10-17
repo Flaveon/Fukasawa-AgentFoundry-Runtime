@@ -885,6 +885,8 @@ def _model_endpoints() -> "ModelEndpointRegistry":
         ``OSError``, or a ``yaml.YAMLError`` that (unlike the two above)
         does not name the file itself.
         """
+        from src.nodes.discovery import scrub_userinfo
+
         detail = str(exc)
         if isinstance(exc, (OSError, yaml.YAMLError)) or str(path) not in detail:
             detail = f"{path} could not be read: {detail}"
@@ -894,9 +896,23 @@ def _model_endpoints() -> "ModelEndpointRegistry":
         # one trailing period first is what keeps that from reading "...and
         # it does not., so it is left out." (re-review nit).
         detail = detail.rstrip(".")
-        left = "they are" if path == store.path else "it is"
+        # Swept for userinfo before it is printed: a *malformed* entry's own
+        # text (a pydantic or YAML message quoting it back) can still name
+        # one, and this is the one path that builds its sentence outside
+        # `unusable_message` (final re-review finding 1's residual leak).
+        detail = scrub_userinfo(detail)
+        # Named, not left as a bare "it": the previous wording left the one
+        # entry's own address as the only thing "it" could plausibly mean,
+        # when what is actually void is every name the whole file would
+        # otherwise have given -- one bad entry in `model_endpoints.yaml`
+        # takes every other entry in it down too (re-review nit).
+        tail = (
+            "so the recorded computers are left out"
+            if path == store.path else
+            "so nothing in this file is used until that is fixed"
+        )
         console.print(
-            f"[yellow]{escape(detail)}, so {left} left out.[/yellow]",
+            f"[yellow]{escape(detail)}, {tail}.[/yellow]",
             soft_wrap=True,
         )
 
@@ -1607,7 +1623,14 @@ def node_scan(
 
         problem = address_problem(host)
         if problem:
-            console.print(f"[yellow]{escape(problem)}[/yellow]")
+            # The same shape every other `--json` input refusal in this
+            # file gives, not the prose sentence regardless of `--json`
+            # (re-review nit) -- this is checked before `_run_scan` ever
+            # starts a stream, so there is no event shape to match yet.
+            if as_json:
+                _emit_json({"ok": False, "error": "input", "message": problem})
+            else:
+                console.print(f"[yellow]{escape(problem)}[/yellow]")
             raise typer.Exit(1)
 
     _run_scan(store, chosen, host, label=label, as_json=as_json)
