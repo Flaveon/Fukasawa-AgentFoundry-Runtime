@@ -63,17 +63,17 @@ byte copy plus provenance). Both still receive independent review.
 | ID | Task | Depends on | Owner | Branch / worktree | Status | Evidence | Decision needed |
 |---|---|---|---|---|---|---|---|
 | A | Inventory local + remote truth | — | Opus | — | done | this file, "Verified starting state" | — |
-| B1 | Fix GUI worker reading Tk widgets (red `main`) | A | Sonnet 5 → Opus review | `fix/gui-worker-thread-tk` | in progress | — | — |
-| C1 | Second review of PR #26's ten fixes (277f758) | A | Opus reviewer | read-only `review-95d8867` | in progress | — | — |
-| C2 | Technical review of Gate G commits 301ca83, 693328b, 0f2d6b4 | A | Opus reviewer | read-only `review-95d8867` | in progress | — | Gate G acceptance stays with the owner |
-| C3 | Forced-colour CLI test failures | A | Opus | `fix/tests-color-off` | committed, awaiting review | reproduced at 95d8867: **65** failures under `FORCE_COLOR=1` (note recorded 9); after fix 1159 passed / 64 skipped | — |
+| B1 | Fix GUI worker reading Tk widgets (red `main`) | A | Sonnet 5 → Opus review | `fix/gui-worker-thread-tk`, PR #28 | **CI green, two independent reviews, awaiting owner merge** | 0da943e, c26a501 (GC-on-worker test hazard found on PR CI, fixed), 177877b; local repro on CI's CPython 3.12.15 / Tcl 9.0.4 | merge (refused to this session by permission policy) |
+| C1 | Second review of PR #26's ten fixes (277f758) | A | Opus reviewer → Sonnet 5 fix → Opus re-review | `fix/pr26-second-review` | fixes committed (afc81b0), re-review APPROVE_WITH_NITS; one Minor regression (ambiguous address aborts whole scan) being fixed | 3 Important + 7 Minor found; 25/27 mutants killed originally | m3 host-name folding (packet §7) |
+| C2 | Technical review of Gate G commits 301ca83, 693328b, 0f2d6b4 | A | Opus reviewer → Sonnet 5 fix | `fix/gate-g-review-findings` | review done (all three behaviour-preserving); pre-existing gaps being fixed | 4 Medium, 5 Low pre-existing (incl. INSERT OR REPLACE past append-only triggers; non-atomic promotion) | Gate G acceptance (packet §10) |
+| C3 | Forced-colour CLI test failures | A | Opus | `fix/tests-color-off`, PR #29 | reviewed (APPROVE_WITH_NITS, nits fixed in 9f9bb35); CI red only on B1's test until #28 merges | 65 failures at 95d8867 under FORCE_COLOR, 65 under TTY_COMPATIBLE, 15 under COLUMNS=30; all 0 after | merge |
 | C4 | Reconcile `tasks/backlog.md` against code/tests | A | Haiku 4.5 scout → Opus edit | `docs/backlog-run-plan` | done | 32 ticked with named carriers, 21 open with stated status. The scout's table was used as leads only: it cited two paths that do not exist (`config/cpax_profile.yaml`, `handoffs/adr/`) and test names by wildcard, so every ticked carrier was re-checked by hand | — |
-| C5 | Independent lifecycle/CLI/desktop/offline/persistence/packaging verification | B1 | Opus reviewer | — | pending | — | Gate G acceptance stays with the owner |
-| D0 | #27 M0: archive the May 31 plan verbatim | A | Opus | `docs/issue-27-m0-source-archive` | committed, awaiting review | SHA-256 `82ca7abf…10ad122f`, matches the original commit `c49a5cb` and five other local copies | — |
-| D2 | #27: source → contract reconciliation, ADR options | D0 | Opus | — | pending | — | owner decisions on divergences (issue checklist item 2) |
-| D3 | #27: find a real recurring Q2C defect, baseline metrics | D0 | Sonnet 5 scout | read-only | in progress | — | — |
-| D4–D8 | #27: candidate rule, shadow evaluation, capsule packaging, rollback, measured benefit | D3 | Sonnet 5 / Opus | — | pending | — | human review + promotion approval (issue checklist item 6) |
-| E | Explicit packets for Phase 10b, "check again" consent, LAN history, HW-013/014 | A | Opus | — | pending | — | owner |
+| C5 | Independent lifecycle/CLI/desktop/offline/persistence/packaging verification | A | Opus reviewer | scratch, removed | done | lifecycle, phase-0 criteria, offline (strace: 0 network syscalls), desktop, wheel, PyInstaller all PASS; F1 High (paused run resumes under a changed brief) folded into C2's branch; F3 → packet §6 | Gate G acceptance |
+| D0 | #27 M0: archive the May 31 plan verbatim | A | Opus | `docs/issue-27-m0-source-archive`, PR #30 | done, CI red only on B1's test | SHA-256 `82ca7abf…10ad122f` = original commit `c49a5cb` | merge |
+| D2 | #27: source → contract reconciliation, ADR options | D0 | Opus | PR #30 | done | 63 trace rows; 9 owner decisions | packet §8 |
+| D3 | #27: find a real recurring Q2C defect, baseline metrics | D0 | Sonnet 5 scout | read-only | done, verified by Opus | 24/35 gated runs: handoff says PASS/ship while the same run's deterministic gate says HOLD | — |
+| D4–D8 | #27: candidate rule, shadow evaluation, capsule packaging, rollback, measured benefit | D3 | Sonnet 5 / Opus | `feat/issue-27-handoff-verdict-shadow` | baseline running (44 cases × 1 local-model call) | — | human review + promotion approval |
+| E | Explicit packets for Phase 10b, "check again" consent, LAN history, HW-013/014 | A | Opus | `docs/backlog-run-plan` | done | `2026-10-17-owner-decision-packet-v1.0.md` | owner |
 | F | Integration, cleanup, completion report | all | Opus | — | pending | — | — |
 
 ## Validation commands (every writing worktree has its own `.venv`)
