@@ -1320,6 +1320,7 @@ def model_list() -> None:
     — is the difference between a configurable product and one that looks
     hardcoded.
     """
+    from src.nodes.discovery import redact_userinfo
     from src.security.trust import DEFAULT_TRUST_ROOT
 
     registry = _model_endpoints()
@@ -1329,7 +1330,12 @@ def model_list() -> None:
     table.add_column("URL")
     for name in registry.names():
         ep = registry.get(name)
-        table.add_row(ep.name, ep.kind, ep.url)
+        # A belt-and-suspenders redaction: `merged_endpoints` already
+        # leaves out any computer, and `legacy_endpoints` already refuses
+        # any `model_endpoints.yaml` entry, naming a user name or
+        # password, so nothing reaching this table should have one. If one
+        # ever does, it is still never shown.
+        table.add_row(ep.name, ep.kind, redact_userinfo(ep.url))
     console.print(table)
     console.print(
         "Reference these by name in a graph's model node: "
@@ -1497,10 +1503,23 @@ def node_scan(
     they arrive rather than in a block at the end, because a scan takes time
     and a person watching one deserves to see it happening.
     """
+    from src.nodes.store import unusable_message
     from src.schemas.node import ScanScope
 
     store = _node_store()
-    recorded, existing = _loaded(store)
+    try:
+        recorded, existing = store.load()
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        # `_loaded` prints the yellow, human sentence whatever `--json`
+        # says, which is right for every other command here (none of them
+        # takes `--json`) but was the one gap left in this one (re-review
+        # finding 7, optional).
+        message = unusable_message(store.path, exc)
+        if as_json:
+            _emit_json({"ok": False, "error": "input", "message": message})
+        else:
+            console.print(f"[yellow]{escape(message)}[/yellow]", soft_wrap=True)
+        raise typer.Exit(1)
 
     # Set on one path only: the person answered the menu. Two different acts
     # reach "not looking" and they are answered differently -- see the NONE
@@ -1583,6 +1602,14 @@ def node_scan(
             raise typer.Exit(1)
         host = typer.prompt("Address of the computer")
 
+    if chosen is ScanScope.NAMED_HOST:
+        from src.nodes.discovery import address_problem
+
+        problem = address_problem(host)
+        if problem:
+            console.print(f"[yellow]{escape(problem)}[/yellow]")
+            raise typer.Exit(1)
+
     _run_scan(store, chosen, host, label=label, as_json=as_json)
 
 
@@ -1611,10 +1638,22 @@ def _run_scan(
     if not as_json:
         console.print("")
     found = []
+    # The one `finished` event discovery ever yields is held back rather
+    # than printed as it arrives: printing it here, before a record is
+    # even upserted, was `finished: true` arriving *before* a later refusal
+    # for one of the findings it had just reported (final re-review finding
+    # 3) -- a `--json` reader watching for the stream's end would stop
+    # right there and never see the refusal that follows. It is printed
+    # last instead, once every finding has had its turn at being saved,
+    # carrying `ok=False` if any of them was refused.
+    closing = None
     for event in _discover(chosen, host):
+        if event.finished:
+            closing = event
+            if event.node is not None and event.node not in found:
+                found.append(event.node)
+            continue
         message = event.message
-        if on_nothing and event.finished and not found:
-            message = on_nothing
         if as_json:
             # A plain print, not console.print: Rich wraps to the window and
             # would split a message in two. Not `_emit_json` either — that
@@ -1683,6 +1722,25 @@ def _run_scan(
         else:
             console.print(f"\n{escape(note)}", soft_wrap=True)
 
+    # Now, last: the held-back closing event. `on_nothing` replaces its
+    # message the same way it always has -- nothing was found, exactly as
+    # when this was decided inline -- and its `ok` now also answers for
+    # every finding's own attempt at being saved, not only for whether
+    # discovery itself reached anything.
+    if closing is not None:
+        message = closing.message
+        if on_nothing and not found:
+            message = on_nothing
+        ok = closing.ok and not refused
+        if as_json:
+            print(jsonlib.dumps({
+                "stage": closing.stage, "message": message,
+                "ok": ok, "finished": True,
+            }))
+        else:
+            mark = "  [green]OK[/green]" if ok else "  [yellow]--[/yellow]"
+            console.print(f"{mark}  {escape(message)}")
+
     # The summary panel is prose for a person: labelled rows, rounded word
     # figures, and a consequence sentence. Under --json it would land inside
     # the stream as several lines that are not objects, and only ever on a
@@ -1716,7 +1774,7 @@ def _type_it_in(store, recorded, label: str) -> None:
     Design §3.8 writes the same flow down for the desktop, so the two front
     ends ask the same things in the same order.
     """
-    from src.nodes.discovery import address_for
+    from src.nodes.discovery import address_for, address_problem
     from src.nodes.summary import (
         KIND_WORDS,
         MAY_I_CONTACT,
@@ -1735,6 +1793,10 @@ def _type_it_in(store, recorded, label: str) -> None:
 
     name = typer.prompt("What should I call it?", default=label or None)
     address = typer.prompt("Address of the computer")
+    problem = address_problem(address)
+    if problem:
+        console.print(f"[yellow]{escape(problem)}[/yellow]")
+        raise typer.Exit(1)
     console.print("Which is running on it?")
     kinds = {str(i): kind for i, kind in enumerate(KIND_WORDS, start=1)}
     for number, kind in kinds.items():
@@ -1851,6 +1913,7 @@ def node_list(
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
     """Show every computer Fukasawa has been told about."""
+    from src.nodes.discovery import has_userinfo, redact_userinfo
     from src.nodes.store import duplicate_groups, unusable_message
 
     store = _node_store()
@@ -1870,7 +1933,17 @@ def node_list(
             console.print(f"[yellow]{escape(message)}[/yellow]", soft_wrap=True)
         raise typer.Exit(1)
     if as_json:
-        _emit_json({"nodes": [n.model_dump(mode="json") for n in nodes]})
+        # A record an older build or a hand edit left with a user name or
+        # password in its address is redacted here too -- `--json` is read
+        # by a program, but whatever that program does with it (print it,
+        # log it) is exactly the exposure this redaction exists to stop
+        # (final re-review finding 1).
+        dumped = []
+        for n in nodes:
+            payload = n.model_dump(mode="json")
+            payload["url"] = redact_userinfo(n.url)
+            dumped.append(payload)
+        _emit_json({"nodes": dumped})
         return
 
     from src.nodes.summary import human_words, model_count, source_label
@@ -1888,11 +1961,29 @@ def node_list(
             soft_wrap=True,
         )
 
+    # Likewise ordinarily nothing: every entry route refuses userinfo
+    # before it is ever saved. A record an older build or a hand edit left
+    # with one is never used to reach anything (`registry.merged_endpoints`
+    # leaves it out, `check_node` refuses it) -- said here, by id, with its
+    # address redacted, so the person can still find and fix it.
+    for n in nodes:
+        if has_userinfo(n.url):
+            console.print(
+                f"[red]{escape(n.node_id)} names a user name or password "
+                f"in its address.[/red] It is not used to reach anything "
+                f"until that is removed. Run [cyan]fukasawa node forget "
+                f"{escape(n.node_id)}[/cyan], or add it again with a clean "
+                f"address.",
+                soft_wrap=True,
+            )
+
     for node in nodes:
         # Label and address are both typed by a person; escape() keeps a
         # square bracket in either from being read as formatting.
+        # `redact_userinfo` is a no-op on an address with nothing to hide.
         console.print(
-            f"\n[bold]{escape(node.label)}[/bold]  [dim]{escape(node.url)}[/dim]"
+            f"\n[bold]{escape(node.label)}[/bold]  "
+            f"[dim]{escape(redact_userinfo(node.url))}[/dim]"
         )
         console.print(f"  Models it can run    {model_count(node)}")
         if node.max_context_length:
@@ -1912,11 +2003,21 @@ def node_show(node_id: str = typer.Argument(..., help="Which computer.")) -> Non
         console.print(f"[red]Nothing stored called '{escape(node_id)}'.[/red]")
         raise typer.Exit(1)
 
+    from src.nodes.discovery import has_userinfo, redact_userinfo
     from src.nodes.summary import human_bytes, human_rate, human_words, status_of
 
     console.print(
-        f"\n[bold]{escape(match.label)}[/bold]  [dim]{escape(match.url)}[/dim]"
+        f"\n[bold]{escape(match.label)}[/bold]  "
+        f"[dim]{escape(redact_userinfo(match.url))}[/dim]"
     )
+    if has_userinfo(match.url):
+        console.print(
+            f"[red]This computer's address names a user name or password.[/red] "
+            f"It is not used to reach anything until that is removed. Run "
+            f"[cyan]fukasawa node forget {escape(match.node_id)}[/cyan], or "
+            f"add it again with a clean address.",
+            soft_wrap=True,
+        )
     # The desktop card's three states, not yes/no: "no" for a computer nobody
     # has contacted claimed it was silent, and the panel counts an unchecked
     # computer and not a silent one (§3.6; review finding 6).
@@ -1939,11 +2040,19 @@ def node_add(
     url: str = typer.Option(..., "--url", help="Base URL it answers on."),
 ) -> None:
     """Add a computer by hand, without looking for it."""
-    from src.nodes.discovery import address_for
+    from src.nodes.discovery import address_for, address_problem
     from src.schemas.node import NodeKind
 
     if kind not in {k.value for k in NodeKind}:
         console.print(f"[red]'{escape(kind)}' is not one of: ollama, llamacpp[/red]")
+        raise typer.Exit(1)
+
+    # Checked before `address_for` ever reads it, so the refusal is this
+    # sentence and not whatever the address became after a port was added
+    # to it (final re-review finding 1).
+    problem = address_problem(url)
+    if problem:
+        console.print(f"[yellow]{escape(problem)}[/yellow]")
         raise typer.Exit(1)
 
     # Read the way the desktop's `add_node` and the typed-in route read an

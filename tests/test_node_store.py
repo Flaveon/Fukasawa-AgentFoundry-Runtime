@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from src.nodes.registry import legacy_endpoints, merged_endpoints
-from src.nodes.store import NodeStore, duplicate_groups
+from src.nodes.store import AmbiguousAddressError, NodeStore, duplicate_groups, unusable_message
 from src.schemas.node import (
     HostCapability,
     InferenceNode,
@@ -285,6 +285,19 @@ class TestAStoreAlreadyHoldingTwoAtOneAddress:
         assert store.forget("kitchen-box") is True
         assert [n.node_id for n in store.load()[0]] == ["ollama-10-0-0-9-11434"]
 
+    def test_unusable_message_gives_one_remedy_not_two(self, store):
+        """Re-review nit: `unusable_message`'s generic "Correct that
+        file..." tail is right after a shape error, but appended after
+        this one it read as a second, different instruction -- the
+        sentence above it already said what to do."""
+        self._seeded(store)
+        with pytest.raises(AmbiguousAddressError) as exc:
+            store.upsert(node(node_id="ollama-10-0-0-9-11434",
+                              url="http://10.0.0.9:11434"))
+        message = unusable_message(store.path, exc.value)
+        assert "forget" in message
+        assert "Correct that file" not in message
+
     def test_the_pair_is_reported_as_a_duplicate_group(self, store):
         self._seeded(store)
         nodes, _ = store.load()
@@ -461,3 +474,60 @@ class TestEndpointResolution:
             {"home-pc": {"kind": "ollama", "url": "http://h:11434"}}
         )
         assert registry.get("home-pc").url == "http://h:11434"
+
+    def test_a_computer_whose_address_names_a_password_is_left_out(self, store):
+        """Final re-review finding 1: the FROZEN kernel copies an
+        endpoint's url verbatim into a failed attempt's note, which the
+        run ledger keeps. Left out of the mapping entirely, a graph naming
+        this computer hits the kernel's own "no model endpoint" refusal --
+        which never saw the address -- instead of that leak."""
+        store.upsert(node(node_id="tainted",
+                          url="http://alice:s3cret@10.0.0.9:11434"))
+        endpoints = merged_endpoints(store)
+        assert "tainted" not in endpoints
+
+    def test_other_computers_still_resolve_beside_a_tainted_one(self, store):
+        store.upsert(node(node_id="tainted",
+                          url="http://alice:s3cret@10.0.0.9:11434"))
+        store.upsert(node(node_id="clean-box", url="http://10.0.0.1:11434"))
+        endpoints = merged_endpoints(store)
+        assert "tainted" not in endpoints
+        assert endpoints["clean-box"]["url"] == "http://10.0.0.1:11434"
+
+
+class TestLegacyEndpointsRefuseUserinfo:
+    """Final re-review finding 1, for `model_endpoints.yaml`: the same
+    plaintext-password leak, through the other file.
+    """
+
+    def test_an_entry_naming_a_password_is_refused_without_echoing_it(
+        self, store
+    ):
+        path = store.path.parent / "model_endpoints.yaml"
+        path.write_text(
+            "endpoints:\n  mine:\n    kind: ollama\n"
+            "    url: http://alice:s3cret@10.0.0.9:11434\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError) as exc:
+            legacy_endpoints(path)
+        message = str(exc.value)
+        assert "alice" not in message
+        assert "s3cret" not in message
+        assert str(path) in message
+
+    def test_the_whole_file_is_left_out_not_just_the_one_entry(self, store):
+        """The same rule a malformed `kind:`/`url:` already gets (review
+        finding 7): one bad entry voids the file for actual use, so a
+        graph naming the *other*, well-formed entry in it also fails
+        clean rather than silently resolving half a broken file."""
+        path = store.path.parent / "model_endpoints.yaml"
+        path.write_text(
+            "endpoints:\n"
+            "  mine:\n    kind: ollama\n"
+            "    url: http://alice:s3cret@10.0.0.9:11434\n"
+            "  clean:\n    kind: ollama\n    url: http://10.0.0.1:11434\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError):
+            legacy_endpoints(path)

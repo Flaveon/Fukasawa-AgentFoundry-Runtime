@@ -18,11 +18,16 @@ reason, even where a single stage answers deterministically.
 import pytest
 
 from src.nodes.discovery import (
+    MALFORMED_ADDRESS,
+    USERINFO_REFUSED,
     ConsentRefused,
     DiscoveryEvent,
     address_for,
+    address_problem,
     candidate_addresses,
     discover,
+    has_userinfo,
+    redact_userinfo,
 )
 from src.schemas.node import NodeKind, ScanScope
 
@@ -266,6 +271,71 @@ class TestTypedAddresses:
         saved = address_for(typed, kind)
         tried = [url for url, _kind in candidate_addresses(ScanScope.NAMED_HOST, saved)]
         assert saved in tried
+
+    def test_an_at_sign_in_a_path_is_not_mistaken_for_userinfo(self):
+        """Final re-review regression: finding the authority's end before
+        looking for ``@`` must not stop at the first one in the whole
+        string -- it has to look only inside the authority. A path or
+        query character that happens to be ``@`` (``http://box/p@x``) was
+        split off as if it were a user name, which also meant no real
+        port was ever appended (m2's bug, one character later)."""
+        assert address_for("box/p@x", NodeKind.OLLAMA) == "http://box:11434/p@x"
+        assert address_for("box?a=@b", NodeKind.OLLAMA) == "http://box:11434?a=@b"
+
+
+class TestUserinfoAndMalformedAddresses:
+    """Final re-review (1): a typed user name and password are refused, not
+    kept -- `urllib` never turns "user:pw@host" into Basic auth (no
+    ``Authorization`` header is sent), so keeping it bought no function and
+    cost a plaintext secret saved to `nodes.yaml`, printed by every listing,
+    and copied into a failed run's ledger note.
+    """
+
+    def test_userinfo_is_refused_without_echoing_it(self):
+        problem = address_problem("alice:s3cret@10.0.0.9")
+        assert problem == USERINFO_REFUSED
+        assert "alice" not in problem
+        assert "s3cret" not in problem
+
+    def test_a_plain_address_has_no_problem(self):
+        assert address_problem("10.0.0.9") is None
+        assert address_problem("box:9000") is None
+        assert address_problem("box:") is None
+        assert address_problem("[::1]") is None
+        assert address_problem("[::1]:9000") is None
+        assert address_problem("::1") is None
+        assert address_problem("2001:db8::1") is None
+
+    @pytest.mark.parametrize("bad", [
+        "box:abc",          # a port that is not a number
+        "10.0.0.9:11434:1",  # more than one port
+        "[::1]x",            # something after "]" that is not ":<port>"
+        "[::1",               # an unclosed bracket
+    ])
+    def test_a_malformed_address_is_refused_not_guessed(self, bad):
+        assert address_problem(bad) == MALFORMED_ADDRESS
+
+    def test_has_userinfo_reads_a_stored_address_the_same_way(self):
+        assert has_userinfo("http://alice:s3cret@10.0.0.9:11434") is True
+        assert has_userinfo("http://10.0.0.9:11434") is False
+
+    def test_redaction_hides_the_secret_but_keeps_the_host(self):
+        redacted = redact_userinfo("http://alice:s3cret@10.0.0.9:11434")
+        assert "alice" not in redacted
+        assert "s3cret" not in redacted
+        assert "10.0.0.9:11434" in redacted
+
+    def test_redaction_keeps_a_path_after_the_host(self):
+        redacted = redact_userinfo("http://alice:s3cret@10.0.0.9:11434/v1")
+        assert "alice" not in redacted
+        assert redacted.endswith("/v1")
+
+    def test_redaction_leaves_a_clean_address_unchanged(self):
+        assert redact_userinfo("http://10.0.0.9:11434") == "http://10.0.0.9:11434"
+
+    def test_redaction_is_idempotent(self):
+        once = redact_userinfo("http://alice:s3cret@10.0.0.9:11434")
+        assert redact_userinfo(once) == once
 
 
 class TestTheStream:

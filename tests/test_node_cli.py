@@ -197,6 +197,37 @@ class TestAStoreAlreadyHoldingTwoAtOneAddress:
             "was refused first"
         )
 
+    def test_the_json_streams_closing_event_last_and_reflects_the_refusal(
+        self, store_path, monkeypatch
+    ):
+        """Final re-review finding 3: the closing event used to print as
+        soon as discovery itself finished, before either finding had been
+        saved -- a `--json` reader watching for `finished: true` to know
+        the stream was done saw success and stopped, never seeing the
+        refusal line that followed it for real."""
+        NodeStore(store_path).save([
+            InferenceNode(node_id="home", label="Home", kind=NodeKind.OLLAMA,
+                         url="127.0.0.1:11434"),
+            InferenceNode(node_id="ollama-127-0-0-1-11434",
+                         label="Ollama on this computer", kind=NodeKind.OLLAMA,
+                         url="http://127.0.0.1:11434"),
+        ], ScanConsent())
+        TestNamingWhatIsFound._finds(monkeypatch, 11434, 8081)
+        result = CliRunner().invoke(
+            app, ["node", "scan", "--scope", "this-machine", "--json"]
+        )
+        assert result.exit_code == 1, result.output
+        events = [json.loads(line) for line in result.output.splitlines() if line]
+        finished_indexes = [i for i, e in enumerate(events) if e["finished"]]
+        assert finished_indexes == [len(events) - 1], (
+            "finished:true must appear exactly once, and last"
+        )
+        assert events[-1]["ok"] is False, (
+            "the closing event must say the scan did not fully succeed"
+        )
+        # The refusal line itself is somewhere before it, not after.
+        assert any(e["stage"] == "store" and not e["ok"] for e in events[:-1])
+
 
 class TestShow:
     """One computer's card: every figure with its unit, and no verdict."""
@@ -259,6 +290,21 @@ class TestScan:
         result = CliRunner().invoke(app, ["node", "scan", "--scope", "none", "--yes"])
         assert result.exit_code == 3, result.output
         assert "permission" in result.output.lower()
+
+    def test_json_on_an_unusable_file_is_still_json(self, store_path):
+        """Re-review finding 7: this was the one remaining `--json` command
+        reading the store through `_loaded`, which prints the yellow
+        sentence whatever `--json` says."""
+        store_path.write_text("hello\n", encoding="utf-8")
+        result = CliRunner().invoke(
+            app, ["node", "scan", "--scope", "this-machine", "--json"]
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(result.output)
+        assert set(payload) == {"ok", "error", "message"}
+        assert payload["ok"] is False
+        assert payload["error"] == "input"
+        assert str(store_path) in payload["message"]
 
     def test_an_unknown_scope_is_a_user_error(self, store_path):
         result = CliRunner().invoke(app, ["node", "scan", "--scope", "wat", "--yes"])
@@ -959,6 +1005,88 @@ class TestAFileThatCannotBeUsed:
             prose = prose.replace(line, "")
         for rule in (jargon_in, judgements_in, ownership_in):
             assert rule(prose) == [], prose
+
+
+class TestUserinfoIsRefused:
+    """Final re-review finding 1: a typed user name and password are
+    refused, never saved -- `urllib` never turns "user:pw@host" into Basic
+    auth, so keeping it bought no function and cost a plaintext secret.
+    """
+
+    SECRET = "s3cret"
+
+    def test_node_add_refuses_it_without_saving_or_echoing_it(self, store_path):
+        result = CliRunner().invoke(app, [
+            "node", "add", "--label", "Box", "--kind", "ollama",
+            "--url", f"http://alice:{self.SECRET}@10.0.0.9",
+        ])
+        assert result.exit_code == 1, result.output
+        assert self.SECRET not in result.output
+        assert NodeStore(store_path).load()[0] == []
+        assert not store_path.exists() or self.SECRET not in (
+            store_path.read_text(encoding="utf-8")
+        )
+
+    def test_node_scan_host_refuses_it(self, store_path, monkeypatch):
+        def looked(*_a, **_k):
+            raise AssertionError("a look ran on a refused address")
+
+        monkeypatch.setattr("src.cli._discover", looked)
+        result = CliRunner().invoke(app, [
+            "node", "scan", "--scope", "named-host",
+            "--host", f"alice:{self.SECRET}@10.0.0.9",
+        ])
+        assert result.exit_code == 1, result.output
+        assert self.SECRET not in result.output
+
+    def test_the_typed_in_route_refuses_it(self, store_path, monkeypatch):
+        """``typer.prompt`` echoes a person's own keystrokes back at them as
+        they type -- the same as any terminal, with or without this
+        refusal -- so the secret appears once, in that echo, in
+        ``result.output``. What matters is that it is never saved, never
+        looked up, and never repeated in *this program's own* refusal
+        line."""
+        def looked(*_a, **_k):
+            raise AssertionError("a look ran on a refused address")
+
+        monkeypatch.setattr("src.cli._discover", looked)
+        result = CliRunner().invoke(
+            app, ["node", "scan"],
+            input=f"4\nBox\nalice:{self.SECRET}@10.0.0.9\n",
+        )
+        assert result.exit_code == 1, result.output
+        assert "Leave the user name and password out" in result.output
+        # Exactly once: the terminal's own echo of what was typed, not a
+        # second copy of it in this program's own refusal sentence.
+        assert result.output.count(self.SECRET) == 1
+        assert NodeStore(store_path).load()[0] == []
+
+    def test_a_record_already_tainted_is_redacted_everywhere_it_is_shown(
+        self, store_path
+    ):
+        """Load must still work -- the person needs to see the record to
+        fix it -- but the secret itself is never shown again."""
+        NodeStore(store_path).save([
+            InferenceNode(node_id="tainted", label="Tainted Box",
+                         kind=NodeKind.OLLAMA,
+                         url=f"http://alice:{self.SECRET}@10.0.0.9:11434"),
+        ], ScanConsent())
+
+        listing = CliRunner().invoke(app, ["node", "list"])
+        assert listing.exit_code == 0, listing.output
+        assert self.SECRET not in listing.output
+        assert "tainted" in listing.output
+        assert "node forget" in listing.output
+
+        as_json = CliRunner().invoke(app, ["node", "list", "--json"])
+        assert self.SECRET not in as_json.output
+        payload = json.loads(as_json.output)
+        assert self.SECRET not in payload["nodes"][0]["url"]
+
+        shown = CliRunner().invoke(app, ["node", "show", "tainted"])
+        assert shown.exit_code == 0, shown.output
+        assert self.SECRET not in shown.output
+        assert "node forget" in shown.output
 
 
 class TestAddAndForget:

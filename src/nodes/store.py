@@ -46,7 +46,15 @@ def unusable_message(path: Path, exc: Exception) -> str:
     parses but is not laid out as this file is. ``NodeStore.load`` already
     phrases the third and names the path, so it is passed through as
     written.
+
+    An ``AmbiguousAddressError`` is a fourth: its own sentence is already a
+    complete remedy (remove one of the two it names), so the generic
+    "correct that file" tail is left off -- appended, it read as a second,
+    different instruction after one that had already said what to do
+    (re-review nit).
     """
+    if isinstance(exc, AmbiguousAddressError):
+        return str(exc)
     if isinstance(exc, yaml.YAMLError):
         detail = f"{path} is not valid YAML: {exc}"
     elif isinstance(exc, OSError):

@@ -22,6 +22,7 @@ from typing import Callable, Optional
 import yaml
 
 from src.kernel.models import DEFAULT_ENDPOINTS
+from src.nodes.discovery import has_userinfo
 from src.nodes.store import DEFAULT_HOME, NodeStore
 
 
@@ -59,6 +60,17 @@ def legacy_endpoints(path: Path) -> dict[str, dict]:
             raise ValueError(
                 f"{path}: '{name}' under `endpoints:` needs a `kind:` and a "
                 f"`url:` written under it."
+            )
+        if has_userinfo(spec["url"]):
+            # Named, never shown: echoing the url back here would be the
+            # same leak the whole-file refusal below exists to stop (final
+            # re-review finding 1). Every entry in this file is refused
+            # along with it -- the same rule a malformed `kind:`/`url:`
+            # already gets (review finding 7) -- not just this one.
+            raise ValueError(
+                f"{path}: '{name}' under `endpoints:` names a user name or "
+                f"password in its url. Remove it: edit {path} and take the "
+                f"user name and password back out of that address."
             )
     return dict(entries)
 
@@ -143,6 +155,15 @@ def merged_endpoints(
         on_unreadable(store.path, exc)
         nodes = []
     for node in nodes:
+        if has_userinfo(node.url):
+            # Never resolved: a graph run using this name would otherwise
+            # hand the FROZEN kernel a url naming a user name or password,
+            # which it copies verbatim into a failed attempt's ledger note
+            # (final re-review finding 1). Left out entirely, a graph that
+            # names it hits the kernel's own "no model endpoint" refusal
+            # instead -- which never saw the address at all -- and `node
+            # list` is where the person is told why and how to fix it.
+            continue
         endpoints[node.node_id] = {"kind": node.kind.value, "url": node.url}
 
     return endpoints

@@ -375,6 +375,9 @@ class TestRecordedComputersAreUsable:
         assert "could not be read" not in result.output
         assert result.output.count("nodes.yaml") == 1
         assert "mine" in result.output
+        # `detail` ends in a period of its own (NodeStore.load's ValueError
+        # does), and the clause appended after it must not read "....,".
+        assert ".," not in result.output
 
     def test_an_unparseable_endpoint_file_is_named_and_left_out(
         self, tmp_path, monkeypatch
@@ -444,6 +447,10 @@ class TestRecordedComputersAreUsable:
         prose = " ".join(warning.split()).replace(str(home) + "/", "")
         assert "could not be read" not in prose
         assert prose.count("model_endpoints.yaml") == 1
+        # `detail` ends in a period of its own (`legacy_endpoints`'s
+        # ValueError does for every one of these shapes), and the clause
+        # appended after it must not read "....,".
+        assert ".," not in prose
         assert "recorded computers" not in result.output
         assert "kitchen-box" in result.output, "the computers were left out too"
         assert cli._model_endpoints().get("kitchen-box").url == RECORDED_URL
@@ -477,6 +484,69 @@ class TestRecordedComputersAreUsable:
                 "the historical section mentions the node library without "
                 "pointing at where the rest of the gap is recorded"
             )
+
+
+class TestUserinfoNeverLeaksIntoAFailedRun:
+    """Final re-review finding 1: the FROZEN kernel copies an endpoint's
+    url verbatim into a failed attempt's note, and `save_graph_run` keeps
+    that note in the ledger. A computer whose stored address names a user
+    name or password must never reach the kernel at all, so there is
+    nothing for it to copy.
+    """
+
+    def test_a_tainted_computer_is_never_resolved_and_never_contacted(
+        self, tmp_path, monkeypatch
+    ):
+        from src import cli
+        from src.kernel.models import ModelAdapter
+
+        home = _home(tmp_path, monkeypatch)
+        from src.nodes.store import NodeStore
+        from src.schemas.node import InferenceNode, NodeKind, ScanConsent
+
+        NodeStore(home / "nodes.yaml").save(
+            [InferenceNode(node_id="tainted", label="Tainted Box",
+                           kind=NodeKind.OLLAMA,
+                           url="http://alice:s3cret@10.0.0.9:11434")],
+            ScanConsent(),
+        )
+        registry = cli._model_endpoints()
+        assert "tainted" not in registry.names(), (
+            "a computer naming a password resolved as a usable endpoint"
+        )
+
+        def exploding_poster(*_a, **_k):
+            raise AssertionError("a tainted endpoint was contacted")
+
+        adapter = ModelAdapter(registry, poster=exploding_poster)
+        result = adapter.execute(
+            {"endpoint": "tainted", "model": "m", "prompt": "hi"}
+        )
+        assert result.ok is False
+        assert "alice" not in result.note
+        assert "s3cret" not in result.note
+        assert "10.0.0.9" not in result.note
+
+    def test_model_list_leaves_it_out_entirely(self, tmp_path, monkeypatch):
+        """It never resolves as a usable endpoint at all, so `model list`
+        has nothing of it to redact -- it is simply absent."""
+        from typer.testing import CliRunner
+
+        from src import cli
+        from src.nodes.store import NodeStore
+        from src.schemas.node import InferenceNode, NodeKind, ScanConsent
+
+        home = _home(tmp_path, monkeypatch)
+        NodeStore(home / "nodes.yaml").save(
+            [InferenceNode(node_id="tainted", label="Tainted Box",
+                           kind=NodeKind.OLLAMA,
+                           url="http://alice:s3cret@10.0.0.9:11434")],
+            ScanConsent(),
+        )
+        result = CliRunner().invoke(cli.app, ["model", "list"])
+        assert result.exit_code == 0, result.output
+        assert "s3cret" not in result.output
+        assert "tainted" not in result.output
 
 
 class TestNodeDoctrine:
