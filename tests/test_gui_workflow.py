@@ -807,12 +807,15 @@ def app_window(_shared_window):
     Collects garbage first, on this thread. A Tk object caught in a reference
     cycle -- a ``tkinter.font.Font`` from a rebuilt widget, say -- is deleted
     by whichever thread the collector happens to run on, and its ``__del__``
-    calls Tk. When that is a worker, Tk hands the call to the main thread and
-    waits; a test drains queues instead of running ``mainloop``, so nobody
-    answers and the worker hangs. On CI's Tcl that stalled every Environment
-    look after the widget-heavy regression test above. A real window runs
-    ``mainloop``, which answers, so this is the harness's hazard, not the
-    product's -- and it is settled here, before each test, on the UI thread.
+    calls Tk. When that is a worker, tkinter waits about a second for the main
+    thread to be running ``mainloop`` -- a test never is, it drains queues --
+    then gives up, and ``Font.__del__`` swallows the error. One second per
+    object: after the widget-heavy regression test above, Environment looks
+    collected up to fifteen of them, and their five-second deadlines ran out
+    (50 such stalls in one run, all in ``TestEnvironmentTab``). A real window
+    runs ``mainloop``, which takes the call at once, so this is the harness's
+    hazard rather than the product's -- and it is settled here, before each
+    test, on the UI thread.
     """
     import gc
 
@@ -965,8 +968,9 @@ class TestView:
             assert not captured
             assert tab._busy
         finally:
-            # Released even when an assertion fails, so a blocked worker never
-            # delivers its result into a later test on the shared window.
+            # Released even when an assertion fails, so the worker is not left
+            # blocked with the tab busy -- which would make the next test's
+            # handlers refuse as "still working".
             gate.set()
         pump(tab, captured)
         assert captured and captured[0].ok
