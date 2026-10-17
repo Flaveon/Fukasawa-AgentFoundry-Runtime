@@ -93,22 +93,59 @@ def _matching_address(
     return [n for n in nodes if address_for(n.url, n.kind) == wanted]
 
 
-def duplicate_groups(nodes: list[InferenceNode]) -> list[list[str]]:
-    """Groups of two or more ids that read to the same address.
+def duplicate_node_groups(nodes: list[InferenceNode]) -> list[list[InferenceNode]]:
+    """Groups of two or more computers that read to the same address.
 
     Ordinarily empty -- ``upsert`` refuses to create one. A store saved
     before that rule held, or edited by hand, can still carry one in, and a
-    person looking at ``node list`` deserves to know before a look at either
-    one tells them the hard way (review finding I2). Each inner list is
-    sorted so the message built from it reads the same from one run to the
-    next.
+    person deserves to know before a look at either one tells them the hard
+    way (review finding I2). The computers themselves, not just their ids,
+    because naming one means something different to each front end -- the
+    terminal says the id, the desktop says the label and address, as each
+    already does on screen (re-review nit). Each inner list is sorted by id
+    so a message built from it reads the same from one run to the next.
     """
     from src.nodes.discovery import address_for
 
-    by_address: dict[str, list[str]] = {}
+    by_address: dict[str, list[InferenceNode]] = {}
     for n in nodes:
-        by_address.setdefault(address_for(n.url, n.kind), []).append(n.node_id)
-    return [sorted(ids) for ids in by_address.values() if len(ids) > 1]
+        by_address.setdefault(address_for(n.url, n.kind), []).append(n)
+    return [
+        sorted(group, key=lambda n: n.node_id)
+        for group in by_address.values() if len(group) > 1
+    ]
+
+
+def duplicate_groups(nodes: list[InferenceNode]) -> list[list[str]]:
+    """Groups of two or more ids that read to the same address.
+
+    The terminal's view of ``duplicate_node_groups``: just the ids, which is
+    what ``fukasawa node forget <id>`` takes.
+    """
+    return [[n.node_id for n in group] for group in duplicate_node_groups(nodes)]
+
+
+class AmbiguousAddressError(ValueError):
+    """``upsert`` cannot tell which stored computer a write belongs to.
+
+    Raised when more than one already reads to the address being written --
+    the pair ``upsert`` exists to prevent, but a store saved before that
+    rule held, or edited by hand, can still carry one in (review finding
+    I2). Carries the computers themselves, not just a finished sentence, so
+    each front end can name them the way it already names a computer on
+    screen -- the terminal by id, the desktop by label and address -- rather
+    than one message written for only one of them (re-review nit).
+    """
+
+    def __init__(self, path: Path, nodes: list[InferenceNode]) -> None:
+        self.path = path
+        self.nodes = nodes
+        ids = ", ".join(sorted(n.node_id for n in nodes))
+        super().__init__(
+            f"{path}: {ids} are recorded at the same address. A look "
+            f"cannot tell which one it means. Remove one with "
+            f"`fukasawa node forget <id>`, then try again."
+        )
 
 
 class NodeStore:
@@ -235,28 +272,26 @@ class NodeStore:
         ``recorded_at`` -- and never silently share an id either: a new id
         already in use gets a numeric suffix (see ``_with_unique_id``).
 
-        Raises ``ValueError``, naming every id involved, when *more* than one
-        stored computer already reads to this address. That pair should never
-        exist -- this method is what stops one forming -- but a store written
-        before this rule held, or edited by hand, can still carry it in. With
-        only one candidate to refresh, picking it by address was safe; with
-        two, it is a guess, and the one review finding I2 reproduces: a look
-        that reached the second record updated the first instead and then
-        read the second, which had just answered, as silent. Refusing the
-        write is the one response here that cannot misattribute anything --
+        Raises ``AmbiguousAddressError`` (a ``ValueError``), carrying the
+        computers involved, when *more* than one stored computer already
+        reads to this address. That pair should never exist -- this method
+        is what stops one forming -- but a store written before this rule
+        held, or edited by hand, can still carry it in. With only one
+        candidate to refresh, picking it by address was safe; with two, it
+        is a guess, and the one review finding I2 reproduces: a look that
+        reached the second record updated the first instead and then read
+        the second, which had just answered, as silent. Refusing the write
+        is the one response here that cannot misattribute anything --
         ``load()``, ``forget()`` and ``node list`` are unaffected, so the
-        person can still see both ids and remove one.
+        person can still see both and remove one. A caller processing
+        several findings in one pass (``node scan``'s loop, on either front
+        end) should catch this per finding and keep going -- one ambiguous
+        address must not cost an unrelated one in the same scan.
         """
         nodes, consent = self.load()
         matches = _matching_address(nodes, node.url, node.kind)
         if len(matches) > 1:
-            ids = ", ".join(sorted(n.node_id for n in matches))
-            raise ValueError(
-                f"{self.path}: {ids} are recorded at the same address. A "
-                f"look cannot tell which one it means. Remove one with "
-                f"`fukasawa node forget <id>` (or its equivalent in the "
-                f"desktop's Environment tab), then try again."
-            )
+            raise AmbiguousAddressError(self.path, matches)
         same = matches[0] if matches else None
         for index, existing in enumerate(nodes):
             if existing is not same:

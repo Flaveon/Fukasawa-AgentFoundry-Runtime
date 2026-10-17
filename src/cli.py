@@ -888,6 +888,12 @@ def _model_endpoints() -> "ModelEndpointRegistry":
         detail = str(exc)
         if isinstance(exc, (OSError, yaml.YAMLError)) or str(path) not in detail:
             detail = f"{path} could not be read: {detail}"
+        # `detail` is a full sentence on its own (`legacy_endpoints` and
+        # `NodeStore.load` end theirs with a period), and this appends
+        # another clause rather than starting a new sentence -- stripping
+        # one trailing period first is what keeps that from reading "...and
+        # it does not., so it is left out." (re-review nit).
+        detail = detail.rstrip(".")
         left = "they are" if path == store.path else "it is"
         console.print(
             f"[yellow]{escape(detail)}, so {left} left out.[/yellow]",
@@ -1641,6 +1647,13 @@ def _run_scan(
         label = ""
     from src.nodes.store import unusable_message
 
+    # One computer's address being ambiguous (review finding I2) must not
+    # cost every OTHER address this same scan found: the loop used to stop
+    # at the first refusal, so which finding survived depended on the order
+    # `discover` happened to yield them in (re-review r4). Each is tried, a
+    # refusal is reported and the rest still get their turn; the exit code
+    # at the end says whether anything was lost.
+    refused: list[str] = []
     for node in found:
         if label:
             node.label = label
@@ -1648,18 +1661,14 @@ def _run_scan(
         try:
             stored = store.upsert(node)
         except (OSError, yaml.YAMLError, ValueError) as exc:
-            # `upsert` refuses rather than guess when the store already
-            # holds two records at this address (review finding I2) -- a
-            # ValueError this loop did not used to expect at all. Answered
-            # the same way `_loaded` answers one, instead of a traceback on
-            # whatever finding a look happened to make next.
             message = unusable_message(store.path, exc)
+            refused.append(message)
             if as_json:
                 print(jsonlib.dumps({"stage": "store", "message": message,
-                                     "ok": False, "finished": True}))
+                                     "ok": False, "finished": False}))
             else:
                 console.print(f"[yellow]{escape(message)}[/yellow]", soft_wrap=True)
-            raise typer.Exit(1)
+            continue
         if label and stored.label != label:
             # A computer already recorded keeps its name (design §6.0).
             notes.append(
@@ -1681,6 +1690,11 @@ def _run_scan(
     # reaches it, and the leak hides behind the success case.
     if found and not as_json:
         _render_summary(store.load()[0])
+    if refused:
+        # Everything that could be saved was; this says the scan still did
+        # not fully succeed, the same exit code `_loaded` uses for a store
+        # that cannot be used.
+        raise typer.Exit(1)
     return found
 
 
@@ -1845,12 +1859,13 @@ def node_list(
     except (OSError, yaml.YAMLError, ValueError) as exc:
         # `_loaded` always prints the yellow, human sentence, whatever
         # `--json` says, so a program parsing this command's output hit
-        # prose instead of an object (m6). Answered here instead, the same
-        # way every other `--json` refusal in this file is: one object, an
-        # `error` field, and the exit code every other input problem uses.
+        # prose instead of an object (m6). Answered here instead, in the
+        # same shape `_fail_input` already gives every other input problem
+        # in this file (`"error": "input", "message": ...`), not a shape of
+        # its own -- re-review nit.
         message = unusable_message(store.path, exc)
         if as_json:
-            _emit_json({"ok": False, "error": message})
+            _emit_json({"ok": False, "error": "input", "message": message})
         else:
             console.print(f"[yellow]{escape(message)}[/yellow]", soft_wrap=True)
         raise typer.Exit(1)

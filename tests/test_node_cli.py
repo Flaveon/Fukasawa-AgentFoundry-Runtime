@@ -69,14 +69,18 @@ class TestList:
     def test_json_on_an_unusable_file_is_still_json(self, store_path):
         """m6: `_loaded` printed the yellow sentence regardless of `--json`,
         so a program reading this command's output got prose instead of an
-        object. One object, an `error` field naming the file, exit 1 --
-        the same shape every other `--json` refusal in this program uses."""
+        object. The shape is the one `_fail_input` already gives every
+        other input problem in this file -- `"error": "input"`, the prose
+        in `message`, not a shape of its own (re-review nit) -- and the
+        same exit code."""
         store_path.write_text("- one\n- two\n", encoding="utf-8")
         result = CliRunner().invoke(app, ["node", "list", "--json"])
         assert result.exit_code == 1, result.output
         payload = json.loads(result.output)
+        assert set(payload) == {"ok", "error", "message"}
         assert payload["ok"] is False
-        assert str(store_path) in payload["error"]
+        assert payload["error"] == "input"
+        assert str(store_path) in payload["message"]
 
     def test_json_survives_a_narrow_terminal_and_a_label_full_of_brackets(
         self, store_path
@@ -163,6 +167,35 @@ class TestAStoreAlreadyHoldingTwoAtOneAddress:
         nodes = {n.node_id: n for n in NodeStore(store_path).load()[0]}
         assert nodes["ollama-10-0-0-9-11434"].reachable is True
         assert nodes["kitchen-box"].reachable is False
+
+    @pytest.mark.parametrize("ports", [(11434, 8081), (8081, 11434)])
+    def test_an_unrelated_finding_survives_the_refusal(
+        self, store_path, monkeypatch, ports
+    ):
+        """Re-review r4: one ambiguous address must not cost findings at
+        OTHER addresses in the same scan. The loop used to stop at the
+        first refusal, so which finding survived depended on the order
+        `discover` happened to yield them in -- tested both ways. The
+        duplicate pair has to sit at the address `--scope this-machine`
+        actually reaches (127.0.0.1), unlike `_seed_duplicate`'s, or no
+        scan here would ever find its way into the ambiguity at all."""
+        NodeStore(store_path).save([
+            InferenceNode(node_id="home", label="Home", kind=NodeKind.OLLAMA,
+                         url="127.0.0.1:11434"),
+            InferenceNode(node_id="ollama-127-0-0-1-11434",
+                         label="Ollama on this computer", kind=NodeKind.OLLAMA,
+                         url="http://127.0.0.1:11434"),
+        ], ScanConsent())
+        TestNamingWhatIsFound._finds(monkeypatch, *ports)
+        result = CliRunner().invoke(
+            app, ["node", "scan", "--scope", "this-machine"]
+        )
+        assert result.exit_code == 1, result.output
+        ids = [n.node_id for n in NodeStore(store_path).load()[0]]
+        assert any("llamacpp" in i for i in ids), (
+            "an unrelated finding was lost because a different address "
+            "was refused first"
+        )
 
 
 class TestShow:

@@ -80,14 +80,21 @@ def _kind_words(kind: NodeKind) -> str:
     return KIND_WORDS[kind]
 
 
-def _split_authority(base: str) -> tuple[str, str, str]:
-    """Split a ``_normalise``d URL into ``(scheme, host[:port], the rest)``.
+def _split_authority(base: str) -> tuple[str, str, str, str]:
+    """Split a ``_normalise``d URL into ``(scheme, "user:pw@" or "", host[:port], the rest)``.
 
-    "The rest" is a path, a query, or both, after the host -- taken whole,
-    since nothing here needs to look inside it, only to know where the host
-    part ends. That end is the first ``/`` or ``?``, whichever comes first;
-    splitting on ``/`` alone (the previous reading) left a bare query string
-    (``http://box?x=1``, no ``/`` anywhere) read as part of the host.
+    "The rest" is a path, a query, a fragment, or any mix of the three,
+    taken whole -- nothing here needs to look inside it, only to know where
+    the host part ends. That end is the first ``/``, ``?`` or ``#``,
+    whichever comes first; a ``#`` used to be missed, so a fragment with no
+    ``/`` or ``?`` (``http://box#frag``) read as part of the host.
+
+    Userinfo (``user:pw@host``) is split off *before* that: its own colon is
+    not a port, and reading it as one sent a look at ``http://user:pw@box``
+    to port 80 while naming no port at all. Splitting it off here --
+    `rpartition` finds the *last* ``@``, so userinfo may itself contain one
+    -- rather than refusing it keeps whatever a person typed working end to
+    end; nothing downstream needs to inspect it, only put it back.
 
     Written by hand rather than with ``urllib.parse``: this module is one of
     the two the whole-network-access guard (``tests/test_hardening.py``)
@@ -95,25 +102,35 @@ def _split_authority(base: str) -> tuple[str, str, str]:
     submodule is not the exception that rule exists to catch.
     """
     scheme, _, after_scheme = base.partition("://")
-    end = len(after_scheme)
-    for mark in ("/", "?"):
-        found = after_scheme.find(mark)
+    userinfo, sep, host_and_rest = after_scheme.rpartition("@")
+    prefix = f"{userinfo}{sep}"  # "" when there was no "@"
+    end = len(host_and_rest)
+    for mark in ("/", "?", "#"):
+        found = host_and_rest.find(mark)
         if found != -1:
             end = min(end, found)
-    return scheme, after_scheme[:end], after_scheme[end:]
+    return scheme, prefix, host_and_rest[:end], host_and_rest[end:]
 
 
 def _names_a_port(base: str) -> bool:
     """Whether a base URL from ``_normalise`` already says which port to use.
 
-    Only the host part is read, never a path or a query after it. A
-    bracketed IPv6 address is full of colons and names a port only after
-    its closing bracket.
+    Only the host part is read, never userinfo, a path, a query or a
+    fragment. A bracketed IPv6 address is full of colons and names a port
+    only after its closing bracket; an *unbracketed* one (a bare ``::1``) is
+    full of colons with no brackets at all, which is not "host:port" either
+    -- it names no port, the same as a plain host, and needs bracketing
+    before a port can be appended (``address_for``). Either form naming an
+    *empty* port (``box:``, ``[::1]:``) is read the same as naming none:
+    reading one back a second time must not keep a colon with nothing after
+    it, the same invariant ``_normalise`` states for a trailing slash.
     """
-    _scheme, netloc, _rest = _split_authority(base)
+    _scheme, _prefix, netloc, _rest = _split_authority(base)
     if netloc.startswith("["):
-        return "]:" in netloc
-    return ":" in netloc
+        return "]:" in netloc and not netloc.endswith("]:")
+    if netloc.count(":") > 1:
+        return False
+    return ":" in netloc and not netloc.endswith(":")
 
 
 def address_for(host: str, kind: NodeKind) -> str:
@@ -136,8 +153,15 @@ def address_for(host: str, kind: NodeKind) -> str:
     if _names_a_port(base):
         return base
     port = next(p for p, k in PORTS if k is kind)
-    scheme, netloc, rest = _split_authority(base)
-    return f"{scheme}://{netloc}:{port}{rest}"
+    scheme, prefix, netloc, rest = _split_authority(base)
+    if netloc.endswith(":"):
+        # An empty port names none; drop it rather than keep ":port" twice.
+        netloc = netloc[:-1]
+    if not netloc.startswith("[") and netloc.count(":") >= 1:
+        # A bare (unbracketed) IPv6 host: bracket it so the port being
+        # appended is not read as one more field of the address itself.
+        netloc = f"[{netloc}]"
+    return f"{scheme}://{prefix}{netloc}:{port}{rest}"
 
 
 def candidate_addresses(scope: ScanScope, host: str) -> list[tuple[str, NodeKind]]:

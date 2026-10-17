@@ -491,14 +491,22 @@ class TestAStoreAlreadyHoldingTwoAtOneAddress:
                          url="http://10.0.0.9:11434", reachable=True),
         ], ScanConsent())
 
-    def test_listing_still_works_and_names_both_ids(self, store):
+    def test_listing_still_works_and_names_both_cards(self, store):
+        """Re-review nit: this screen has no ids on it, so the notice names
+        the pair the way a card does -- its label and address -- not the
+        ids the terminal would use."""
         self._seed(store)
         result = service.list_nodes(store)
         assert result.ok
         assert {r.node_id for r in result.rows} == {
             "kitchen-box", "ollama-10-0-0-9-11434"}
-        assert "kitchen-box" in result.duplicate_notice
-        assert "ollama-10-0-0-9-11434" in result.duplicate_notice
+        assert "kitchen-box" not in result.duplicate_notice
+        assert "Kitchen Box" in result.duplicate_notice
+        assert "http://10.0.0.9" in result.duplicate_notice
+        assert "Ollama on 10.0.0.9" in result.duplicate_notice
+        assert "http://10.0.0.9:11434" in result.duplicate_notice
+        assert "fukasawa node forget" not in result.duplicate_notice
+        assert "Forget" in result.duplicate_notice
 
     def test_forgetting_either_one_still_works(self, store):
         self._seed(store)
@@ -522,8 +530,10 @@ class TestAStoreAlreadyHoldingTwoAtOneAddress:
         last = events[-1]
         assert last.stage == "store"
         assert not last.ok and last.finished
-        assert "kitchen-box" in last.message
-        assert "ollama-10-0-0-9-11434" in last.message
+        # Re-review nit: the desktop names the pair by card, not by id.
+        assert "kitchen-box" not in last.message
+        assert "Kitchen Box" in last.message
+        assert "Ollama on 10.0.0.9" in last.message
         # Refused, not guessed: neither record changed.
         nodes = {n.node_id: n for n in store.load()[0]}
         assert nodes["ollama-10-0-0-9-11434"].reachable is True, (
@@ -539,8 +549,28 @@ class TestAStoreAlreadyHoldingTwoAtOneAddress:
         events = list(service.check_node("kitchen-box", store,
                                          fetch=recorder, post=recorder.post))
         assert events[-1].stage == "store"
-        assert "ollama-10-0-0-9-11434" in events[-1].message
-        assert "kitchen-box" in events[-1].message
+        assert "Ollama on 10.0.0.9" in events[-1].message
+        assert "Kitchen Box" in events[-1].message
+
+    def test_an_unrelated_finding_in_the_same_scan_still_survives(self, store):
+        """Re-review r4: a single `try` around the whole upsert loop stopped
+        at the first refusal, so a `this-machine` scan that also found an
+        unrelated llama.cpp on :8081 lost it, because `PORTS` tries :11434
+        (the ambiguous one) first. Each computer now gets its own try."""
+        store.save([
+            InferenceNode(node_id="home", label="Home", kind=NodeKind.OLLAMA,
+                         url="127.0.0.1:11434"),
+            InferenceNode(node_id="ollama-127-0-0-1-11434",
+                         label="Ollama on this computer", kind=NodeKind.OLLAMA,
+                         url="http://127.0.0.1:11434"),
+        ], ScanConsent())
+        recorder = Recorder(answering={"127.0.0.1:11434", "127.0.0.1:8081"})
+        list(service.scan(ScanScope.THIS_MACHINE, store=store,
+                          fetch=recorder, post=recorder.post))
+        ids = [n.node_id for n in store.load()[0]]
+        assert any("llamacpp" in i for i in ids), (
+            "the unrelated :8081 finding was lost to the :11434 refusal"
+        )
 
 
 class TestAddingByHand:

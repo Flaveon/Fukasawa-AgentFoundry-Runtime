@@ -49,7 +49,13 @@ import yaml
 
 from src.gui.services.workflow import Outcome
 from src.nodes.discovery import address_for, discover
-from src.nodes.store import NodeStore, duplicate_groups, recorded_at, unusable_message
+from src.nodes.store import (
+    AmbiguousAddressError,
+    NodeStore,
+    duplicate_node_groups,
+    recorded_at,
+    unusable_message,
+)
 from src.nodes.summary import (
     KIND_WORDS,
     MAY_I_CONTACT,
@@ -242,6 +248,25 @@ def _unusable(path: Path, exc: Exception) -> str:
     return unusable_message(path, exc)
 
 
+def _ambiguity_message(nodes: list[InferenceNode]) -> str:
+    """Name a store's two-at-one-address pair the way a card does -- its
+    label and address -- and give the one remedy that works from this
+    screen: the card's own Forget button.
+
+    ``unusable_message`` -- what every other store refusal here uses -- is
+    the terminal's words for this one: ids, the ``fukasawa node forget
+    <id>`` command, and then "Correct that file..." tacked on after advice
+    that already told the person what to do, so they read two different
+    remedies (re-review nit). This front end has no ids on screen and no
+    command line, so it gets its own sentence instead of that one.
+    """
+    named = " and ".join(f"{n.label} ({n.url})" for n in nodes)
+    return (
+        f"{named} are recorded at the same address. A look cannot tell "
+        f"which one it means. Forget one on its card to fix it."
+    )
+
+
 def _row(node: InferenceNode) -> NodeRowView:
     """Flatten one computer into display rows with plain-language sources."""
     return NodeRowView(
@@ -282,11 +307,8 @@ def list_nodes(store: Optional[NodeStore] = None) -> NodeListResult:
             ok=False, summary=UNUSABLE_FILE, refusal=_unusable(target.path, exc)
         )
     summary = summarise(nodes)
-    dupes = duplicate_groups(nodes)
     notice = " ".join(
-        f"{' and '.join(ids)} are recorded at the same address. A look "
-        f"cannot tell which one it means. Forget one to fix it."
-        for ids in dupes
+        _ambiguity_message(group) for group in duplicate_node_groups(nodes)
     )
     return NodeListResult(
         ok=True,
@@ -415,13 +437,29 @@ def scan(
             #
             # Done BEFORE the closing event is yielded, so a scan that says it
             # has finished has already recorded what it found.
-            try:
-                for node in found:
+            #
+            # One computer's address being ambiguous (review finding I2)
+            # must not cost every OTHER computer this same scan found: a
+            # single `try` around the whole loop stopped at the first
+            # refusal, so which finding survived depended on the order
+            # `discover` happened to yield them in (re-review r4). Each is
+            # tried; a refusal is collected rather than raised immediately,
+            # so the rest still get saved.
+            refused: list[str] = []
+            for node in found:
+                try:
                     target.upsert(node)
-            except (OSError, yaml.YAMLError, ValueError) as exc:
+                except AmbiguousAddressError as exc:
+                    # This screen has no ids and no command line, so it
+                    # gets its own words rather than the terminal's
+                    # (re-review nit) -- see `_ambiguity_message`.
+                    refused.append(_ambiguity_message(exc.nodes))
+                except (OSError, yaml.YAMLError, ValueError) as exc:
+                    refused.append(_unusable(target.path, exc))
+            if refused:
                 yield ScanEventView(
                     stage="store",
-                    message=_unusable(target.path, exc),
+                    message=" ".join(refused),
                     ok=False,
                     finished=True,
                 )

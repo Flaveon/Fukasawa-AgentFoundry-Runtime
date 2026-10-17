@@ -177,9 +177,12 @@ class TestTypedAddresses:
     #: after the whole string, rather than into the host, landed on the
     #: path instead (m2): ``http://box/v1`` became ``http://box/v1:11434``,
     #: which both names no real port and changes again on a second read.
+    #: Re-review nits (r4's report, #2): a fragment, userinfo, an empty
+    #: port, and a bare (unbracketed) IPv6 host, each with no port named.
     TYPED = ["box", "box:9000", "http://box:9000/", "box/", "box:9000/",
              "HTTP://box:9000", "Http://box/", "[::1]", "[::1]:9000",
-             "box/v1", "box?x=1"]
+             "box/v1", "box?x=1", "box#frag", "user:pw@box",
+             "user:pw@box:9000", "box:", "[::1]:", "::1", "[::1]/v1"]
 
     def test_a_trailing_slash_does_not_become_part_of_the_host(self):
         """``10.0.0.9/`` once became ``http://10.0.0.9/:11434`` -- a path, not
@@ -204,6 +207,37 @@ class TestTypedAddresses:
 
     def test_a_port_is_inserted_before_a_query_not_appended_after_it(self):
         assert address_for("box?x=1", NodeKind.OLLAMA) == "http://box:11434?x=1"
+
+    def test_a_port_is_inserted_before_a_fragment_not_appended_after_it(self):
+        """Re-review nit: ``#`` was not a boundary mark, so a fragment with
+        no ``/`` or ``?`` anywhere (``http://box#frag``) read as part of
+        the host, the same class of bug ``?`` alone was."""
+        assert address_for("box#frag", NodeKind.OLLAMA) == "http://box:11434#frag"
+
+    def test_userinfo_s_colon_is_not_mistaken_for_a_port(self):
+        """Re-review nit: ``user:pw@box`` was read as naming a port -- the
+        one in ``user:pw`` -- so no real port was appended and a look went
+        to port 80. Userinfo is split off before the host is read, and put
+        back afterwards rather than dropped or refused."""
+        assert address_for("user:pw@box", NodeKind.OLLAMA) == (
+            "http://user:pw@box:11434"
+        )
+        assert address_for("user:pw@box:9000", NodeKind.OLLAMA) == (
+            "http://user:pw@box:9000"
+        )
+
+    def test_an_empty_port_gets_the_default_not_a_dangling_colon(self):
+        """Re-review nit: ``box:`` and ``[::1]:`` were read as already
+        naming a port -- an empty one -- and kept the dangling colon with
+        nothing after it instead of filling in the default."""
+        assert address_for("box:", NodeKind.OLLAMA) == "http://box:11434"
+        assert address_for("[::1]:", NodeKind.OLLAMA) == "http://[::1]:11434"
+
+    def test_a_bare_ipv6_host_is_bracketed_before_a_port_is_added(self):
+        """Re-review nit: an unbracketed ``::1`` is full of colons with no
+        brackets, so it named no port by this function's own rule, but
+        appending one unbracketed (``::1:11434``) is not a usable address."""
+        assert address_for("::1", NodeKind.OLLAMA) == "http://[::1]:11434"
 
     @pytest.mark.parametrize("typed", TYPED)
     @pytest.mark.parametrize("kind", list(NodeKind))
