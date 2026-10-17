@@ -3,8 +3,11 @@
 """Run Ledger — the append-only audit trail.
 
 Every state transition, conforming or not, is recorded here. No record is
-ever updated or deleted; the ledger enforces this with SQLite triggers, so
-even code with a direct database handle cannot quietly rewrite history.
+ever updated, deleted, or replaced; the ledger enforces this with SQLite
+triggers, so even code with a direct database handle cannot rewrite history
+through UPDATE, DELETE or REPLACE. (A handle willing to DROP TRIGGER could
+still disable the guard outright — the triggers stop accidents and ordinary
+mistakes, not a deliberately hostile client with direct file access.)
 
 The same SQLite file also holds the current snapshot of workflows and
 capsules so `fukasawa status` and `fukasawa review` work across separate
@@ -60,16 +63,6 @@ _APPEND_ONLY_TABLES = (
     "cooperation_assessments",
     "cooperative_workflows",
 )
-
-_APPEND_ONLY_TRIGGERS = [
-    f"""
-    CREATE TRIGGER IF NOT EXISTS {table}_no_{verb}
-    BEFORE {verb.upper()} ON {table}
-    BEGIN SELECT RAISE(ABORT, '{table} is append-only: {verb}s are forbidden'); END;
-    """
-    for table in _APPEND_ONLY_TABLES
-    for verb in ("update", "delete")
-]
 
 _TABLE_SCHEMAS = {
     "ledger": (
@@ -303,6 +296,53 @@ _TABLE_SCHEMAS = {
         "record_id",
     ),
 }
+
+
+def _pk_columns(table: str) -> tuple:
+    """The primary-key column name(s) declared for a table in `_TABLE_SCHEMAS`.
+
+    `_TABLE_SCHEMAS` stores a single column name for a simple key and a tuple
+    for a composite one; this normalises both to a tuple so callers never
+    have to branch on which kind a table uses.
+    """
+    _, pk = _TABLE_SCHEMAS[table]
+    return (pk,) if isinstance(pk, str) else tuple(pk)
+
+
+#: One trigger per table forbidding UPDATE, and one forbidding DELETE. Both
+#: fire unconditionally: there is no column value for which rewriting or
+#: erasing a row is allowed.
+_APPEND_ONLY_TRIGGERS = [
+    f"""
+    CREATE TRIGGER IF NOT EXISTS {table}_no_{verb}
+    BEFORE {verb.upper()} ON {table}
+    BEGIN SELECT RAISE(ABORT, '{table} is append-only: {verb}s are forbidden'); END;
+    """
+    for table in _APPEND_ONLY_TABLES
+    for verb in ("update", "delete")
+] + [
+    # `INSERT OR REPLACE` (and `INSERT OR IGNORE`, `REPLACE INTO`, ...) is a
+    # conflict-resolution strategy on INSERT, not UPDATE or DELETE, so the two
+    # triggers above never see it: SQLite's REPLACE algorithm deletes the
+    # conflicting row internally, and that internal delete only fires a
+    # DELETE trigger when `PRAGMA recursive_triggers` is on — which is not
+    # SQLite's default for a plain `sqlite3.connect()` handle (sqlite_utils
+    # happens to turn it on for its own connection, which is why this gap is
+    # easy to miss in this codebase's own tests). A BEFORE INSERT trigger has
+    # no such dependency: it fires for every insert path regardless of the
+    # conflict-resolution clause, so it is checked here instead, keyed on
+    # whether a row with the same primary key already exists.
+    f"""
+    CREATE TRIGGER IF NOT EXISTS {table}_no_replace
+    BEFORE INSERT ON {table}
+    WHEN EXISTS (
+        SELECT 1 FROM {table}
+        WHERE {" AND ".join(f"{col} = NEW.{col}" for col in _pk_columns(table))}
+    )
+    BEGIN SELECT RAISE(ABORT, '{table} is append-only: replaces are forbidden'); END;
+    """
+    for table in _APPEND_ONLY_TABLES
+]
 
 
 class RunLedger:
