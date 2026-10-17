@@ -70,6 +70,7 @@ def load_run1_infrastructure_failures() -> list[str]:
 
 
 def write_run2_checkpoint(per_case: dict[str, Any], not_run: list[str]) -> None:
+    """Overwrite results/baseline-run2.json with the current accumulated run-2 state."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     RUN2_PATH.write_text(
         json.dumps(
@@ -159,6 +160,7 @@ def run_donor_retry(cases: dict[str, dict[str, Any]], registry) -> dict[str, Any
 
 
 def main() -> None:
+    """Retry the donor call, then run 1's INFRASTRUCTURE_FAILURE cases, at 600s, until the hard stop."""
     cases = load_cases()
     to_retry = load_run1_infrastructure_failures()
     print(f"Run 2: {len(to_retry)} cases to retry (run 1's INFRASTRUCTURE_FAILUREs), "

@@ -186,6 +186,7 @@ def build_real_case_payload(date: str, run_id: str) -> tuple[dict[str, Any], dic
 
 
 def _ship_line_values(shipping_decision_lines: list[str]) -> list[tuple[str, str]]:
+    """Parse each "- <label>: <value>" line into a (label, value) pair; skip lines that don't match."""
     values = []
     for line in shipping_decision_lines:
         match = SHIPPING_LINE_RE.match(line)
@@ -197,7 +198,21 @@ def _ship_line_values(shipping_decision_lines: list[str]) -> list[tuple[str, str
 def label_for(
     verdict: str | None, handoff_present: bool, handoff_fields: dict[str, Any]
 ) -> str:
-    """Compute the ground-truth label for the documented rule (see module docstring)."""
+    """Compute the ground-truth label for the documented rule (see module docstring).
+
+    Known latent gap (review LOW finding, not a bug in the real dataset):
+    this label's qualifier check excludes only "NEEDS" (case-insensitive),
+    while src/governance/package_consistency.py's rule requires an EXACT
+    allowlisted token ("PASS", with no surrounding text at all) to count
+    as an Angela PASS claim. A value like "PASS - zero failures" would be
+    labelled CONTRADICTION here (it contains "PASS", not "NEEDS") but the
+    rule would ABSTAIN on it (the whole line fails the strict allowlist
+    match). No real case in this 35-run corpus has this shape — confirmed
+    by `test_all_real_cases_match_manifest_label` — so this label
+    definition and the rule's actual logic have never actually diverged in
+    practice, but they are not byte-for-byte the same algorithm, and this
+    gap is documented rather than silently left for someone to discover.
+    """
     angela_line = handoff_fields.get("angela_verdict_line")
     shipping_lines = handoff_fields.get("shipping_decision_lines") or []
     has_decision_fields = bool(angela_line) or bool(shipping_lines)
@@ -227,6 +242,7 @@ def synthetic_cases() -> list[tuple[dict[str, Any], dict[str, Any]]]:
     cases = []
 
     def add(case_id: str, label: str, quality_report: dict, handoff: dict) -> None:
+        """Append one synthetic case's manifest entry + payload to the enclosing list."""
         manifest_entry = {
             "case_id": case_id,
             "label": label,

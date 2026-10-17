@@ -287,10 +287,13 @@ relevant pipeline function excerpts (verbatim, from the private read-only
 pipeline — not committed as pipeline source, only quoted in the prompt) are
 given to the model, asking for root cause and a minimal deterministic check.
 Saved to `results/donor-diagnosis-run1.json` (prompt + response + usage;
-see Amendment 1 for the retry). What it proposed and what was
-accepted/rejected, and why, is recorded in `CANDIDATES.md` — this is "the
-reasoning that produced the rule", kept separate from the rule's own
-(zero-reasoning) runtime behavior.
+see Amendment 1 for the retry). What it proposed, and the finding on
+review that it does NOT demonstrate issue #27 checklist item 4 ("generate
+... from higher-depth reasoning with existing model adapters" — see H2 in
+the review this amendment responds to), is recorded in `CANDIDATES.md`.
+The rule itself was hand-written by the implementing agent; this call is
+kept as its own, separately-dated artifact, not as "the reasoning that
+produced the rule."
 
 ## Amendment 1 (2026-10-17)
 
@@ -455,3 +458,20 @@ step, per the review process:
 * This is a shadow run only (Commit 2, `shadow.py`). Nothing here is
   promoted, wired into the pipeline, or given any authority to block,
   delete, or publish anything. See `capsule/ROLLOUT.md`.
+
+## Open questions for the owner (not resolved by this experiment)
+
+* **Per-artifact vs. run-level scope.** The owner's plan language talks
+  about *held artifacts* (per-artifact), but this rule's BLOCK/CONSISTENT/
+  ABSTAIN verdict is for the whole run. Whether a finer-grained,
+  per-artifact version is worth building is an owner decision, not one
+  this experiment makes — see `package_consistency.py`'s boundaries list.
+* **Publishing pipeline-excerpt quotes in a public repo.** This repo is
+  public. `results/v1/donor-diagnosis-run{1,2}.json` quote short excerpts
+  of the private `~/pipeline/q2c_pipeline.py` (function bodies, inline in
+  the donor prompt), and this file itself cites that pipeline's private
+  line numbers and its git HEAD SHA. Nothing here redistributes the full
+  file, and the excerpts are the same handful of lines already summarized
+  in this file's Hypothesis section — but whether quoting ANY excerpt of a
+  private repo's source in a public one is acceptable is the owner's call,
+  not this implementer's. Flagged here rather than decided unilaterally.

@@ -24,18 +24,25 @@ inputs:
     required: true
     source: "~/substack/deploy/<MM_DD_YY>/<run_id>/quality-report.json (private, not read by this capsule directly — caller's job)"
 steps:
-  - name: "parse the handoff's 'Angela verdict:' line and '## Shipping Decision' bullet lines"
+  - name: "normalize Unicode (NFKC) and line endings, then parse the handoff's 'Angela verdict:' line
+      and '## Shipping Decision' bullet lines against a strict allowlist of recognized shapes and
+      values — anything that looks like an attempt at either field but does not match the allowlist
+      is flagged unparseable, never silently read as absent (v2, post-review; see CANDIDATES.md)"
     depth_level: 0
     deterministic: true
-  - name: "read the quality report's 'verdict' field (PASS/HOLD), treating anything else as absent"
+  - name: "read the quality report's 'verdict' field (PASS/HOLD), treating anything else as absent;
+      for a PASS verdict, also check whether it still lists findings (internally inconsistent)"
     depth_level: 0
     deterministic: true
-  - name: "if the report verdict is HOLD, compare: does the handoff claim Angela PASS, or does any
-      Shipping Decision line's value authorize shipping (case/whitespace-insensitive, prose-aware)"
+  - name: "if the report verdict is HOLD, compare: does the handoff contain a recognized, unqualified
+      Angela PASS claim, or a recognized Shipping Decision line whose value is exactly 'ship' — an
+      exact allowlist match, not a prose-aware substring match"
     depth_level: 0
     deterministic: true
-  - name: "if either document could not be read, parsed, or lacks the fields needed for comparison,
-      return ABSTAIN with an escalation to a human operator — never CONSISTENT"
+  - name: "if either document could not be read or parsed, lacks the fields needed for comparison, or
+      has a field that does not match the recognized allowlist shape/value, return ABSTAIN with an
+      escalation to a human operator — never CONSISTENT. A recognized BLOCK signal from one field
+      still takes priority over an ABSTAIN from a separately-garbled, unrelated field."
     depth_level: 0
     deterministic: true
 known_failures:
@@ -48,11 +55,28 @@ known_failures:
   - failure: handoff is readable but has neither an Angela verdict line nor a Shipping Decision section
     signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator"
     response: treat as an unreviewed handoff, not as a passing one
+  - failure: "a field LOOKS like an attempt at the Angela line or Shipping Decision section but does
+      not match the strict allowlist — markup/decoration (bold, backticks, emoji), a homoglyph that
+      survives NFKC normalization, an unrecognized bullet marker or missing colon, header drift
+      (wrong level, plural, suffix), a duplicate line/section, a blank line splitting a section's
+      bullets, a qualified or suffixed value (PASSED, 'PASS - zero failures'), or an Angela verdict
+      of UNKNOWN (the pipeline's own placeholder, not a real answer)"
+    signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator"
+    response: "a human reads the raw handoff directly; an unrecognized shape is never read as 'not
+      ship' (this is the v1-to-v2 fail-closed correction; see CANDIDATES.md and PROTOCOL.md Amendment 3)"
+  - failure: quality report verdict is PASS but still lists findings
+    signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator"
+    response: a PASS verdict with recorded findings is internally inconsistent; do not trust it at face value
   - failure: this capsule's scope does not cover a PASS report with an over-conservative handoff
     signal: ConsistencyVerdict.CONSISTENT is returned even when the handoff is needlessly cautious
     response: "documented boundary, not a bug -- see package_consistency.py's docstring; out of scope
       for issue 27, which is specifically about over-authorization against a HOLD, not under-authorization
       against a PASS"
+  - failure: "this capsule's scope is run-level, not per-artifact -- the owner's plan language ('held
+      artifacts') is finer-grained than this Level-0 check"
+    signal: a single BLOCK/ABSTAIN/CONSISTENT verdict for the whole run, not one per artifact
+    response: "documented boundary -- a per-artifact check is a separate, larger piece of work, not
+      this one (see package_consistency.py's docstring boundaries list)"
 escalation_rules:
   - condition: ConsistencyVerdict.ABSTAIN (any of the known_failures above)
     target: human operator

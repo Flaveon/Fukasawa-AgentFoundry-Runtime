@@ -70,10 +70,12 @@ def _case_to_rule_inputs(payload: dict[str, Any]) -> tuple[Optional[str], Option
 
 
 def load_manifest() -> list[dict[str, Any]]:
+    """Load the frozen dataset manifest (case_id, split, label, provenance)."""
     return json.loads((DATASET_DIR / "manifest.json").read_text(encoding="utf-8"))
 
 
 def load_case(case_id: str) -> dict[str, Any]:
+    """Load one sanitized case payload (handoff fields + quality_report fields) by id."""
     return json.loads((CASES_DIR / f"{case_id}.json").read_text(encoding="utf-8"))
 
 
@@ -130,6 +132,7 @@ def run_treatment() -> dict[str, Any]:
 
 
 def _fmt_split_table(per_split: dict[str, dict[str, int]]) -> str:
+    """Render the treatment per-split counters as a Markdown table."""
     header = "| split | cases | escaped blockers | false positives | abstentions | matches ground truth |"
     sep = "|---|---|---|---|---|---|"
     rows = [header, sep]
@@ -230,6 +233,7 @@ def analyze_baseline_b_quality(combined_per_case: dict[str, Any]) -> dict[str, A
 
 
 def _fmt_baseline_b_summary(label: str, per_case: dict[str, Any]) -> str:
+    """Render one Baseline B run's OK/INFRASTRUCTURE_FAILURE/NOT_RUN counts as a bullet line."""
     statuses = Counter(v.get("status") for v in per_case.values())
     return (
         f"- {label}: {len(per_case)} cases — "
@@ -255,9 +259,11 @@ def build_comparison(
     quality = analyze_baseline_b_quality(combined_123)
 
     def _tokens(per_case: dict[str, Any]) -> int:
+        """Sum completion_tokens across every case's usage dict, if present."""
         return sum((c.get("usage") or {}).get("completion_tokens", 0) for c in per_case.values())
 
     def _wall(per_case: dict[str, Any]) -> float:
+        """Sum wall_time_seconds across every case, success or failure."""
         return sum(c.get("wall_time_seconds", 0.0) for c in per_case.values())
 
     lines = [
@@ -381,6 +387,7 @@ def build_comparison(
 
 
 def main() -> None:
+    """Run the rule over the dataset and write results/treatment.json + results/comparison.md."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     treatment = run_treatment()
     (RESULTS_DIR / "treatment.json").write_text(

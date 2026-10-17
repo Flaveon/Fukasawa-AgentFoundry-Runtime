@@ -106,9 +106,11 @@ class RecordingPoster:
     """Wraps http_post_json: records wall time + raw usage, refuses non-local URLs."""
 
     def __init__(self) -> None:
+        """Start with an empty record list."""
         self.records: list[dict[str, Any]] = []
 
     def __call__(self, url: str, payload: dict, timeout: float) -> dict:
+        """POST via http_post_json, recording wall time + usage; refuses non-localhost URLs."""
         refusing_non_localhost(url)
         start = time.monotonic()
         response = http_post_json(url, payload, timeout)
@@ -181,14 +183,20 @@ def parse_adjudication(text: str) -> str:
 
 
 def build_registry() -> ModelEndpointRegistry:
-    """Build a registry from a throwaway FUKASAWA_HOME-style model_endpoints.yaml."""
-    fukasawa_home = Path(tempfile.mkdtemp(prefix="fukasawa-home-baseline-"))
-    config_path = fukasawa_home / "model_endpoints.yaml"
-    config_path.write_text(
-        yaml.safe_dump({"endpoints": {ENDPOINT_NAME: {"kind": "llamacpp", "url": ENDPOINT_URL}}}),
-        encoding="utf-8",
-    )
-    return ModelEndpointRegistry.from_config(config_path)
+    """Build a registry from a throwaway FUKASAWA_HOME-style model_endpoints.yaml.
+
+    `ModelEndpointRegistry.from_config` only reads the file once, to build
+    in-memory `ModelEndpoint` objects — nothing holds a reference to the
+    directory afterward, so it is cleaned up here rather than left behind
+    for the OS temp directory to accumulate across repeated runs.
+    """
+    with tempfile.TemporaryDirectory(prefix="fukasawa-home-baseline-") as fukasawa_home:
+        config_path = Path(fukasawa_home) / "model_endpoints.yaml"
+        config_path.write_text(
+            yaml.safe_dump({"endpoints": {ENDPOINT_NAME: {"kind": "llamacpp", "url": ENDPOINT_URL}}}),
+            encoding="utf-8",
+        )
+        return ModelEndpointRegistry.from_config(config_path)
 
 
 def load_existing_results() -> dict[str, Any]:
@@ -407,6 +415,7 @@ def run_donor_diagnosis(cases: dict[str, dict[str, Any]], registry: ModelEndpoin
 
 
 def main() -> None:
+    """Run Baseline A, Baseline B (resumable, checkpointed), and the donor-diagnosis call."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     cases = load_cases()
 

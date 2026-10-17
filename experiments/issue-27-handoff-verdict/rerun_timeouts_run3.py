@@ -63,6 +63,7 @@ def load_run2_not_run() -> list[str]:
 
 
 def write_run3_checkpoint(per_case: dict[str, Any], not_run: list[str]) -> None:
+    """Overwrite results/baseline-run3.json with the current accumulated run-3 state."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     RUN3_PATH.write_text(
         json.dumps(
@@ -89,6 +90,7 @@ def write_run3_checkpoint(per_case: dict[str, Any], not_run: list[str]) -> None:
 
 
 def main() -> None:
+    """Retry run 2's NOT_RUN cases at 600s, sequentially, until the run-3 hard stop."""
     cases = load_cases()
     to_retry = load_run2_not_run()
     print(f"Run 3: {len(to_retry)} cases to retry (run 2's NOT_RUNs), "

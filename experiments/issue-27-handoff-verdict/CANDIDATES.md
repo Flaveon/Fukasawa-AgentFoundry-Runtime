@@ -1,25 +1,54 @@
 # Issue #27 — Candidate Rule Variants and the Donor-Diagnosis Call
 
-This records the reasoning that produced
-`src/governance/package_consistency.py`: what the donor-diagnosis model
-call proposed, and which parts of the final rule were accepted, rejected,
-or changed, and why. The rule itself (the "recipient") makes zero model
-calls at runtime — this file is where the one-time reasoning that shaped
-it lives, kept separate from the rule's own behavior, per the Fukasawa
-doctrine of migrating stable reasoning into deterministic rules and
-recording the migration (see `AGENTS.md`).
+**Corrected provenance claim (post-review — see PROTOCOL.md Amendment 3,
+H2):** an earlier version of this file said this document "records the
+reasoning that produced `src/governance/package_consistency.py`" and that
+the rule's design was "informed by (but not copied verbatim from) the
+donor call's proposal." That is not supported by the actual timeline and
+is corrected here rather than left standing.
 
-## Donor-diagnosis call
+**What actually happened, in order:** `src/governance/package_consistency.py`
+and all seven design decisions below were written by the implementing
+agent BEFORE the donor-diagnosis call produced any answer. PROTOCOL.md's
+own Disclosure (on Commit 1) says the rule was drafted in the working tree
+before 08:06:48 on 2026-10-17. The donor call's first attempt
+(`results/v1/donor-diagnosis-run1.json`, 240s timeout) **timed out with no
+answer at all**. Its only successful attempt
+(`results/v1/donor-diagnosis-run2.json`, 600s timeout, PROTOCOL.md
+Amendment 1) did not return until **08:15:29** that same morning — after
+the rule existed. There is no accepted design decision among the seven
+below that traces to the donor's output; none of them changed, or could
+have changed, as a result of that call.
 
-Run 1 (`results/donor-diagnosis-run1.json`, timeout 240s) timed out without
-an answer — the model's hidden chain-of-thought exceeded that budget, the
-same failure mode documented in PROTOCOL.md for Baseline B generally.
-Run 2 (`results/donor-diagnosis-run2.json`, PROTOCOL.md Amendment 1, same
-prompt, timeout raised to 600s) succeeded: 372.1s wall time, 750 prompt
-tokens, **5706 completion tokens of hidden reasoning** before a 676-character
-final answer. That ratio — over 8 tokens of invisible reasoning for every
-1 token of visible answer — is itself relevant evidence for why this
-reasoning is captured once, here, rather than re-run at runtime.
+**The donor call also did not independently discover its own answer.** Its
+prompt (`baseline.py::DONOR_PROMPT`, reproduced in
+`results/v1/donor-diagnosis-run2.json`) hands the model exactly the real
+run_ids where "the quality report said HOLD but the operator handoff's
+Shipping Decision said ship / Angela verdict said PASS for the same run" —
+the model was told the shape of the contradiction and asked to diagnose
+it. Its answer agreeing with a diagnosis it was given is not the same
+claim as "a model found this independently."
+
+**Conclusion, stated plainly: issue #27 checklist item 4 ("generate a
+candidate agent/rule from higher-depth reasoning, using the existing model
+adapters") is NOT demonstrated by this branch.** No new donor call was run
+to try to retroactively manufacture that traceability — doing so after
+seeing this finding would only repeat the same problem (a model confirming
+an answer it has already effectively been given) while appearing to fix
+it. The donor call stands as what it actually was: a confirmation call
+made after the fact, kept below for its own, separate value (see "What
+remains true" below) — not as this rule's origin story.
+
+## Donor-diagnosis call (a confirmation made after the rule was written, not its origin)
+
+Run 1 (`results/v1/donor-diagnosis-run1.json`, timeout 240s) timed out
+without an answer — the model's hidden chain-of-thought exceeded that
+budget, the same failure mode documented in PROTOCOL.md for Baseline B
+generally. Run 2 (`results/v1/donor-diagnosis-run2.json`, PROTOCOL.md
+Amendment 1, same prompt, timeout raised to 600s) succeeded, **after the
+rule already existed**: 372.1s wall time, 750 prompt tokens, **5706
+completion tokens of hidden reasoning** before a 676-character final
+answer.
 
 Full verbatim response:
 
@@ -37,31 +66,35 @@ Full verbatim response:
 > `len(findings) > 0`, overriding any `scope` or `angela_result` signals
 > that indicate "ship".
 
-**What was accepted:** the root-cause diagnosis is exactly right and
-matches the independently-derived evidence in PROTOCOL.md's Hypothesis
-section (two documents computed independently, never reconciled). The
-donor's proposed check targets the SAME two functions and the SAME
-mechanism (findings count / verdict vs. the handoff's ship claim) that
-`check_package_consistency()` actually compares.
+**What remains true despite the corrected provenance:** the diagnosis is
+*correct* — it matches the independently-derived evidence in PROTOCOL.md's
+Hypothesis section (two documents computed independently, never
+reconciled) — and its proposed check targets the same two functions and
+the same mechanism (findings count / verdict vs. the handoff's ship claim)
+that `check_package_consistency()` compares. It is evidence the diagnosis
+is right, corroborating what the implementing agent had already written
+down; it is not evidence about where the rule came from.
 
-**What was NOT adopted as proposed, and why:** the donor's fix is a
-**pipeline-side change** — it proposes editing
-`build_duath_operator_handoff` itself (inside `~/pipeline/q2c_pipeline.py`,
-private, out of scope: "NEVER modify ~/pipeline"). This repo's deliverable
-is a Level-0 **external check** that compares the two documents' *existing*
-output after the fact, without touching the pipeline that produces them —
-a deliberately more conservative, reversible intervention (see
-`capsule/ROLLOUT.md`'s shadow→advisory→blocking staging) than rewriting
-the function that generates the handoff. The donor call was asked for "a
-minimal deterministic check" and gave a correct one for a different
-integration point than the one this issue's Level-0 rule occupies; its
-diagnosis was kept, its implementation site was not.
+**Why the donor's proposed fix was not adopted as written, independent of
+the provenance question:** the donor's fix is a **pipeline-side change** —
+it proposes editing `build_duath_operator_handoff` itself (inside
+`~/pipeline/q2c_pipeline.py`, private, out of scope: "NEVER modify
+~/pipeline"). This repo's deliverable is a Level-0 **external check** that
+compares the two documents' *existing* output after the fact, without
+touching the pipeline that produces them — a deliberately more
+conservative, reversible intervention (see `capsule/ROLLOUT.md`'s
+shadow→advisory→blocking staging) than rewriting the function that
+generates the handoff.
 
 ## Rule design decisions — accepted, rejected, and why
 
-These were arrived at through hand iteration against the real 35-case
-corpus plus the synthetic adversarial set, informed by (but not copied
-verbatim from) the donor call's proposal:
+These were arrived at through hand iteration by the implementing agent
+against the real 35-case corpus plus a synthetic adversarial set, **before
+the donor call returned any answer** (see the corrected provenance note
+above). "M1" in PROTOCOL.md's Amendment 3 also applies here: "the real
+35-case corpus" is the same corpus that includes every `held-out` case, so
+none of this hand iteration was validated against anything the rule had
+not already seen:
 
 1. **Accepted: compare only the parsed VALUE of a Shipping Decision line,
    not the whole line's text.** An early version checked whether the
@@ -125,3 +158,58 @@ verbatim from) the donor call's proposal:
    justify themselves — abstaining to an unnamed agent would just move the
    same undecided question somewhere else without resolving who is
    accountable for it.
+
+## v2 rewrite (post-review, H1: fail CLOSED) — new decisions
+
+v1's items 1-7 above describe hand-tuned string matching ("value starts
+with ship", "value contains PASS minus a qualifier"). The independent
+review (PROTOCOL.md Amendment 3) found this fails OPEN: anything it could
+not confidently parse was read as "not ship" and returned CONSISTENT. v2
+replaces the matching entirely with an allowlist — every field is either a
+recognized shape+value, or unparseable, and unparseable is always
+ABSTAIN. New decisions made during that rewrite:
+
+8. **Accepted: NFKC-normalize before matching, then apply the allowlist to
+   the normalized text.** A non-breaking space between "Angela" and
+   "verdict", or a fullwidth Latin "ｓｈｉｐ", both NFKC-normalize to plain
+   ASCII — these are cosmetic width/whitespace conventions, not disguises,
+   and recognizing them (`angela_nbsp` → BLOCK, `fullwidth_ship` → BLOCK in
+   `tests/test_package_consistency.py::ADVERSARIAL_CASES`) is the correct,
+   safe direction: it still catches a real "ship" claim. A genuine
+   homoglyph (Cyrillic "Ѕ" in "Ѕhip", Cyrillic "Р" in "РASS") is NOT a
+   compatibility variant of a Latin letter — NFKC does not touch it, so it
+   still fails the allowlist and ABSTAINs, as it should.
+
+9. **Accepted: a blank line that SPLITS a Shipping Decision section's
+   bullets into more than one paragraph aborts to ABSTAIN; a blank line
+   immediately after the header, before a single clean paragraph of
+   bullets, does not.** The distinction is whether content could be
+   silently lost: `blank_after_header` (nothing after the one blank line
+   but the bullets themselves) resolves normally; `blank_between_bullets`
+   (a real "ship" bullet sits after the blank line) would silently drop
+   that bullet if only the first paragraph were read, so it ABSTAINs
+   instead of guessing.
+
+10. **Accepted: a clean, resolved BLOCK signal takes priority over an
+    ABSTAIN from an unrelated, separately-garbled field.** If Angela's
+    line is undecorated and says PASS, that is acted on even if the
+    Shipping Decision section elsewhere is malformed (and vice versa for a
+    clean "ship" bullet with a garbled Angela line) — see
+    `test_block_takes_priority_over_an_unrelated_abstain_worthy_field`.
+    Burying an already-unambiguous "ship this" claim under an ABSTAIN
+    because some OTHER part of the page is noisy would be a worse outcome
+    than surfacing both: a missed escape that was already in hand is worse
+    than an incomplete-but-actionable alert.
+
+11. **Rejected (reverted from an earlier version of this file): claiming
+    "informed by the donor call's proposal".** See the corrected
+    provenance section above (H2) — nothing here traces to donor output.
+
+12. **Accepted: `synthetic-adversarial-hold-prose-001`'s expected outcome
+    changes from CONSISTENT (v1) to ABSTAIN (v2).** v1 cleverly read
+    "hold (ship once blockers fixed)" as "value starts with hold, so it's
+    fine" — exactly the kind of clever-but-brittle matching that caused
+    H1. v2's exact-match allowlist does not treat a decorated/suffixed
+    value as the clean token it resembles; it ABSTAINs. This is a
+    deliberate behavior change, not a bug: it is stricter, and strictness
+    in the ABSTAIN direction is the entire point of the rewrite.

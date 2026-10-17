@@ -1,19 +1,33 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 ConcordiaPax LLC
-"""Automated rollback test for the issue #27 package-consistency capsule.
+"""Automated rollback tests for the issue #27 package-consistency capsule.
 
-Proves the claim in experiments/issue-27-handoff-verdict/capsule/ROLLOUT.md:
-with the capsule disabled (its rule function never invoked), the shadow
-runner emits no rule findings at all, and Baseline A's real-world numbers
-(what the pipeline's own handoff documents actually say) are completely
-unchanged — because Baseline A never calls the rule in the first place.
+v2 note (post-review, M3 — see PROTOCOL.md Amendment 3): this file was
+rewritten. The v1 version modelled "the capsule is disabled" as a stub rule
+function that always returns CONSISTENT — the exact fail-open failure mode
+this whole rewrite exists to eliminate, and a review found it proved
+little: it survived an injected dependency in ``run_baseline_a`` (the
+static check only inspects that one function's own source text, and the
+before/after equality check is trivially true for a pure function whether
+or not anything actually changed), and the real rollback described in
+``capsule/ROLLOUT.md`` (deleting ``package_consistency.py``) broke the
+suite outright, because ``ROLLOUT.md``'s own file list omitted this test
+file. This version drops the "disabled = always CONSISTENT" model entirely
+and proves two narrower, real things instead:
 
-This is the rollback guarantee available at the Shadow stage: there is no
-live integration point to disable yet (nothing outside this experiment
-calls the rule), so the strongest thing to prove is that the shadow
-runner's own output collapses to "nothing found" when the rule is not
-called, and that nothing else in the experiment depends on it having been
-called.
+(a) Baseline A's computation does not import or call the rule — checked
+    both statically (its source text never names the rule) and at runtime
+    (it still runs correctly with the rule module blocked from being
+    imported at all, simulating the module not existing).
+(b) Nothing else under ``src/`` references the rule module, so removing
+    ``src/governance/package_consistency.py`` cannot silently break
+    anything outside the files ``capsule/ROLLOUT.md`` already lists for
+    deletion.
+
+A third test pins that ``shadow.py``'s only dependency on the rule is a
+single, removable import line, supporting ``ROLLOUT.md``'s claim that
+deleting ``shadow.py`` alongside the rule is a complete, clean removal —
+not a partial one that leaves dangling references.
 
 The experiment directory's name (``issue-27-handoff-verdict``) is not a
 valid Python package identifier (hyphens), so its modules are loaded here
@@ -24,11 +38,16 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import sys
 from pathlib import Path
 
 EXPERIMENT_DIR = (
     Path(__file__).resolve().parent.parent / "experiments" / "issue-27-handoff-verdict"
 )
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SRC_DIR = REPO_ROOT / "src"
+RULE_MODULE_NAME = "src.governance.package_consistency"
+RULE_FILE = SRC_DIR / "governance" / "package_consistency.py"
 
 
 def _load_module(name: str, filename: str):
@@ -39,66 +58,71 @@ def _load_module(name: str, filename: str):
     return module
 
 
-def test_baseline_a_never_references_the_capsule_rule() -> None:
-    """Baseline A's source never names check_package_consistency or the governance module.
-
-    This is the structural guarantee that "baseline behaviour is unchanged"
-    when the capsule is disabled: Baseline A cannot be affected by the
-    capsule's presence or absence because it never calls into it.
-    """
-    baseline = _load_module("issue27_baseline_rollback_check", "baseline.py")
+def test_baseline_a_never_references_the_capsule_rule_statically() -> None:
+    """Baseline A's source never names check_package_consistency or the governance module."""
+    baseline = _load_module("issue27_baseline_rollback_static", "baseline.py")
     source = inspect.getsource(baseline.run_baseline_a)
     assert "check_package_consistency" not in source
     assert "package_consistency" not in source
 
 
-def test_shadow_runner_emits_no_findings_when_capsule_disabled(monkeypatch) -> None:
-    """With the rule function replaced by a disabled no-op, the shadow runner finds nothing."""
-    shadow = _load_module("issue27_shadow_rollback_check", "shadow.py")
+def test_baseline_a_runs_with_the_rule_module_unimportable(monkeypatch) -> None:
+    """(a) Runtime proof: run_baseline_a works even if the rule module cannot be imported at all.
 
-    from src.governance.package_consistency import ConsistencyResult, ConsistencyVerdict
-
-    def disabled_rule(handoff_text, quality_report):  # noqa: ARG001 - signature must match
-        """Stand-in for 'the capsule is not wired in': always CONSISTENT, no reasons, no BLOCK."""
-        return ConsistencyResult(verdict=ConsistencyVerdict.CONSISTENT, reasons=())
-
-    monkeypatch.setattr(shadow, "check_package_consistency", disabled_rule)
-
-    treatment = shadow.run_treatment()
-
-    blocked_cases = [
-        case_id
-        for case_id, result in treatment["per_case"].items()
-        if result["rule_verdict"] == "BLOCK"
-    ]
-    cases_with_reasons = [
-        case_id for case_id, result in treatment["per_case"].items() if result["reasons"]
-    ]
-    assert blocked_cases == [], "disabled capsule must never BLOCK anything"
-    assert cases_with_reasons == [], "disabled capsule must never surface a reason/finding"
-
-    abstentions = sum(split.get("abstentions", 0) for split in treatment["per_split"].values())
-    assert abstentions == 0, "disabled capsule must never ABSTAIN either -- it is simply not called"
-
-
-def test_baseline_a_identical_with_and_without_the_rule_imported() -> None:
-    """Baseline A's actual numeric output is identical whether or not the governance rule exists.
-
-    Simulates "capsule removed from the system": temporarily hides the
-    governance module from sys.modules / the import system is overkill for
-    a pure-function rule with no side effects, so this test instead proves
-    the simpler, sufficient fact: calling run_baseline_a() twice -- once
-    before anything related to the capsule is touched, once after the
-    shadow runner's treatment pass has fully executed -- produces byte-for-
-    byte identical output. Baseline A has no shared state with the rule.
+    Setting sys.modules[RULE_MODULE_NAME] = None forces any `import
+    src.governance.package_consistency` (or `from ... import ...`) anywhere
+    in the call stack to raise ImportError, as if the module genuinely did
+    not exist on disk. If run_baseline_a (or anything it transitively
+    calls) secretly depended on the rule, this test would fail with that
+    ImportError. It does not -- proving the dependency the static check
+    above suggests is also true at runtime, not just absent from one
+    function's source text.
     """
-    baseline = _load_module("issue27_baseline_rollback_check_2", "baseline.py")
-    shadow = _load_module("issue27_shadow_rollback_check_2", "shadow.py")
+    baseline = _load_module("issue27_baseline_rollback_runtime", "baseline.py")
+    monkeypatch.setitem(sys.modules, RULE_MODULE_NAME, None)
 
     cases = baseline.load_cases()
-    before = baseline.run_baseline_a(cases)
+    result = baseline.run_baseline_a(cases)
 
-    shadow.run_treatment()  # exercise the capsule fully
+    assert result, "run_baseline_a should still produce real output with the rule module blocked"
+    total_cases = sum(bucket["cases"] for bucket in result.values())
+    assert total_cases == 35, "all 35 real cases should still be counted"
 
-    after = baseline.run_baseline_a(cases)
-    assert before == after
+
+def test_rest_of_src_does_not_import_the_rule() -> None:
+    """(b) Nothing under src/, other than the rule module itself, references it.
+
+    This is what makes "rollback = delete src/governance/package_consistency.py"
+    a clean, complete removal rather than one that leaves a dangling import
+    somewhere else under src/ that ROLLOUT.md's file list did not catch.
+    """
+    offending: list[str] = []
+    for path in SRC_DIR.rglob("*.py"):
+        if path == RULE_FILE:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if "package_consistency" in text:
+            offending.append(str(path.relative_to(REPO_ROOT)))
+    assert offending == [], (
+        f"these src/ files reference package_consistency and would break if it were "
+        f"deleted without also fixing them: {offending}"
+    )
+
+
+def test_shadow_py_rule_dependency_is_isolated_to_one_import_line() -> None:
+    """shadow.py's only reference to the rule is a single, removable import statement.
+
+    Supports ROLLOUT.md's rollback file list, which deletes shadow.py
+    alongside the rule module rather than trying to keep a half-working
+    shadow runner around: this test pins that there is exactly one line to
+    account for, not an unknown number of call sites scattered through the
+    file.
+    """
+    shadow_source = (EXPERIMENT_DIR / "shadow.py").read_text(encoding="utf-8")
+    import_lines = [
+        line.strip()
+        for line in shadow_source.splitlines()
+        if "package_consistency" in line and "import" in line
+    ]
+    assert len(import_lines) == 1, f"expected exactly one import line, found: {import_lines}"
+    assert import_lines[0].startswith("from src.governance.package_consistency import")
