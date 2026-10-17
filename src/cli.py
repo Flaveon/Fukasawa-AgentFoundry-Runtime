@@ -366,6 +366,51 @@ def run(
     _interactive_loop(runtime, brief, capsule, run_state, handoff_dir)
 
 
+def _refuse_if_brief_drifted(ledger: RunLedger, run_state: RuntimeState) -> None:
+    """Refuse to continue a run if its workflow brief has changed since the
+    run started, or if no provable pin exists for it at all.
+
+    `WorkflowRuntime.resume_run()` and `GraphRunner.resume()` (both FROZEN)
+    reload whatever brief snapshot `RunLedger.load_workflow()` currently
+    holds for the workflow id, with no check that it is the same brief the
+    run actually agreed to. A brief edited in place between a pause and a
+    resume — same id, different `evidence_required` on some transition, for
+    instance — would silently change what a resumed run accepts. This is
+    the gate that was missing: called from the CLI, before either frozen
+    `resume()` runs, using only methods `RunLedger` already exposes
+    (`load_run`, `brief_hash_at`, `current_brief_hash`).
+
+    The safe default, absent a provable match, is to refuse. A false
+    positive costs re-running `fukasawa run` against a brief that never
+    actually changed; a false negative lets a paused run resume under rules
+    it never agreed to. An older database with no `workflow_snapshots`
+    history for this workflow id (predating this check) is treated the same
+    as a changed brief — refused, not waved through.
+    """
+    pinned = ledger.brief_hash_at(run_state.workflow_id, run_state.created_at)
+    current = ledger.current_brief_hash(run_state.workflow_id)
+    if pinned is not None and pinned == current:
+        return
+    reason = (
+        f"the brief for workflow '{run_state.workflow_id}' has changed since "
+        f"run '{run_state.run_id}' started"
+        if pinned is not None
+        else (
+            f"no brief snapshot is pinned to run '{run_state.run_id}' — likely "
+            f"a database from before this safety check existed. Refusing "
+            f"rather than guessing that the brief is still the same one."
+        )
+    )
+    console.print(
+        Panel(
+            reason,
+            title="[red]Resume refused — brief may have changed[/red]",
+            border_style="red",
+        )
+    )
+    raise typer.Exit(1)
+
+
 @app.command()
 def resume(
     run_id: str = typer.Argument(..., help="Run id to resume (see: fukasawa runs list)."),
@@ -374,6 +419,12 @@ def resume(
 ) -> None:
     """Continue a persisted run from exactly where it left off."""
     runtime = WorkflowRuntime(RunLedger(db))
+    try:
+        run_probe = runtime.ledger.load_run(run_id)
+    except Exception:
+        console.print(f"[red]Unknown run:[/red] {run_id}")
+        raise typer.Exit(1)
+    _refuse_if_brief_drifted(runtime.ledger, run_probe)
     try:
         brief, capsule, run_state = runtime.resume_run(run_id)
     except Exception:
@@ -970,6 +1021,18 @@ def graph_resume(
     """Resume a blocked or paused graph run from its checkpoint."""
     runner = _make_runner(db, handoff_dir, require_signed)
     graph = load_graph(graph_path)
+    try:
+        graph_run_state = runner.ledger.load_graph_run(graph_run_id)
+        run_probe = runner.ledger.load_run(graph_run_state.run_id)
+    except Exception:
+        # `load_graph_run`/`load_run` raise sqlite_utils' NotFoundError on an
+        # unknown id, not KeyError despite what their docstrings say — this
+        # mirrors the broad catch `resume()` already uses for the same
+        # reason, rather than the (too narrow) `except KeyError` below that
+        # wraps `runner.resume()` itself.
+        console.print(f"[red]Unknown graph run:[/red] {graph_run_id}")
+        raise typer.Exit(1)
+    _refuse_if_brief_drifted(runner.ledger, run_probe)
     try:
         state = runner.resume(
             graph, graph_run_id, signature=_sidecar_signature(graph_path)

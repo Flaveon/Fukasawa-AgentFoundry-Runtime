@@ -14,6 +14,7 @@ capsules so `fukasawa status` and `fukasawa review` work across separate
 CLI invocations. Snapshots may be updated; ledger events may not.
 """
 
+import hashlib
 import json
 import uuid
 from datetime import datetime, timezone
@@ -44,6 +45,12 @@ def _new_id(prefix: str) -> str:
     """Generate a short unique storage id with a readable prefix."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
+
+def _content_hash(text: str) -> str:
+    """A stable content hash for change detection — not a security hash,
+    just a cheap way to tell "the same brief" from "an edited one"."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
 #: Tables that record history rather than current state. Nothing in them is
 #: ever rewritten: a wrong entry is corrected by a later entry on top, never by
 #: editing the record of what was believed at the time.
@@ -62,6 +69,7 @@ _APPEND_ONLY_TABLES = (
     "accountable_workflows",
     "cooperation_assessments",
     "cooperative_workflows",
+    "workflow_snapshots",
 )
 
 _TABLE_SCHEMAS = {
@@ -83,6 +91,20 @@ _TABLE_SCHEMAS = {
     "workflows": (
         {"id": str, "title": str, "owner": str, "brief_json": str},
         "id",
+    ),
+    # One row per *distinct* brief content ever saved for a workflow id,
+    # content-hashed and dated. `workflows` above only ever holds the latest
+    # snapshot — this is what lets a resume tell "the brief never changed"
+    # apart from "the brief was silently edited after this run began".
+    "workflow_snapshots": (
+        {
+            "snapshot_id": int,
+            "workflow_id": str,
+            "content_hash": str,
+            "saved_at": str,
+            "brief_json": str,
+        },
+        "snapshot_id",
     ),
     "runs": (
         {
@@ -408,21 +430,76 @@ class RunLedger:
     # --------------------------------------------------------------- snapshots
 
     def save_workflow(self, brief: WorkflowBrief) -> None:
-        """Store (or refresh) the workflow brief snapshot for later CLI calls."""
+        """Store (or refresh) the workflow brief snapshot for later CLI calls.
+
+        Also appends a dated, content-hashed entry to `workflow_snapshots`
+        whenever the brief's content actually changed from the last snapshot
+        recorded for this workflow id (or this is the first save). That
+        append-only history is what `brief_hash_at` and `current_brief_hash`
+        read from — it is how a resume can tell the difference between "the
+        brief never changed" and "the brief was edited after this run
+        began," which `workflows` alone cannot answer because it only ever
+        holds the latest content.
+        """
+        brief_json = brief.model_dump_json()
         self.db["workflows"].upsert(
             {
                 "id": brief.id,
                 "title": brief.title,
                 "owner": brief.owner,
-                "brief_json": brief.model_dump_json(),
+                "brief_json": brief_json,
             },
             pk="id",
         )
+        content_hash = _content_hash(brief_json)
+        if self.current_brief_hash(brief.id) != content_hash:
+            self.db["workflow_snapshots"].insert(
+                {
+                    "workflow_id": brief.id,
+                    "content_hash": content_hash,
+                    "saved_at": datetime.now(timezone.utc).isoformat(),
+                    "brief_json": brief_json,
+                }
+            )
 
     def load_workflow(self, workflow_id: str) -> WorkflowBrief:
         """Load a stored workflow brief by id. Raises KeyError if unknown."""
         row = self.db["workflows"].get(workflow_id)
         return WorkflowBrief.model_validate_json(row["brief_json"])
+
+    def current_brief_hash(self, workflow_id: str) -> Optional[str]:
+        """The content hash of the brief snapshot currently in effect.
+
+        None means this workflow id has never been saved (nothing to hash),
+        which is different from "saved but unchanged."
+        """
+        rows = list(
+            self.db["workflow_snapshots"].rows_where(
+                "workflow_id = ?", [workflow_id], order_by="snapshot_id desc"
+            )
+        )
+        return rows[0]["content_hash"] if rows else None
+
+    def brief_hash_at(self, workflow_id: str, at: datetime) -> Optional[str]:
+        """The content hash of the brief snapshot that was current at a
+        given moment, or None if no snapshot exists at or before that time.
+
+        This is how a run pins the exact brief it started under without
+        `start()` (frozen) ever needing to record anything extra: the run's
+        own `created_at` is already an immutable timestamp, and `save_workflow`
+        is always called (by `start()`) just before a run's `created_at` is
+        set — so asking "what was current at `run.created_at`" and asking
+        "what was current the instant this run began" are the same question.
+        """
+        at_iso = at.astimezone(timezone.utc).isoformat()
+        rows = list(
+            self.db["workflow_snapshots"].rows_where(
+                "workflow_id = ? and saved_at <= ?",
+                [workflow_id, at_iso],
+                order_by="saved_at desc, snapshot_id desc",
+            )
+        )
+        return rows[0]["content_hash"] if rows else None
 
     def save_capsule(self, capsule: ProcessCapsule) -> None:
         """Store (or refresh) the current snapshot of a capsule."""

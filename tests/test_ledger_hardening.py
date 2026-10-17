@@ -115,7 +115,7 @@ class TestAppendOnlyCoversEveryTable:
         finally:
             raw.close()
 
-    def test_the_tuple_names_all_eight_tables(self):
+    def test_the_tuple_names_every_append_only_table(self):
         # Deleting a name from `_APPEND_ONLY_TABLES` would silently drop its
         # coverage from every parametrized test above (pytest would just
         # collect fewer cases); pin the membership directly so that mistake
@@ -129,6 +129,7 @@ class TestAppendOnlyCoversEveryTable:
             "accountable_workflows",
             "cooperation_assessments",
             "cooperative_workflows",
+            "workflow_snapshots",
         }
 
 
