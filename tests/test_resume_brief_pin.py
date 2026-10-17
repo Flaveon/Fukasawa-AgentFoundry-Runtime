@@ -270,6 +270,43 @@ class TestExplicitPinAtRunStart:
     """Gate G re-review finding R5: the pin is recorded explicitly by the
     CLI, not only inferred after the fact from a clock reading."""
 
+    def test_a_save_racing_the_start_cannot_choose_the_pin(self, tmp_path, monkeypatch):
+        """Round-3 finding R5b. Another process saves an edited brief under the
+        same id between ``start()`` and the pin. The run must still be pinned
+        to the brief it started with, and resuming under the edited one must
+        be refused."""
+        from src.runtime.ledger import brief_content_hash
+
+        db = str(tmp_path / "r.db")
+        handoff_dir = str(tmp_path / "handoffs")
+        tampered = WorkflowRuntime.load_brief(_tampered_brief(tmp_path))
+        real_start = WorkflowRuntime.start
+
+        def racing_start(self, brief, *args, **kwargs):
+            """Start for real, then let 'another process' save the edit."""
+            out = real_start(self, brief, *args, **kwargs)
+            RunLedger(db).save_workflow(tampered)
+            return out
+
+        monkeypatch.setattr(WorkflowRuntime, "start", racing_start)
+        CliRunner().invoke(
+            app, ["run", str(EXAMPLE_BRIEF), "--db", db, "--handoff-dir", handoff_dir],
+            input="quit\n\n\n",
+        )
+        monkeypatch.undo()
+
+        ledger = RunLedger(db)
+        run = ledger.list_runs()[0]
+        started = brief_content_hash(WorkflowRuntime.load_brief(EXAMPLE_BRIEF))
+        assert ledger.pinned_brief_hash(run.run_id) == started
+        assert started != brief_content_hash(tampered)
+
+        resumed = CliRunner().invoke(
+            app, ["resume", run.run_id, "--db", db, "--handoff-dir", handoff_dir],
+            input="quit\n\n\n",
+        )
+        assert resumed.exit_code != 0
+
     def test_fukasawa_run_records_an_explicit_pin(self, tmp_path):
         db = tmp_path / "r.db"
         handoff_dir = tmp_path / "handoffs"

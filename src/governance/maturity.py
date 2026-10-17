@@ -301,7 +301,9 @@ def _commit_staged_files(temp_paths: dict[Path, Path]) -> None:
     What this cannot close is a crash or killed process *between* two of
     those `os.replace()` calls: the set of (up to) five replacements is not
     one atomic transaction, even though the content behind each of them was
-    long since fully written and fsynced to the filesystem as a temp file.
+    long since fully written to the filesystem as a temp file (written, not
+    fsynced: a power cut can still lose it, which this guards no better than
+    any ordinary write).
     `manifest.json` is deliberately replaced last to shrink the blast radius
     of that gap: `assess()` and `validate_package()` both read the package's
     current maturity from `manifest.json`, and `validate_package()`

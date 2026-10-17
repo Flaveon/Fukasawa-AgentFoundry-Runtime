@@ -52,6 +52,17 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def brief_content_hash(brief: WorkflowBrief) -> str:
+    """The content hash of one brief, exactly as `save_workflow` records it.
+
+    A run is pinned to the brief it was *started with*, so the pin must be
+    computed from that brief object, not read back from the ledger: another
+    process saving an edited brief under the same id in between would
+    otherwise be what the run gets pinned to.
+    """
+    return _content_hash(brief.model_dump_json())
+
+
 #: Per ADR-002, every new row added by rows created after the original
 #: schema gets a `schema_version` so a future shape change has something to
 #: branch on. `workflow_snapshots` and `run_brief_pins` are internal to the
@@ -524,7 +535,7 @@ class RunLedger:
             },
             pk="id",
         )
-        content_hash = _content_hash(brief_json)
+        content_hash = brief_content_hash(brief)
         if self.current_brief_hash(brief.id) != content_hash:
             self.db["workflow_snapshots"].insert(
                 {

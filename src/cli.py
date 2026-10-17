@@ -97,7 +97,7 @@ from src.kernel.kernel import (
 from src.schemas.graph import GraphRunStatus
 from src.security.trust import TrustStore
 from src.runtime.handoff import DEFAULT_HANDOFF_DIR, write_handoff
-from src.runtime.ledger import DEFAULT_DB_PATH, RunLedger
+from src.runtime.ledger import DEFAULT_DB_PATH, RunLedger, brief_content_hash
 from src.runtime.review_gate import ReviewDecision, open_review_gate
 from src.runtime.state_machine import NonConformanceError, WorkflowRuntime
 from src.schemas.process_capsule import CapsuleStatus, ProcessCapsule
@@ -362,10 +362,10 @@ def run(
     # Pin the exact brief content this run started under — explicitly, not
     # inferred from a clock reading — so a later resume/review/runs-command
     # can tell "the brief never changed" from "someone edited it under the
-    # same id". start() is FROZEN, so this is recorded here instead.
-    runtime.ledger.pin_run_brief(
-        run_state.run_id, brief.id, runtime.ledger.current_brief_hash(brief.id)
-    )
+    # same id". start() is FROZEN, so this is recorded here instead. Hashed
+    # from the brief object started, never read back from the ledger -- a
+    # save by another process in between would otherwise be what is pinned.
+    runtime.ledger.pin_run_brief(run_state.run_id, brief.id, brief_content_hash(brief))
     console.print(
         f"[bold]{brief.title}[/bold] started — run [cyan]{run_state.run_id}[/cyan], "
         f"capsule [cyan]{capsule.id}[/cyan] in state [yellow]{capsule.state}[/yellow]\n"
@@ -1033,9 +1033,7 @@ def graph_run(
     # Pin the exact brief content this run started under — same reasoning as
     # the plain `run` command above; `GraphRunner.start()` calls the FROZEN
     # `WorkflowRuntime.start()` internally, so this is recorded here instead.
-    runner.ledger.pin_run_brief(
-        state.run_id, brief.id, runner.ledger.current_brief_hash(brief.id)
-    )
+    runner.ledger.pin_run_brief(state.run_id, brief.id, brief_content_hash(brief))
     console.print(
         f"[bold]{graph.graph_id}[/bold] started as [cyan]{state.graph_run_id}[/cyan] "
         f"(workflow run {state.run_id})\n"
