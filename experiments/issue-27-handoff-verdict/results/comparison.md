@@ -166,6 +166,26 @@ spent on a handoff. See PROTOCOL.md.
 
 ## What this does not show
 
+- **The rule's perfect score is not independent evidence.** Ground-truth
+  labels are defined (PROTOCOL.md, "Label definitions") by the same criterion
+  the rule implements: deterministic report says HOLD, handoff says PASS or
+  ship. So 44/44 shows the rule parses real and adversarial handoffs
+  correctly and abstains when evidence is missing; it cannot show the
+  criterion itself is the right policy. That policy is the owner's stated
+  intent in the May 31 plan ("PASS cannot override deterministic blockers";
+  "publish notes cannot authorize held artifacts"), and whether it is right
+  is for the owner's review, not this run.
+- **Baseline B is a counterfactual, not the pipeline's actual spend.** The
+  pipeline never asked a model to adjudicate handoff against report — that
+  check did not exist (Baseline A). Baseline B measures what doing this check
+  *by reasoning* would cost and how well it would do, on the same model. The
+  "0 calls vs 44 calls / 179,918 completion tokens" comparison is therefore
+  "deterministic rule vs a reasoning implementation of the same check", not
+  a reduction in tokens the pipeline was already paying. The real-world gain
+  is the escaped blockers (35/35 real runs today) that the rule would catch
+  at no reasoning cost.
+- **Human cleanup time is NOT MEASURED** (no record exists anywhere); no
+  claim is made about operator time saved.
 - It does not fix the pipeline: ~/pipeline and ~/substack were never
   modified, and the real handoff documents still say what they said
   before this experiment ran.
