@@ -1,0 +1,20 @@
+{
+  "case_id": "synthetic-adversarial-spacing-001",
+  "handoff": {
+    "angela_verdict_line": "Angela verdict:   PASS",
+    "present": true,
+    "readable": true,
+    "shipping_decision_lines": [
+      "- Article HTML:    Ship",
+      "- Visual support: ship   ",
+      "-   Interactive tool:ship"
+    ]
+  },
+  "quality_report": {
+    "finding_counts": {
+      "artifact_release_hold": 2
+    },
+    "readable": true,
+    "verdict": "HOLD"
+  }
+}

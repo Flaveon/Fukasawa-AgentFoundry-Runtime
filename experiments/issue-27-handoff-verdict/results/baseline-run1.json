@@ -1,0 +1,423 @@
+{
+  "baseline_a": {
+    "development": {
+      "case_ids_escaped": [
+        "2026-05-31-9g1bby-qwen",
+        "2026-06-01-ba5jeu-qwen",
+        "2026-06-01-srbg5n-qwen",
+        "2026-06-02-eh9b86-qwen",
+        "2026-06-03-udu9ao-qwen",
+        "2026-06-04-xnbb4a-qwen",
+        "2026-06-05-ekybc8-qwen",
+        "2026-06-07-cjqitx-qwen",
+        "2026-06-08-hdtkkb-qwen",
+        "2026-06-08-n8ozaf-qwen",
+        "2026-06-09-7w2lpc-qwen",
+        "2026-06-10-6ltoq6-qwen"
+      ],
+      "cases": 12,
+      "escaped_blockers": 12
+    },
+    "held-out": {
+      "case_ids_escaped": [
+        "2026-06-11-hgw14w-qwen",
+        "2026-06-12-at6n35-qwen",
+        "2026-06-14-pz9w7x-qwen",
+        "2026-06-15-hd2vdp-qwen",
+        "2026-06-15-jka6fm-qwen",
+        "2026-06-16-pd5de4-qwen",
+        "2026-06-17-qotwco-qwen",
+        "2026-06-18-zi2xoz-qwen",
+        "2026-06-19-5zluoi-qwen",
+        "2026-06-21-6xnpnd-qwen",
+        "2026-06-22-jwxir2-qwen",
+        "2026-06-22-zxxg0t-qwen",
+        "2026-06-23-jl1vfi-qwen",
+        "2026-06-24-th9m1a-qwen",
+        "2026-06-25-22mg2t-qwen",
+        "2026-06-26-sie9rv-qwen",
+        "2026-06-28-bwttks-qwen",
+        "2026-06-29-eibsww-qwen",
+        "2026-06-29-k2r6mf-qwen",
+        "2026-06-30-c4c1oc-qwen",
+        "2026-07-01-3yl25b-qwen",
+        "2026-07-02-irhj4k-qwen",
+        "2026-07-03-dr3o6n-qwen"
+      ],
+      "cases": 23,
+      "escaped_blockers": 23
+    }
+  },
+  "baseline_b": {
+    "infrastructure_failures": 36,
+    "per_case": {
+      "2026-05-31-9g1bby-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.10269134899136
+      },
+      "2026-06-01-ba5jeu-qwen": {
+        "adjudication": "HOLD",
+        "ground_truth_label": "CONTRADICTION",
+        "raw_response_text": "HOLD\nThe deterministic quality report indicates a HOLD verdict with multiple runtime failures that must be resolved before shipping despite the operator's PASS.",
+        "retried_after_prior_infrastructure_failure": false,
+        "split": "development",
+        "status": "OK",
+        "usage": {
+          "completion_tokens": 2672,
+          "prompt_tokens": 168,
+          "total_tokens": 2840
+        },
+        "wall_time_seconds": 174.14645580301294
+      },
+      "2026-06-01-srbg5n-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.10006764199352
+      },
+      "2026-06-02-eh9b86-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.0820093860384
+      },
+      "2026-06-03-udu9ao-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.10014720697654
+      },
+      "2026-06-04-xnbb4a-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.04550884099444
+      },
+      "2026-06-05-ekybc8-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.06570832699072
+      },
+      "2026-06-07-cjqitx-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.07413746300153
+      },
+      "2026-06-08-hdtkkb-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.0587870570016
+      },
+      "2026-06-08-n8ozaf-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.1004429339664
+      },
+      "2026-06-09-7w2lpc-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.00430828001117
+      },
+      "2026-06-10-6ltoq6-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.08496383100282
+      },
+      "2026-06-11-hgw14w-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.08944170898758
+      },
+      "2026-06-12-at6n35-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.09028585196938
+      },
+      "2026-06-14-pz9w7x-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.10041258402634
+      },
+      "2026-06-15-hd2vdp-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.01642220199574
+      },
+      "2026-06-15-jka6fm-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.10041912301676
+      },
+      "2026-06-16-pd5de4-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.0974491990055
+      },
+      "2026-06-17-qotwco-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.0409663640312
+      },
+      "2026-06-18-zi2xoz-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.10053476301255
+      },
+      "2026-06-19-5zluoi-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.02344506501686
+      },
+      "2026-06-21-6xnpnd-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.09030564199202
+      },
+      "2026-06-22-jwxir2-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.07041238300735
+      },
+      "2026-06-22-zxxg0t-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.05980229499983
+      },
+      "2026-06-23-jl1vfi-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.01093869598117
+      },
+      "2026-06-24-th9m1a-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.10040890198434
+      },
+      "2026-06-25-22mg2t-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.09060963598313
+      },
+      "2026-06-26-sie9rv-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.00522141798865
+      },
+      "2026-06-28-bwttks-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.09285105601884
+      },
+      "2026-06-29-eibsww-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.0713168279617
+      },
+      "2026-06-29-k2r6mf-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.06450837897137
+      },
+      "2026-06-30-c4c1oc-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.10042000201065
+      },
+      "2026-07-01-3yl25b-qwen": {
+        "adjudication": "HOLD",
+        "ground_truth_label": "CONTRADICTION",
+        "raw_response_text": "HOLD\nThe deterministic quality report assigns a HOLD verdict due to critical runtime failures and asset issues, which aligns with the operator's NEEDS_REVISION verdict.",
+        "retried_after_prior_infrastructure_failure": false,
+        "split": "held-out",
+        "status": "OK",
+        "usage": {
+          "completion_tokens": 1846,
+          "prompt_tokens": 183,
+          "total_tokens": 2029
+        },
+        "wall_time_seconds": 120.85458527400624
+      },
+      "2026-07-02-irhj4k-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.10038262500893
+      },
+      "2026-07-03-dr3o6n-qwen": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.1005318770185
+      },
+      "synthetic-adversarial-hold-prose-001": {
+        "adjudication": "HOLD",
+        "ground_truth_label": "CONSISTENT",
+        "raw_response_text": "HOLD\nBoth the deterministic quality report and the operator handoff document explicitly indicate the content is not ready for publication due to blockers and revision needs.",
+        "retried_after_prior_infrastructure_failure": false,
+        "split": "synthetic",
+        "status": "OK",
+        "usage": {
+          "completion_tokens": 567,
+          "prompt_tokens": 161,
+          "total_tokens": 728
+        },
+        "wall_time_seconds": 37.776533313968685
+      },
+      "synthetic-adversarial-lowercase-001": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.10050759202568
+      },
+      "synthetic-adversarial-missing-section-001": {
+        "adjudication": "HOLD",
+        "ground_truth_label": "NO_EVIDENCE",
+        "raw_response_text": "HOLD\nThe deterministic quality report explicitly returned a HOLD verdict with an artifact_release_hold finding and no operator override was recorded.",
+        "retried_after_prior_infrastructure_failure": false,
+        "split": "synthetic",
+        "status": "OK",
+        "usage": {
+          "completion_tokens": 1450,
+          "prompt_tokens": 122,
+          "total_tokens": 1572
+        },
+        "wall_time_seconds": 95.07578131603077
+      },
+      "synthetic-adversarial-spacing-001": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "CONTRADICTION",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.09976445301436
+      },
+      "synthetic-clean-pass-001": {
+        "adjudication": "SHIP",
+        "ground_truth_label": "CONSISTENT",
+        "raw_response_text": "SHIP\nThe deterministic quality report and operator handoff both confirm a PASS verdict with explicit instructions to ship all content components.",
+        "retried_after_prior_infrastructure_failure": false,
+        "split": "synthetic",
+        "status": "OK",
+        "usage": {
+          "completion_tokens": 659,
+          "prompt_tokens": 135,
+          "total_tokens": 794
+        },
+        "wall_time_seconds": 43.58301931899041
+      },
+      "synthetic-malformed-empty-handoff-001": {
+        "adjudication": "HOLD",
+        "ground_truth_label": "NO_EVIDENCE",
+        "raw_response_text": "HOLD\nThe deterministic quality report explicitly returned a HOLD verdict with four artifact release hold findings and no operator override was provided.",
+        "retried_after_prior_infrastructure_failure": false,
+        "split": "synthetic",
+        "status": "OK",
+        "usage": {
+          "completion_tokens": 1725,
+          "prompt_tokens": 122,
+          "total_tokens": 1847
+        },
+        "wall_time_seconds": 111.1074617060367
+      },
+      "synthetic-malformed-missing-verdict-key-001": {
+        "error": "model endpoint 'local-llama' (http://localhost:8081) failed: timed out",
+        "ground_truth_label": "NO_EVIDENCE",
+        "retried_after_prior_infrastructure_failure": false,
+        "status": "INFRASTRUCTURE_FAILURE",
+        "wall_time_seconds": 180.1004221769981
+      },
+      "synthetic-malformed-truncated-json-001": {
+        "adjudication": "SHIP",
+        "ground_truth_label": "NO_EVIDENCE",
+        "raw_response_text": "SHIP\nThe operator handoff document explicitly states a PASS verdict and a shipping decision to ship the Article HTML.",
+        "retried_after_prior_infrastructure_failure": false,
+        "split": "synthetic",
+        "status": "OK",
+        "usage": {
+          "completion_tokens": 855,
+          "prompt_tokens": 123,
+          "total_tokens": 978
+        },
+        "wall_time_seconds": 55.920551058021374
+      },
+      "synthetic-tool-failure-unreadable-handoff-001": {
+        "adjudication": "HOLD",
+        "ground_truth_label": "NO_EVIDENCE",
+        "raw_response_text": "HOLD\nThe deterministic quality report explicitly returned a HOLD verdict due to an artifact release hold finding.",
+        "retried_after_prior_infrastructure_failure": false,
+        "split": "synthetic",
+        "status": "OK",
+        "usage": {
+          "completion_tokens": 1629,
+          "prompt_tokens": 122,
+          "total_tokens": 1751
+        },
+        "wall_time_seconds": 105.64661360200262
+      }
+    },
+    "total_calls": 44
+  },
+  "endpoint": "http://localhost:8081",
+  "model": "Qwen_Qwen3.5-27B-Q4_K_M.gguf"
+}

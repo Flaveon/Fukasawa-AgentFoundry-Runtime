@@ -1,0 +1,17 @@
+{
+  "case_id": "synthetic-malformed-truncated-json-001",
+  "handoff": {
+    "angela_verdict_line": "Angela verdict: PASS",
+    "present": true,
+    "readable": true,
+    "shipping_decision_lines": [
+      "- Article HTML: ship"
+    ]
+  },
+  "quality_report": {
+    "error": "truncated JSON",
+    "finding_counts": {},
+    "readable": false,
+    "verdict": null
+  }
+}

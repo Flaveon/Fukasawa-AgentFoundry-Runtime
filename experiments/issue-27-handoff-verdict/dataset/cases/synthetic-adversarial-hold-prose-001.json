@@ -1,0 +1,20 @@
+{
+  "case_id": "synthetic-adversarial-hold-prose-001",
+  "handoff": {
+    "angela_verdict_line": "Angela verdict: NEEDS_REVISION",
+    "present": true,
+    "readable": true,
+    "shipping_decision_lines": [
+      "- Article HTML: hold (ship once blockers fixed)",
+      "- Visual support: hold (ship once blockers fixed)",
+      "- Interactive tool: hold (ship once blockers fixed)"
+    ]
+  },
+  "quality_report": {
+    "finding_counts": {
+      "artifact_release_hold": 3
+    },
+    "readable": true,
+    "verdict": "HOLD"
+  }
+}

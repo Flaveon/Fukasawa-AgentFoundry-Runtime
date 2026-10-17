@@ -1,0 +1,23 @@
+{
+  "case_id": "2026-06-10-6ltoq6-qwen",
+  "handoff": {
+    "angela_verdict_line": "Angela verdict: NEEDS_REVISION",
+    "present": true,
+    "readable": true,
+    "shipping_decision_lines": [
+      "- Article HTML: ship",
+      "- Visual support: ship",
+      "- Interactive tool: ship"
+    ]
+  },
+  "quality_report": {
+    "finding_counts": {
+      "artifact_release_hold": 5,
+      "editor_desk_nonempty": 1,
+      "run_failures_present": 1,
+      "runtime_failure": 5
+    },
+    "readable": true,
+    "verdict": "HOLD"
+  }
+}
