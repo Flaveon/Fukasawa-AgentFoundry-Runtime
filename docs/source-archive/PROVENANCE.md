@@ -53,6 +53,10 @@ recorded so a later reader can confirm which text the plan meant:
 `AGENTS.md` points agents at a sibling copy, `../FukasawaGPT/`. That copy's
 `Fukasawa_Task_Depth_Framework.md` is **older** (SHA-256
 `4974547943e3febd744dd1129070e97edbfe4b5a403f866bc0a9a463010349e4`): the wiki
-copy adds one sentence, twice — "Lowest reasoning is a viability benchmark,
-not a preference for weaker models." The other three documents are identical
-in both places. Prefer the wiki copy; it is the one the plan cites.
+copy adds two sentences: "Lowest reasoning is a viability benchmark, not a
+preference for weaker models." (near the top) and "Treat lowest reasoning as a
+viability benchmark, not a preference for weaker models." (near the end). The
+other three documents have identical content in both places; in the sibling
+copy two of them carry different file names (`# FukasawaGPT.md`,
+`# Non-Conformance Improvement Opportunit.md`), which are the names
+`AGENTS.md` uses. Prefer the wiki copy; it is the one the plan cites.
