@@ -17,16 +17,27 @@ the actions available at the selected stage. It is the same shape as
 **Long work runs off the UI thread** (ADR-007 §3). Each handler splits in two:
 
 * ``run_*`` — synchronous, calls the service, returns the result. Tests call
-  these directly, and they are what the worker thread executes.
-* ``on_*`` — starts the worker and returns immediately, so the window never
-  freezes. Results marshal back through ``after()``.
+  these directly, and they are what the worker thread executes. Every
+  ``run_*`` that needs an entry box's value takes an optional ``fields``
+  snapshot (see ``_Fields`` below) and reads one for itself — via
+  ``self._fields()`` — only when none is given. A test calling ``run_import()``
+  straight from the UI thread gets that convenience for free; the worker
+  never gets the chance, because every ``on_*`` handler already captured one.
+* ``on_*`` — snapshots the entry boxes with ``self._fields()`` (UI-thread
+  only), then starts the worker with that snapshot already baked into the
+  call, and returns immediately so the window never freezes. Results marshal
+  back through ``after()``.
 
 Keeping the synchronous half public is what lets the whole tab be tested without
-a display, and without pretending a thread is not there.
+a display, and without pretending a thread is not there. The split between
+"read the boxes" and "do the work" is what keeps the worker from ever touching
+a widget — see ``_fields`` and ``_in_worker`` below for why that distinction is
+load-bearing rather than decorative.
 """
 
 import queue
 import threading
+from dataclasses import dataclass
 from tkinter import filedialog
 
 import customtkinter as ctk
@@ -39,6 +50,26 @@ from src.gui.tables import Group, Row, Table
 #: How often the UI thread checks for finished worker results, in milliseconds.
 #: Short enough to feel immediate, long enough not to spin.
 _POLL_MS = 40
+
+
+@dataclass(frozen=True)
+class _Fields:
+    """An immutable snapshot of the three entry boxes, taken on the UI thread.
+
+    Tk widgets may only be read on the thread that owns them. A worker that
+    wants to know what was typed cannot call ``.get()`` itself — it has to be
+    handed the answer in advance. This is that answer: read once by
+    ``WorkflowTab._fields()`` before a worker starts, then passed down through
+    every ``run_*`` call the worker makes, so nothing on the worker side ever
+    reaches for a widget.
+    """
+
+    #: The workflow id typed into the top entry.
+    workflow_id: str
+    #: The draft file path typed (or browsed) into the draft entry.
+    draft: str
+    #: The ledger database path typed into the database entry.
+    db: str
 
 PRIMARY = "#A855F7"
 SECONDARY = "#FF6EC7"
@@ -549,64 +580,98 @@ class WorkflowTab(ctk.CTkFrame):
         """The draft path the operator typed."""
         return self.draft_entry.get().strip()
 
-    def run_create(self) -> services.Outcome:
-        """Write a draft skeleton at the draft path."""
-        if not self._draft():
+    def _fields(self) -> _Fields:
+        """Snapshot every entry box into an immutable ``_Fields``.
+
+        **UI-thread only** — it calls ``_workflow_id``, ``_draft`` and ``_db``,
+        each of which reads a Tk widget. Every ``on_*`` handler calls this
+        before starting a worker, exactly so the worker itself never has to.
+        """
+        return _Fields(
+            workflow_id=self._workflow_id(), draft=self._draft(), db=self._db()
+        )
+
+    def run_create(self, fields: _Fields | None = None) -> services.Outcome:
+        """Write a draft skeleton at the draft path.
+
+        ``fields`` lets a worker run this with values already captured on the
+        UI thread; called with none (as tests do), it reads the boxes itself.
+        """
+        fields = fields or self._fields()
+        if not fields.draft:
             return services.Outcome(
                 ok=False, summary="No draft path", refusal="Choose where to write the draft."
             )
-        return services.create_draft(self._workflow_id(), self._draft())
+        return services.create_draft(fields.workflow_id, fields.draft)
 
-    def run_import(self) -> services.Outcome:
+    def run_import(self, fields: _Fields | None = None) -> services.Outcome:
         """Save the draft file into the ledger."""
-        return services.import_draft(self._draft(), self._db())
+        fields = fields or self._fields()
+        return services.import_draft(fields.draft, fields.db)
 
-    def run_reload(self) -> services.Outcome:
+    def run_reload(self, fields: _Fields | None = None) -> services.Outcome:
         """Read the stored draft back."""
-        return services.reload_draft(self._workflow_id(), self._db())
+        fields = fields or self._fields()
+        return services.reload_draft(fields.workflow_id, fields.db)
 
-    def run_list(self) -> services.ListResult:
+    def run_list(self, fields: _Fields | None = None) -> services.ListResult:
         """List every stored workflow."""
-        return services.list_workflows(self._db())
+        fields = fields or self._fields()
+        return services.list_workflows(fields.db)
 
-    def run_validate(self) -> services.ValidationResult:
+    def run_validate(self, fields: _Fields | None = None) -> services.ValidationResult:
         """Validate the draft and store the report."""
-        return services.validate_draft(self._draft(), self._db(), save=True)
+        fields = fields or self._fields()
+        return services.validate_draft(fields.draft, fields.db, save=True)
 
-    def run_promote(self) -> services.PromotionResult:
+    def run_promote(self, fields: _Fields | None = None) -> services.PromotionResult:
         """Advance the draft one maturity step."""
-        return services.promote_draft(self._draft(), self._actor(), self._db())
+        fields = fields or self._fields()
+        return services.promote_draft(fields.draft, self._actor(), fields.db)
 
-    def run_assess(self) -> services.AssessmentResult:
+    def run_assess(self, fields: _Fields | None = None) -> services.AssessmentResult:
         """Assess cooperation for every step."""
-        return services.assess_cooperation(self._workflow_id(), self._db())
+        fields = fields or self._fields()
+        return services.assess_cooperation(fields.workflow_id, fields.db)
 
-    def run_build(self, approved: bool = False) -> services.CooperativeResult:
+    def run_build(
+        self, approved: bool = False, fields: _Fields | None = None
+    ) -> services.CooperativeResult:
         """Build the assignments, optionally approving them."""
+        fields = fields or self._fields()
         return services.build_cooperative(
-            self._workflow_id(), self._actor() if approved else "", self._db()
+            fields.workflow_id, self._actor() if approved else "", fields.db
         )
 
-    def run_export(self) -> services.ExportResult:
+    def run_export(self, fields: _Fields | None = None) -> services.ExportResult:
         """Export the approved workflow to a brief."""
-        return services.export_brief(self._workflow_id(), db=self._db())
+        fields = fields or self._fields()
+        return services.export_brief(fields.workflow_id, db=fields.db)
 
-    def run_status(self) -> services.LifecycleResult:
+    def run_status(self, fields: _Fields | None = None) -> services.LifecycleResult:
         """Read the lifecycle stages."""
-        return services.lifecycle_status(self._workflow_id(), self._db())
+        fields = fields or self._fields()
+        return services.lifecycle_status(fields.workflow_id, fields.db)
 
-    def run_accept(self, finding_id: str, actor: str, rationale: str) -> services.Outcome:
+    def run_accept(
+        self, finding_id: str, actor: str, rationale: str, fields: _Fields | None = None
+    ) -> services.Outcome:
         """Record a conscious acceptance of one advisory finding."""
-        return services.accept_finding(
-            self._draft(), finding_id, actor, rationale, self._db()
-        )
+        fields = fields or self._fields()
+        return services.accept_finding(fields.draft, finding_id, actor, rationale, fields.db)
 
     def run_override(
-        self, step_id: str, executor_class: str, actor: str, rationale: str
+        self,
+        step_id: str,
+        executor_class: str,
+        actor: str,
+        rationale: str,
+        fields: _Fields | None = None,
     ) -> services.AssessmentResult:
         """Replace one step's recommended executor with a human's judgment."""
+        fields = fields or self._fields()
         return services.override_executor(
-            self._workflow_id(), step_id, executor_class, actor, rationale, self._db()
+            fields.workflow_id, step_id, executor_class, actor, rationale, fields.db
         )
 
     def _actor(self) -> str:
@@ -619,47 +684,58 @@ class WorkflowTab(ctk.CTkFrame):
 
     def on_create(self) -> None:
         """Write a new draft skeleton."""
-        self._in_worker(self.run_create, self._show)
+        fields = self._fields()
+        self._in_worker(lambda: self.run_create(fields), self._show)
 
     def on_import(self) -> None:
         """Save the draft to the ledger."""
-        self._in_worker(self.run_import, self._show)
+        fields = self._fields()
+        self._in_worker(lambda: self.run_import(fields), self._show)
 
     def on_reload(self) -> None:
         """Reload the stored draft."""
-        self._in_worker(self.run_reload, self._show)
+        fields = self._fields()
+        self._in_worker(lambda: self.run_reload(fields), self._show)
 
     def on_list(self) -> None:
         """List stored workflows."""
-        self._in_worker(self.run_list, self._show)
+        fields = self._fields()
+        self._in_worker(lambda: self.run_list(fields), self._show)
 
     def on_validate(self) -> None:
         """Validate the draft."""
-        self._in_worker(self.run_validate, self._show)
+        fields = self._fields()
+        self._in_worker(lambda: self.run_validate(fields), self._show)
 
     def on_promote(self) -> None:
         """Promote the draft one step."""
-        self._in_worker(self.run_promote, self._show)
+        fields = self._fields()
+        self._in_worker(lambda: self.run_promote(fields), self._show)
 
     def on_assess(self) -> None:
         """Assess cooperation."""
-        self._in_worker(self.run_assess, self._show)
+        fields = self._fields()
+        self._in_worker(lambda: self.run_assess(fields), self._show)
 
     def on_build(self) -> None:
         """Build assignments without approving them."""
-        self._in_worker(lambda: self.run_build(False), self._show)
+        fields = self._fields()
+        self._in_worker(lambda: self.run_build(False, fields), self._show)
 
     def on_build_approved(self) -> None:
         """Build assignments and approve them."""
-        self._in_worker(lambda: self.run_build(True), self._show)
+        fields = self._fields()
+        self._in_worker(lambda: self.run_build(True, fields), self._show)
 
     def on_export(self) -> None:
         """Export the brief."""
-        self._in_worker(self.run_export, self._show)
+        fields = self._fields()
+        self._in_worker(lambda: self.run_export(fields), self._show)
 
     def on_status(self) -> None:
         """Refresh the lifecycle view."""
-        self._in_worker(self.run_status, self._show)
+        fields = self._fields()
+        self._in_worker(lambda: self.run_status(fields), self._show)
 
     def on_edit_steps(self) -> None:
         """Open the guided step editor on the current draft. §16.3.
@@ -714,9 +790,12 @@ class WorkflowTab(ctk.CTkFrame):
         ).wait()
         if values is None:
             return
+        # Snapshotted here, on the UI thread, same as every other handler --
+        # the dialog closing does not change where widgets may be read from.
+        fields = self._fields()
         self._in_worker(
             lambda: self.run_accept(
-                finding.finding_id, values["actor"], values["rationale"]
+                finding.finding_id, values["actor"], values["rationale"], fields
             ),
             self._after_accept,
         )
@@ -755,12 +834,15 @@ class WorkflowTab(ctk.CTkFrame):
         ).wait()
         if values is None:
             return
+        # Same reason as `on_accept_risk`: snapshot before the worker starts.
+        fields = self._fields()
         self._in_worker(
             lambda: self.run_override(
                 assessment.step_id,
                 values["choice"],
                 values["actor"],
                 values["rationale"],
+                fields,
             ),
             self._show,
         )

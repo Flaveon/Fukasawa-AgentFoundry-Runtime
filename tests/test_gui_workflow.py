@@ -910,18 +910,202 @@ class TestView:
         assert not captured[0].ok
         assert "simulated failure" in captured[0].refusal
 
-    def test_the_ui_thread_is_not_blocked_while_working(self, app_window, draft, db):
+    def test_the_ui_thread_is_not_blocked_while_working(self, app_window, draft, db, monkeypatch):
+        # Drives the real handler (`on_import`), not a widget-reading callable
+        # handed straight to `_in_worker` — that pattern is itself the defect
+        # this test used to hide (see the regression test right below). The
+        # service is stubbed to block on a gate, so a blocking implementation
+        # of `on_import` would never return this call -- the test would hang,
+        # not merely assert the wrong thing.
         tab = app_window.workflow_tab
         tab.set_fields(
             workflow_entry="substack-publication", draft_entry=str(draft), db_entry=db
         )
+        import threading
+
+        from src.gui import services as services_module
+
+        gate = threading.Event()
+        real_import_draft = services_module.import_draft
+
+        def blocked(*args, **kwargs):
+            gate.wait(5)
+            return real_import_draft(*args, **kwargs)
+
+        monkeypatch.setattr(services_module, "import_draft", blocked)
+
         captured = []
-        tab._in_worker(tab.run_import, captured.append)
-        # The call returned before the work finished — that is the property.
-        # A blocking implementation would have delivered before this line.
+        real_show = tab._show
+
+        def spy_show(result):
+            captured.append(result)
+            real_show(result)
+
+        monkeypatch.setattr(tab, "_show", spy_show)
+
+        tab.on_import()
+        # on_import returned before the (still-gated) service call finished
+        # — that is the property under test. A blocking implementation would
+        # have delivered the result before this line runs.
         assert not captured
+        assert tab._busy
+
+        gate.set()
         pump(tab, captured)
         assert captured and captured[0].ok
+        assert "substack-publication" in tab.shown()
+
+    def test_every_worker_backed_handler_reads_widgets_on_the_main_thread(
+        self, app_window, draft, db, monkeypatch
+    ):
+        """Regression test for the Tk-on-a-worker-thread defect.
+
+        Wraps the three entry boxes' ``get`` so every read records which
+        thread made it, then drives every worker-backed ``on_*`` handler with
+        the real services stubbed out (so this runs fast and never touches the
+        ledger). If a handler ever goes back to handing a widget-reading
+        callable to the worker, the corresponding `.get()` call happens on the
+        worker thread and this fails -- see the mutation check in the handoff
+        notes for a worked example on ``on_import``.
+
+        It also asserts the stubbed service actually received the values
+        typed into the boxes, catching a different mistake: capturing the
+        snapshot correctly but then not passing it through to the service
+        call.
+        """
+        import threading
+        from types import SimpleNamespace
+
+        from src.gui import services as services_module
+        from src.gui import workflow_views as workflow_views_module
+        from src.gui.tables import Row
+
+        tab = app_window.workflow_tab
+        tab.set_fields(
+            workflow_entry="substack-publication", draft_entry=str(draft), db_entry=db
+        )
+
+        thread_is_main: list[bool] = []
+
+        def _wrap_get(entry):
+            original = entry.get
+
+            def recording_get():
+                thread_is_main.append(threading.current_thread() is threading.main_thread())
+                return original()
+
+            return recording_get
+
+        for entry in (tab.workflow_entry, tab.draft_entry, tab.db_entry):
+            monkeypatch.setattr(entry, "get", _wrap_get(entry))
+
+        calls: dict[str, list] = {}
+
+        def _stub(name):
+            def fn(*args, **kwargs):
+                calls.setdefault(name, []).append((args, kwargs))
+                return SimpleNamespace(ok=True, summary=f"{name} stub", refusal="")
+
+            return fn
+
+        def _lifecycle_stub(*args, **kwargs):
+            calls.setdefault("lifecycle_status", []).append((args, kwargs))
+            return SimpleNamespace(
+                ok=True, summary="stub", refusal="", stages=[],
+                maturity="", rule_set_version="", schema_version="",
+            )
+
+        for name in (
+            "create_draft", "import_draft", "reload_draft", "list_workflows",
+            "validate_draft", "promote_draft", "assess_cooperation",
+            "build_cooperative", "export_brief", "accept_finding",
+            "override_executor",
+        ):
+            monkeypatch.setattr(services_module, name, _stub(name))
+        monkeypatch.setattr(services_module, "lifecycle_status", _lifecycle_stub)
+
+        class _StubDialog:
+            """Stands in for ReasonDialog: no modal, fixed answers."""
+
+            def __init__(self, *args, **kwargs):
+                """Remember the executor choices offered, if any."""
+                self._choices = kwargs.get("choices")
+
+            def wait(self):
+                """Answer as if a person had typed a name and a reason."""
+                values = {"actor": "typed-actor", "rationale": "typed-reason"}
+                if self._choices:
+                    values["choice"] = self._choices[0]
+                return values
+
+        monkeypatch.setattr(workflow_views_module, "ReasonDialog", _StubDialog)
+
+        class _FakeFinding:
+            """An advisory finding, selected without a real validate run."""
+
+            finding_id = "FND-stub"
+            blocking = False
+            rule_id = "HW-000"
+            where = "somewhere"
+            message = "a message"
+
+        class _FakeAssessment:
+            """An unfloored assessment, selected without a real assess run."""
+
+            step_id = "a-step"
+            effective_executor = "HUMAN_ONLY"
+            floored = False
+            safety_floor = ""
+            rationale = "why"
+
+        tab.findings_table.select(Row([], source=_FakeFinding()))
+        tab.assessment_table.select(Row([], source=_FakeAssessment()))
+
+        handlers = [
+            ("create_draft", tab.on_create),
+            ("import_draft", tab.on_import),
+            ("reload_draft", tab.on_reload),
+            ("list_workflows", tab.on_list),
+            ("validate_draft", tab.on_validate),
+            ("promote_draft", tab.on_promote),
+            ("assess_cooperation", tab.on_assess),
+            ("build_cooperative", tab.on_build),
+            ("build_cooperative", tab.on_build_approved),
+            ("export_brief", tab.on_export),
+            ("lifecycle_status", tab.on_status),
+            ("accept_finding", tab.on_accept_risk),
+            ("override_executor", tab.on_override),
+        ]
+
+        for service_name, handler in handlers:
+            before = len(calls.get(service_name, []))
+            handler()
+            assert _pump(tab, lambda: not tab._busy), f"{handler.__name__} never finished"
+            assert len(calls.get(service_name, [])) > before, (
+                f"{handler.__name__} never reached services.{service_name}"
+            )
+
+        assert thread_is_main, "no entry box was ever read"
+        assert all(thread_is_main), "a widget was read off the main thread"
+
+        # Every handler's service received the values typed into the boxes.
+        typed = {"substack-publication", str(draft), db}
+        for name in (
+            "create_draft", "import_draft", "reload_draft", "list_workflows",
+            "validate_draft", "promote_draft", "assess_cooperation",
+            "build_cooperative", "export_brief", "lifecycle_status",
+        ):
+            args, kwargs = calls[name][-1]
+            received = set(args) | set(kwargs.values())
+            assert received & typed, f"{name} did not receive the typed fields: {args} {kwargs}"
+
+        accept_args, accept_kwargs = calls["accept_finding"][-1]
+        assert (set(accept_args) | set(accept_kwargs.values())) & {str(draft), db}
+
+        override_args, override_kwargs = calls["override_executor"][-1]
+        assert (
+            set(override_args) | set(override_kwargs.values())
+        ) & {"substack-publication", db}
 
     def test_the_poller_is_armed_and_rearms(self, app_window):
         # The queue only helps if something drains it. `drain` is called by
