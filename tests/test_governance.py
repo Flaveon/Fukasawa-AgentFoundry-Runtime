@@ -222,6 +222,40 @@ class TestPromotionIsAtomic:
         )
         assert ledger.promotions_for("writer-agent") == []
 
+    def test_staging_failure_leaves_no_promotion_row_and_files_unchanged(
+        self, world, monkeypatch
+    ):
+        """Gate G re-review finding R3: staging must happen, in full,
+        *before* the ledger row — not after it. Fault-inject a disk-full
+        -style failure while a temp file is being written (the staging
+        phase, which runs before record_promotion is ever called) and
+        confirm zero promotion rows, every file byte-identical, and no
+        orphaned temp file left behind.
+        """
+        ledger, runtime, brief, writer, run, handoff_dir = world
+        _run_all_cases(ledger, run, writer, handoff_dir)
+        before = _package_snapshot(writer)
+
+        real_write_text = Path.write_text
+
+        def flaky_write_text(self, *a, **k):
+            if ".promotion-tmp-" in self.name:
+                raise OSError("disk full while staging")
+            return real_write_text(self, *a, **k)
+
+        monkeypatch.setattr(Path, "write_text", flaky_write_text)
+        with pytest.raises(OSError, match="disk full while staging"):
+            promote(writer, ledger, reviewed_by="flaveon")
+        monkeypatch.undo()
+
+        assert _package_snapshot(writer) == before, (
+            "staging must fail before any live file or the ledger changes"
+        )
+        assert ledger.promotions_for("writer-agent") == []
+        assert not list(writer.glob("*.promotion-tmp-*")), (
+            "a failed staging attempt must clean up its own temp files"
+        )
+
     def test_partial_file_swap_after_ledger_commit_is_surfaced_not_silent(
         self, world, monkeypatch
     ):

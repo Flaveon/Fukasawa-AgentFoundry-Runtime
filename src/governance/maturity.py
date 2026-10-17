@@ -264,34 +264,16 @@ def _render_learning_log_entry(
     )
 
 
-def _write_staged_files(staged: dict[Path, str]) -> None:
-    """Write every staged file via a write-temp-then-replace swap.
+def _stage_files(staged: dict[Path, str]) -> dict[Path, Path]:
+    """Write every staged file's new content to a sibling temp file, and
+    nothing else — no live file is touched here.
 
-    Ordering and residual risk (see `promote()` for where this sits in the
-    overall sequence): every piece of new content is fully written to a
-    sibling temp file *before* any live file is touched. That rules out a
-    half-written live file — e.g. a truncated manifest.json because the disk
-    filled up mid-write — since that failure raises here, before the replace
-    loop below starts, leaving every live file exactly as it was.
-
-    What this cannot close is a crash or killed process *between* two of the
-    `os.replace()` calls below: each individual replace is an atomic rename
-    on the same filesystem, but the set of (up to) five replacements is not
-    one atomic transaction. `manifest.json` is deliberately replaced last to
-    shrink the blast radius of that gap: `assess()` and `validate_package()`
-    both read the package's current maturity from `manifest.json`, and
-    `validate_package()` separately cross-checks maturity across SKILL.md,
-    manifest.json and process_capsule.yaml. So a swap interrupted after the
-    ledger row (see `promote()`) but before manifest.json's replace leaves
-    `assess()` still reading the OLD maturity — a retry re-assesses honestly
-    instead of compounding the mix-up — and if the interruption happens after
-    some *other* file replaced but SKILL.md/process_capsule.yaml disagree
-    with manifest.json, `validate_package()` reports exactly that disagreement
-    as a finding on the next validation, rather than the mismatch sitting
-    silently. A human then finishes or reverts the swap by hand. This is the
-    one place in `promote()` that is "visible and repairable" rather than
-    fully atomic — a true multi-file transaction would need a shared
-    write-ahead log this codebase does not have.
+    This is the half of the write that must finish, in full, *before*
+    `promote()` commits the ledger row: if staging raises (a full disk, a
+    permissions error, anything), every temp file created so far is removed
+    and the exception propagates with every live file exactly as it was and
+    no ledger row written. Returns `{real_path: temp_path}` for
+    `_commit_staged_files` to swap in once the ledger row has committed.
     """
     temp_paths: dict[Path, Path] = {}
     try:
@@ -305,7 +287,42 @@ def _write_staged_files(staged: dict[Path, str]) -> None:
         for tmp_path in temp_paths.values():
             tmp_path.unlink(missing_ok=True)
         raise
+    return temp_paths
 
+
+def _commit_staged_files(temp_paths: dict[Path, Path]) -> None:
+    """Swap every already-staged temp file into place over its live file.
+
+    Called only after `promote()`'s ledger row has committed — see that
+    docstring for why. Every file passed in here was already fully written
+    to disk by `_stage_files`, so the only thing left to do is a sequence of
+    `os.replace()` calls, each an atomic rename on the same filesystem.
+
+    What this cannot close is a crash or killed process *between* two of
+    those `os.replace()` calls: the set of (up to) five replacements is not
+    one atomic transaction, even though the content behind each of them was
+    long since fully written and fsynced to the filesystem as a temp file.
+    `manifest.json` is deliberately replaced last to shrink the blast radius
+    of that gap: `assess()` and `validate_package()` both read the package's
+    current maturity from `manifest.json`, and `validate_package()`
+    separately cross-checks maturity across SKILL.md, manifest.json and
+    process_capsule.yaml. So a swap interrupted before manifest.json's
+    replace leaves `assess()` still reading the OLD maturity — a retry
+    re-assesses honestly instead of compounding the mix-up — and if the
+    interruption happens after some *other* file replaced but
+    SKILL.md/process_capsule.yaml disagree with manifest.json,
+    `validate_package()` reports exactly that disagreement as a finding on
+    the next validation, rather than the mismatch sitting silently. A human
+    then finishes or reverts the swap by hand. This is the one place in
+    `promote()` that is "visible and repairable" rather than fully atomic —
+    a true multi-file transaction would need a shared write-ahead log this
+    codebase does not have. (A crash here, followed by a naive retry, also
+    produces a *duplicate* ledger row at the same `from_maturity ->
+    to_maturity`, because `assess()` still reads the old maturity from
+    manifest.json and sees the same unmet-then-met criteria again — the
+    duplicate is visible in `promotions_for()`, which is why a retry after
+    an interrupted swap should be a human decision, not an automatic one.)
+    """
     ordered = sorted(temp_paths.items(), key=lambda kv: kv[0].name == "manifest.json")
     for real_path, tmp_path in ordered:
         os.replace(tmp_path, real_path)
@@ -329,12 +346,14 @@ def promote(
     records it in the append-only promotions ledger.
 
     Ordering (and its residual risk): every new file's content is rendered
-    and staged to a temp file *before* anything changes, so a rendering or
-    disk error here leaves the package and the ledger exactly as they were.
-    The ledger row is written next — this is the one irreversible step,
-    since the promotions table is append-only and this function never
-    deletes a row to roll back. Only after that commit are the staged files
-    swapped into place by `_write_staged_files`, whose docstring documents
+    in memory, then fully staged to a sibling temp file by `_stage_files` —
+    *before* anything changes and *before* the ledger is touched, so a
+    rendering or disk error during staging leaves the package and the
+    ledger exactly as they were (no promotion row, no file changed). The
+    ledger row is written next — this is the one irreversible step, since
+    the promotions table is append-only and this function never deletes a
+    row to roll back. Only after that commit does `_commit_staged_files`
+    swap the already-written temp files into place; its docstring documents
     the one residual risk this leaves open: a crash during that swap can
     leave the ledger saying "promoted" while a file or two still show the
     old maturity. That state is detectable (`validate_package()` reports the
@@ -377,6 +396,11 @@ def promote(
         pkg, old, new, reviewed_by, rationale, evidence
     )
 
+    # Every new file is fully written to a temp file before the ledger is
+    # touched: a staging failure here (e.g. disk full) propagates with
+    # nothing committed and nothing live changed.
+    temp_paths = _stage_files(staged)
+
     # Commit point: once this call returns, the promotion is decided and
     # recorded in the append-only ledger. Nothing above this line has
     # touched disk; nothing below it can be undone by this function.
@@ -390,6 +414,6 @@ def promote(
         evidence=evidence,
     )
 
-    _write_staged_files(staged)
+    _commit_staged_files(temp_paths)
 
     return assess(pkg, ledger)
