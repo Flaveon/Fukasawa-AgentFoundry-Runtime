@@ -332,6 +332,48 @@ writes `results/baseline-run2.json` / `results/donor-diagnosis-run2.json`):
   was never attempted in run 2 at all, for a reason that has nothing to do
   with the case itself (it is a scheduling constraint, not a result).
 
+**Disclosure (2026-10-17, on committing run 2's results):**
+`rerun_timeouts.py` was written and run ONCE — producing
+`results/baseline-run2.json` and `results/donor-diagnosis-run2.json` — before
+the script itself, or either result file, was committed to git; all three
+were untracked for the duration of that run. Nothing was altered after the
+fact to make the results look different from what the run actually
+produced; this commit records, after the run, what already happened. The
+donor retry (timeout 600s) succeeded: 372.1s wall time, 750 prompt tokens,
+5706 completion tokens of hidden reasoning before a 676-character answer
+(full text in `CANDIDATES.md`). The 36 case retries ran until the hard
+stop: **18 resolved OK, 18 were NOT_RUN** (the hard stop arrived mid-run,
+during case 19's would-be retry window — see Amendment 2 below for those
+18).
+
+## Amendment 2 (2026-10-17)
+
+Run 2 honored its hard stop: of the 36 cases retried, 18 got a real answer
+(`OK`) and 18 were never attempted (`NOT_RUN`) because 09:45 UTC arrived
+first. The owner's Q2C content pipeline ran and finished (10:21 UTC that
+day) on schedule; its next scheduled run is 10:00 UTC on 2026-10-18, and
+the llama.cpp server is confirmed idle in between.
+
+**Run 3 plan** (`results/baseline-run3.json`, same script pattern as run 2,
+reading its retry list from run 2's `not_run` array instead of run 1's
+`INFRASTRUCTURE_FAILURE` list):
+
+* Re-asks ONLY the 18 cases run 2 recorded `NOT_RUN` — every case that got
+  an `OK` or a confirmed `INFRASTRUCTURE_FAILURE` in run 1 or run 2 is left
+  untouched.
+* Identical settings to run 2: same prompt text, same model, same
+  `temperature: 0`, same `timeout: 600s`.
+* Calls sequential, never concurrent.
+* Runs 1 and 2's result files are kept as-is, never overwritten. Run 3
+  writes only `results/baseline-run3.json`.
+* **Hard stop: no model call may start after 09:30 UTC on 2026-10-18** —
+  30 minutes of margin before the owner's 10:00 UTC pipeline run, checked
+  the same way as Amendment 1 (`datetime.now(timezone.utc)` in code before
+  every call). Any case not reached stays `NOT_RUN` in run 3's own record.
+* `results/comparison.md` reports run-1-only, runs-1+2, and runs-1+2+3
+  numbers separately, with `INFRASTRUCTURE_FAILURE` and `NOT_RUN` always
+  broken out rather than folded into each other or into the OK count.
+
 ## What this experiment does not show
 
 * It does not fix the pipeline. `~/pipeline` and `~/substack` are never
