@@ -14,10 +14,30 @@ for instance, a transition whose `evidence_required` was quietly emptied
 out.
 
 The fix lives entirely in `src/runtime/ledger.py` (an append-only history of
-every distinct brief snapshot, content-hashed and dated) and in
-`src/cli.py`'s `resume`/`graph resume` commands (a `_refuse_if_brief_drifted`
-gate called before either frozen `resume()` runs). Neither FROZEN file is
-touched.
+every distinct brief snapshot, content-hashed and dated, plus an explicit
+`run_brief_pins` table) and in `src/cli.py` (a `_refuse_if_brief_drifted`
+gate). Neither FROZEN file is touched.
+
+Gate G re-review findings addressed here too:
+
+* **R1** — the gate was originally wired into only `resume` and
+  `graph resume`. `review`, `runs block` and `runs complete` also continue
+  an existing run under its brief's rules (`review` reaches
+  `runtime.advance()` the same way `resume` does) and are gated the same
+  way now. `TestAllRunContinuingCommandsAreGated` walks the exact F1 repro
+  through every one of them.
+* **R5** — the pin is now recorded *explicitly*, by `run`/`graph run`
+  calling `ledger.pin_run_brief()` right after the frozen `start()`
+  returns, rather than only inferred after the fact from `created_at`. The
+  time-based `brief_hash_at()` lookup remains as a fallback for a run with
+  no explicit pin (started before `run_brief_pins` existed), and is still
+  exercised by `TestLedgerBriefPinning`/`TestRefuseIfBriefDrifted` below,
+  which construct runs the old way on purpose.
+* **R2** — the refusal message now names the way out in plain language:
+  start a fresh `fukasawa run`, and the old run stays in the ledger as
+  history. `test_refusal_message_names_the_recovery_path` checks the exact
+  wording. No override command was added — accepting a changed brief for a
+  specific run is a decision for the workflow owner, not this CLI.
 """
 
 from pathlib import Path
@@ -244,3 +264,185 @@ class TestGraphResumeCLI:
         )
         assert result.exit_code == 1
         assert "brief" in result.stdout and "changed" in result.stdout
+
+
+class TestExplicitPinAtRunStart:
+    """Gate G re-review finding R5: the pin is recorded explicitly by the
+    CLI, not only inferred after the fact from a clock reading."""
+
+    def test_fukasawa_run_records_an_explicit_pin(self, tmp_path):
+        db = tmp_path / "r.db"
+        handoff_dir = tmp_path / "handoffs"
+        result = CliRunner().invoke(
+            app,
+            ["run", str(EXAMPLE_BRIEF), "--db", str(db), "--handoff-dir", str(handoff_dir)],
+            input="quit\n\n\n",
+        )
+        assert result.exit_code == 0, result.stdout
+        ledger = RunLedger(db)
+        run = ledger.list_runs()[0]
+        pinned = ledger.pinned_brief_hash(run.run_id)
+        assert pinned is not None
+        assert pinned == ledger.current_brief_hash(run.workflow_id)
+
+    def test_fukasawa_graph_run_records_an_explicit_pin(self, tmp_path):
+        db = tmp_path / "r.db"
+        handoff_dir = tmp_path / "handoffs"
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        (workdir / "research.md").write_text("# Research\n" + "word " * 200)
+        # The graph drives on to a human review gate, which needs more
+        # stdin than this test supplies — irrelevant here: the pin is
+        # recorded immediately after `runner.start()` returns, well before
+        # `_drive_graph` reaches that gate, so it exists regardless of how
+        # (or whether) the interactive loop that follows completes.
+        CliRunner().invoke(
+            app,
+            [
+                "graph", "run", str(PILOT_GRAPH),
+                "--brief", str(EXAMPLE_BRIEF),
+                "--var", f"workdir={workdir}",
+                "--var", f"destdir={tmp_path / 'published'}",
+                "--db", str(db),
+                "--handoff-dir", str(handoff_dir),
+            ],
+        )
+        ledger = RunLedger(db)
+        run = ledger.list_runs()[0]
+        pinned = ledger.pinned_brief_hash(run.run_id)
+        assert pinned is not None
+        assert pinned == ledger.current_brief_hash(run.workflow_id)
+
+    def test_explicit_pin_takes_precedence_over_the_time_based_fallback(
+        self, tmp_path
+    ):
+        # A corrupted/mismatched explicit pin must actually be read and
+        # compared, not silently ignored in favour of the fallback lookup
+        # that would otherwise accept this run (it is the same brief, so
+        # brief_hash_at alone would return a match).
+        ledger = RunLedger(tmp_path / "t.db")
+        runtime = WorkflowRuntime(ledger)
+        brief = runtime.load_brief(EXAMPLE_BRIEF)
+        _, run = runtime.start(brief, brief_path=EXAMPLE_BRIEF)
+        _refuse_if_brief_drifted(ledger, run)  # no explicit pin yet: fallback matches
+
+        ledger.pin_run_brief(run.run_id, brief.id, "deliberately-wrong-hash")
+        with pytest.raises(typer.Exit):
+            _refuse_if_brief_drifted(ledger, run)
+
+
+class TestAllRunContinuingCommandsAreGated:
+    """Gate G re-review finding R1: every CLI command that continues an
+    existing run under its brief's rules must refuse, not just
+    resume/graph resume. `review` reaches `runtime.advance()` exactly the
+    way `resume` does (via `_apply_decision`); `runs block`/`runs complete`
+    load and act on the current brief too.
+    """
+
+    @staticmethod
+    def _setup_drifted_run(tmp_path) -> tuple[Path, Path, str, str]:
+        """The exact F1 repro: start a run, advance it once, pause it, then
+        re-run a tampered brief under the same workflow id. Returns
+        (db, handoff_dir, run_id, capsule_id) for the *first* run."""
+        db = tmp_path / "r.db"
+        handoff_dir = tmp_path / "handoffs"
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            ["run", str(EXAMPLE_BRIEF), "--db", str(db), "--handoff-dir", str(handoff_dir)],
+            input="DRAFT_READY\ndraft.md\n\nquit\n\n\n",
+        )
+        assert result.exit_code == 0, result.stdout
+        run_state = RunLedger(db).list_runs()[0]
+        run_id, capsule_id = run_state.run_id, run_state.capsule_id
+
+        tampered = _tampered_brief(tmp_path)
+        result = runner.invoke(
+            app,
+            ["run", str(tampered), "--db", str(db), "--handoff-dir", str(handoff_dir)],
+            input="quit\n\n\n",
+        )
+        assert result.exit_code == 0, result.stdout
+        return db, handoff_dir, run_id, capsule_id
+
+    def test_review_refuses_and_changes_nothing(self, tmp_path):
+        db, handoff_dir, run_id, capsule_id = self._setup_drifted_run(tmp_path)
+        ledger = RunLedger(db)
+        capsule_before = ledger.load_capsule(capsule_id)
+        run_before = ledger.load_run(run_id)
+
+        result = CliRunner().invoke(
+            app,
+            ["review", capsule_id, "--db", str(db), "--handoff-dir", str(handoff_dir)],
+        )
+        assert result.exit_code == 1
+        assert "brief" in result.stdout and "changed" in result.stdout
+
+        after = RunLedger(db)
+        assert after.load_capsule(capsule_id) == capsule_before
+        assert after.load_run(run_id) == run_before
+
+    def test_runs_block_refuses_and_changes_nothing(self, tmp_path):
+        db, handoff_dir, run_id, capsule_id = self._setup_drifted_run(tmp_path)
+        run_before = RunLedger(db).load_run(run_id)
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "runs", "block", run_id,
+                "--reason", "testing", "--next-action", "nothing",
+                "--db", str(db), "--handoff-dir", str(handoff_dir),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "brief" in result.stdout and "changed" in result.stdout
+        assert RunLedger(db).load_run(run_id) == run_before
+
+    def test_runs_complete_refuses_and_changes_nothing(self, tmp_path):
+        db, handoff_dir, run_id, capsule_id = self._setup_drifted_run(tmp_path)
+        run_before = RunLedger(db).load_run(run_id)
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "runs", "complete", run_id,
+                "--check", "manual", "--evidence", "none",
+                "--db", str(db), "--handoff-dir", str(handoff_dir),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "brief" in result.stdout and "changed" in result.stdout
+        assert RunLedger(db).load_run(run_id) == run_before
+
+
+def test_refusal_message_names_the_recovery_path(tmp_path):
+    """Gate G re-review finding R2: the refusal message must name the way
+    out in plain language, not just refuse. No override command exists —
+    accepting a changed brief for one run is an owner decision, recorded
+    separately, not a CLI flag.
+    """
+    db = tmp_path / "r.db"
+    handoff_dir = tmp_path / "handoffs"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["run", str(EXAMPLE_BRIEF), "--db", str(db), "--handoff-dir", str(handoff_dir)],
+        input="quit\n\n\n",
+    )
+    assert result.exit_code == 0, result.stdout
+    run_id = RunLedger(db).list_runs()[0].run_id
+
+    tampered = _tampered_brief(tmp_path)
+    result = runner.invoke(
+        app,
+        ["run", str(tampered), "--db", str(db), "--handoff-dir", str(handoff_dir)],
+        input="quit\n\n\n",
+    )
+    assert result.exit_code == 0, result.stdout
+
+    result = runner.invoke(
+        app, ["resume", run_id, "--db", str(db), "--handoff-dir", str(handoff_dir)]
+    )
+    assert result.exit_code == 1
+    assert "fukasawa run" in result.stdout
+    assert "history" in result.stdout.lower()
