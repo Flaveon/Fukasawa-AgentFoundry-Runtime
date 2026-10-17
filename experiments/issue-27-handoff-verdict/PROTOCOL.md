@@ -168,9 +168,10 @@ kept visually and numerically separate in `results/comparison.md`:
 ### Infrastructure failure vs. wrong answer
 
 A model call that fails or times out is recorded as `INFRASTRUCTURE_FAILURE`
-in `results/baseline-run1.json`, distinct from a call that completed but
-gave a wrong SHIP/HOLD/ESCALATE adjudication. These are never merged into
-the same count.
+in `results/baseline-run1.json` (run 1; see Amendment 1 for
+`results/baseline-run2.json`), distinct from a call that completed but gave
+a wrong SHIP/HOLD/ESCALATE adjudication. These are never merged into the
+same count.
 
 ## Model configuration (Baseline B and the donor-diagnosis call)
 
@@ -192,16 +193,17 @@ the same count.
 * Prompt text: see `baseline.py::BASELINE_B_PROMPT_TEMPLATE` and
   `baseline.py::DONOR_PROMPT` — reproduced verbatim below.
 * `timeout`: 180 seconds per Baseline B adjudication call, 240 seconds for
-  the donor-diagnosis call. **Observed in practice, over the full run:
-  this model, on this hardware, under this frozen adapter's lack of a
-  `max_tokens` cap, timed out on 36 of 44 calls (82%)** — including the
-  very first (case `2026-05-31-9g1bby-qwen`, timed out at exactly 180.1s)
-  and the donor-diagnosis call itself (timed out at 240.1s). A model that
-  free-runs its chain-of-thought with no length cap and a ~13.7 token/s
-  decode speed (measured: a trivial "Say OK" prompt still produced 105
-  tokens of reasoning in 8.3s) routinely needs far more completion tokens
-  of hidden reasoning than that budget buys before it emits the one-word
-  answer this prompt asked for. This is recorded as
+  the donor-diagnosis call, in run 1 (see Amendment 1: run 2 raises this to
+  600s for the cases run 1 timed out on). **Observed in practice, over the
+  full run 1: this model, on this hardware, under this frozen adapter's
+  lack of a `max_tokens` cap, timed out on 36 of 44 calls (82%)** —
+  including the very first (case `2026-05-31-9g1bby-qwen`, timed out at
+  exactly 180.1s) and the donor-diagnosis call itself (timed out at
+  240.1s). A model that free-runs its chain-of-thought with no length cap
+  and a ~13.7 token/s decode speed (measured: a trivial "Say OK" prompt
+  still produced 105 tokens of reasoning in 8.3s) routinely needs far more
+  completion tokens of hidden reasoning than that budget buys before it
+  emits the one-word answer this prompt asked for. This is recorded as
   `INFRASTRUCTURE_FAILURE`, never folded into "the model got it wrong" —
   but it is itself a finding: part of the real cost of a reasoning-model
   baseline on this hardware is that a bounded timeout and an unbounded
@@ -266,7 +268,8 @@ Level-0 rule sees. One call per case. A failed/timed-out call is recorded as
 
 Given the timeout behavior above, a full Baseline B run can take well over
 an hour of wall time. `baseline.py` writes `results/baseline-run1.json`
-after **every single case** (success or `INFRASTRUCTURE_FAILURE`), and on
+(see Amendment 1 for `results/baseline-run2.json`) after
+**every single case** (success or `INFRASTRUCTURE_FAILURE`), and on
 startup re-reads whatever is already there, skipping any case already
 recorded with `status: "OK"`. An interrupted run loses at most the one call
 that was in flight, never prior progress, and a case already marked
@@ -281,10 +284,53 @@ One higher-depth reasoning call: 2-3 development-split cases plus the
 relevant pipeline function excerpts (verbatim, from the private read-only
 pipeline — not committed as pipeline source, only quoted in the prompt) are
 given to the model, asking for root cause and a minimal deterministic check.
-Saved to `results/donor-diagnosis-run1.json` (prompt + response + usage).
-What it proposed and what was accepted/rejected, and why, is recorded in
-`CANDIDATES.md` — this is "the reasoning that produced the rule", kept
-separate from the rule's own (zero-reasoning) runtime behavior.
+Saved to `results/donor-diagnosis-run1.json` (prompt + response + usage;
+see Amendment 1 for the retry). What it proposed and what was
+accepted/rejected, and why, is recorded in `CANDIDATES.md` — this is "the
+reasoning that produced the rule", kept separate from the rule's own
+(zero-reasoning) runtime behavior.
+
+## Amendment 1 (2026-10-17)
+
+Run 1 (frozen in `results/baseline-run1.json` / `results/donor-diagnosis-run1.json`,
+Commit 1) hit the 180s timeout on 36 of 44 Baseline B cases, and on the one
+donor-diagnosis call, because the model's hidden chain-of-thought reasoning
+routinely exceeds what a 180s/240s budget buys at this decode speed. This
+amendment is committed BEFORE any re-run is executed.
+
+**Run 2 plan** (`experiments/issue-27-handoff-verdict/rerun_timeouts.py`,
+writes `results/baseline-run2.json` / `results/donor-diagnosis-run2.json`):
+
+* Re-asks ONLY the 36 cases that were `INFRASTRUCTURE_FAILURE` in run 1 —
+  the 8 that got a real `OK` answer in run 1 are not re-called.
+* One donor-diagnosis retry, done FIRST, before any of the 36 case
+  re-asks.
+* Same prompt text, same model, same `temperature: 0` (`max_tokens` is
+  still not controllable — see above) — the only changed variable is
+  `timeout`, raised from 180s/240s to **600s** for both the case re-asks
+  and the donor retry.
+* Calls are made sequentially (one at a time, not concurrently) — this is
+  a shared llama.cpp instance and the host has one GPU pair, not a pool.
+* **Run 1's results are kept, never overwritten.** `results/baseline-run1.json`
+  and `results/donor-diagnosis-run1.json` are frozen as of Commit 1. Run 2
+  writes to separate files. A case that still fails in run 2 stays
+  recorded as `INFRASTRUCTURE_FAILURE` there — run 2 does not invent a
+  better outcome for a case that genuinely did not resolve.
+* **Reported metrics use run 1 OKs + run 2 OKs as the combined Baseline B
+  result**, and `results/comparison.md` ALSO reports run-1-only numbers
+  separately, so the effect of the longer timeout is visible rather than
+  silently absorbed into one blended figure.
+* **Hard stop: no model call may start after 09:45 UTC on 2026-10-17.** The
+  owner's Q2C content pipeline is scheduled to use the same llama.cpp
+  server starting at 10:00 UTC that day, and this experiment must not be
+  still holding the server when that happens. This is checked with
+  `datetime.now(timezone.utc)` in code before every single call (case
+  re-asks and the donor retry alike) — not estimated by hand from a start
+  time and an expected per-call duration. Any case the run 2 script does
+  not reach before the deadline is recorded with status `NOT_RUN`,
+  distinct from both `OK` and `INFRASTRUCTURE_FAILURE`: a `NOT_RUN` case
+  was never attempted in run 2 at all, for a reason that has nothing to do
+  with the case itself (it is a scheduling constraint, not a result).
 
 ## What this experiment does not show
 
