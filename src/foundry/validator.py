@@ -199,6 +199,18 @@ def _validate_evals(pkg: Path, manifest: AgentPackageManifest | None) -> list[st
             )
             evals = None
         checks = (evals or {}).get("checks", {})
+        if not isinstance(checks, dict):
+            # A list of check names, or a string that happens to contain
+            # them, would otherwise pass the `required not in checks` test
+            # below by membership or substring match — true, and useless:
+            # there is no per-check 'result'/'evidence' to read. Report the
+            # shape and treat it the same as "no checks at all".
+            findings.append(
+                f"evals.yaml 'checks' must be a mapping of check name to "
+                f"result, not a {type(checks).__name__} — the mandatory "
+                f"checks cannot be located"
+            )
+            checks = {}
         for required in MANDATORY_EVAL_CHECKS:
             if required not in checks:
                 findings.append(

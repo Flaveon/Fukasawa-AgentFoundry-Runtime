@@ -20,7 +20,7 @@ from src.foundry.generator import (
     detect_workspace_profile,
     generate_packages,
 )
-from src.foundry.validator import validate_package
+from src.foundry.validator import MANDATORY_EVAL_CHECKS, validate_package
 from src.runtime.state_machine import WorkflowRuntime
 from src.schemas.agent_package import AgentCapsuleContract
 from src.schemas.workflow_brief import WorkflowBrief
@@ -356,6 +356,43 @@ class TestValidatorFindings:
         assert any("must be a mapping" in f for f in findings), findings
         # Fails closed: the mandatory checks cannot be located, so they are
         # reported missing rather than silently skipped.
+        assert any("scope_compliance" in f for f in findings), findings
+
+    # ---------------------------------------------------- Gate G re-review R7
+    #
+    # `_validate_evals` already rejects evals.yaml itself being a list
+    # (F-V3). This predates that fix and is narrower: the top level is a
+    # correct mapping, but 'checks' specifically is a list of check names or
+    # a single string containing them — both pass `required not in checks`
+    # by Python's `in` operator (list membership / substring match) even
+    # though there is no per-check 'result' or 'evidence' to read.
+
+    def test_list_of_names_as_checks_is_a_finding_not_a_silent_pass(
+        self, brief, cpax_workspace, tmp_path
+    ):
+        pkgs, _ = generate_packages(
+            brief, tmp_path / "out", workspace_root=cpax_workspace
+        )
+        writer = next(p for p in pkgs if p.name == "writer-agent")
+        evals = yaml.safe_load((writer / "evals.yaml").read_text())
+        evals["checks"] = list(MANDATORY_EVAL_CHECKS)
+        (writer / "evals.yaml").write_text(yaml.safe_dump(evals))
+        findings = validate_package(writer)
+        assert any("'checks' must be a mapping" in f for f in findings), findings
+        assert any("scope_compliance" in f for f in findings), findings
+
+    def test_single_string_as_checks_is_a_finding_not_a_silent_pass(
+        self, brief, cpax_workspace, tmp_path
+    ):
+        pkgs, _ = generate_packages(
+            brief, tmp_path / "out", workspace_root=cpax_workspace
+        )
+        writer = next(p for p in pkgs if p.name == "writer-agent")
+        evals = yaml.safe_load((writer / "evals.yaml").read_text())
+        evals["checks"] = " ".join(MANDATORY_EVAL_CHECKS)
+        (writer / "evals.yaml").write_text(yaml.safe_dump(evals))
+        findings = validate_package(writer)
+        assert any("'checks' must be a mapping" in f for f in findings), findings
         assert any("scope_compliance" in f for f in findings), findings
 
 
