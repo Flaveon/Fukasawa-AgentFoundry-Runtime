@@ -307,6 +307,36 @@ class TestExplicitPinAtRunStart:
         )
         assert resumed.exit_code != 0
 
+    def test_a_save_racing_a_graph_start_cannot_choose_the_pin(self, tmp_path, monkeypatch):
+        """R5b through ``graph run``, which pins separately from ``run``."""
+        from src.runtime.ledger import brief_content_hash
+
+        db = str(tmp_path / "r.db")
+        workdir = tmp_path / "w"
+        workdir.mkdir()
+        (workdir / "research.md").write_text("# R\n" + "word " * 200)
+        tampered = WorkflowRuntime.load_brief(_tampered_brief(tmp_path))
+        real_start = WorkflowRuntime.start
+
+        def racing_start(self, brief, *args, **kwargs):
+            """Start for real, then let 'another process' save the edit."""
+            out = real_start(self, brief, *args, **kwargs)
+            RunLedger(db).save_workflow(tampered)
+            return out
+
+        monkeypatch.setattr(WorkflowRuntime, "start", racing_start)
+        CliRunner().invoke(app, [
+            "graph", "run", str(PILOT_GRAPH), "--brief", str(EXAMPLE_BRIEF),
+            "--var", f"workdir={workdir}", "--var", f"destdir={tmp_path / 'p'}",
+            "--db", db, "--handoff-dir", str(tmp_path / "h"),
+        ])
+        monkeypatch.undo()
+
+        ledger = RunLedger(db)
+        run = ledger.list_runs()[0]
+        started = brief_content_hash(WorkflowRuntime.load_brief(EXAMPLE_BRIEF))
+        assert ledger.pinned_brief_hash(run.run_id) == started
+
     def test_fukasawa_run_records_an_explicit_pin(self, tmp_path):
         db = tmp_path / "r.db"
         handoff_dir = tmp_path / "handoffs"
