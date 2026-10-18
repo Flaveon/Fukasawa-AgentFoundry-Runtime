@@ -542,3 +542,36 @@ class TestUserinfoWhateverPrecedesTheAuthority:
     ])
     def test_ordinary_addresses_are_unaffected(self, url):
         assert has_userinfo(url) is False
+
+
+class TestALaterSchemeMarkerHidesNothing:
+    """Third review: reading the authority after the *first* ``://`` let a
+    ``://`` later in a path, query or fragment swallow the real userinfo
+    in front of it. Every reasonable reading is now checked, and any one
+    of them finding userinfo is enough."""
+
+    LATER = [
+        "alice:s3cret@10.0.0.9:11434/v1://",
+        "alice:s3cret@10.0.0.9/x://y",
+        "alice:s3cret@10.0.0.9?q=a://b",
+        "alice:s3cret@10.0.0.9#://",
+        "http:alice:s3cret@10.0.0.9/a://b",
+        "//alice:s3cret@10.0.0.9/://",
+        "http:/alice:s3cret@10.0.0.9/a://b",
+        "http://alice:s3cret@10.0.0.9/x://bob:other@y",
+    ]
+
+    @pytest.mark.parametrize("url", LATER)
+    def test_it_is_seen(self, url):
+        assert has_userinfo(url) is True
+
+    @pytest.mark.parametrize("url", LATER)
+    def test_every_secret_is_redacted(self, url):
+        redacted = redact_userinfo(url)
+        assert "s3cret" not in redacted
+        assert "other" not in redacted
+        assert "alice" not in redacted
+
+    @pytest.mark.parametrize("url", LATER)
+    def test_it_is_refused_when_typed(self, url):
+        assert address_problem(url) is not None

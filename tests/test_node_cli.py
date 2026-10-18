@@ -1610,3 +1610,26 @@ class TestStoredOddPrefixNeverShown:
                      ["node", "show", "old"], ["model", "list"]):
             result = CliRunner().invoke(app, args)
             assert "s3cret" not in result.output, args
+
+
+class TestALaterSchemeMarkerNeverShown:
+    """Third review, end to end."""
+
+    @pytest.mark.parametrize("url", [
+        "alice:s3cret@10.0.0.9:11434/v1://",
+        "alice:s3cret@10.0.0.9#://",
+        "http:alice:s3cret@10.0.0.9/a://b",
+    ])
+    def test_no_listing_shows_it_and_it_never_resolves(self, store_path, url):
+        from src.nodes.registry import merged_endpoints
+        from src.schemas.node import InferenceNode, NodeKind
+
+        store = NodeStore(store_path)
+        store.upsert(InferenceNode(
+            node_id="old", label="Old box", kind=NodeKind.OLLAMA, url=url,
+        ))
+        assert "old" not in merged_endpoints(store, store_path.parent / "none.yaml")
+        for args in (["node", "list"], ["node", "list", "--json"],
+                     ["node", "show", "old"], ["model", "list"]):
+            result = CliRunner().invoke(app, args)
+            assert "s3cret" not in result.output, args

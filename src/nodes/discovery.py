@@ -200,39 +200,9 @@ _SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*:")
 _USABLE_SCHEMES = ("http", "https")
 
 
-def _authority_any_scheme(text: str) -> tuple[str, str, str]:
-    """Split an address into ``(lead, authority, rest)`` whatever its scheme.
-
-    ``_normalise`` recognises only ``http`` and ``https``; anything else gets
-    ``http://`` put in front, so ``ftp://alice:pw@host`` read as a host
-    called "ftp" and its userinfo was never seen -- accepted, saved, and
-    shown in clear (review of PR #33). The checks that keep a password out
-    of the program therefore read the authority here instead, before any
-    scheme is judged usable: ``lead`` is whatever scheme and slashes came
-    first (``ftp://``, ``//``, ``http:/``, or nothing), ``authority`` runs
-    to the first ``/``, ``?`` or ``#`` after it, and ``rest`` is the
-    remainder. A scheme with no slash after it (``mailto:``) is left inside
-    the authority, where its ``@`` is still found.
-
-    Read for safety, not for use, so it is deliberately loose. The text is
-    NFKC-normalised first (a fullwidth ``＠`` *is* an ``@`` to urllib) and
-    backslashes count as slashes. When ``://`` appears, the authority starts
-    after the first one **whatever precedes it**: a second review found that
-    taking it off only after a *valid* scheme let a stored record keep its
-    password hidden behind a pasted byte-order mark, a zero-width space,
-    ``1ftp``, a space or a control character -- shown in clear and handed to
-    the kernel. Reading too much as userinfo only refuses an odd address;
-    reading too little leaks a password.
-    """
-    s = unicodedata.normalize("NFKC", text).replace("\\", "/").strip()
-    lead = ""
-    marker = s.find("://")
-    if marker != -1:
-        lead, s = s[:marker + 3], s[marker + 3:]
-    else:
-        found = _SCHEME.match(s)
-        if found and s[found.end():].startswith("/"):
-            lead, s = found.group(0), s[found.end():]
+def _split_at_authority_end(lead: str, s: str) -> tuple[str, str, str]:
+    """Strip leading slashes into ``lead``; the authority runs to the first
+    ``/``, ``?`` or ``#``. Returns ``(lead, authority, rest)``."""
     slashes = len(s) - len(s.lstrip("/"))
     lead, s = lead + s[:slashes], s[slashes:]
     end = len(s)
@@ -241,6 +211,56 @@ def _authority_any_scheme(text: str) -> tuple[str, str, str]:
         if at != -1:
             end = min(end, at)
     return lead, s[:end], s[end:]
+
+
+def _authority_readings(text: str) -> list[tuple[str, str, str]]:
+    """Every reasonable ``(lead, authority, rest)`` reading of an address.
+
+    ``_normalise`` recognises only ``http`` and ``https`` and puts
+    ``http://`` in front of anything else, so ``ftp://alice:pw@host`` read
+    as a host called "ftp" and its userinfo was never seen (review of PR
+    #33). These readings are for *safety*, not for use, and are
+    deliberately loose: the text is NFKC-normalised (a fullwidth ``＠`` is
+    an ``@`` to urllib) and backslashes count as slashes. Two kinds of
+    reading are returned, because each alone was shown to miss a case:
+
+    * **after each ``://``**, whatever precedes it -- a pasted BOM,
+      a zero-width space, ``1ftp``, a space or a control character in
+      front of the scheme hid the userinfo when only a valid scheme was
+      taken off (second review), and a second ``://`` later in the text
+      can carry userinfo of its own;
+    * **from the start**, after an optional valid scheme and its slashes --
+      a ``://`` *later* in a path, query or fragment swallowed the real
+      userinfo in front of it when only the first reading was used (third
+      review).
+
+    ``_normalise``'s own reading needs no entry of its own: for http or
+    https it is the first kind, and for anything else it puts ``http://``
+    in front, which is the second. (A third reading built from it was
+    tried, and removing it broke no test -- it could never find what these
+    two miss.)
+
+    A caller treats the address as naming userinfo when *any* reading
+    does. Reading too much as userinfo only refuses an odd address;
+    reading too little leaks a password.
+    """
+    s = unicodedata.normalize("NFKC", text).replace("\\", "/").strip()
+    readings = []
+    marker = s.find("://")
+    while marker != -1:
+        readings.append(_split_at_authority_end(s[:marker + 3], s[marker + 3:]))
+        marker = s.find("://", marker + 3)
+    lead, rest = "", s
+    found = _SCHEME.match(s)
+    if found and s[found.end():].startswith("/"):
+        lead, rest = found.group(0), s[found.end():]
+    readings.append(_split_at_authority_end(lead, rest))
+    return readings
+
+
+#: Stands in for redacted userinfo while ``redact_userinfo`` works; a
+#: private-use character, which NFKC leaves alone and no address holds.
+_HIDDEN = "\ue000"
 
 
 def has_userinfo(host: str) -> bool:
@@ -253,8 +273,8 @@ def has_userinfo(host: str) -> bool:
     through ``_normalise``/``_split_authority`` exactly as any other
     address is, so this never raises on its own.
     """
-    _lead, authority, _rest = _authority_any_scheme(host)
-    return "@" in authority
+    return any("@" in authority for _lead, authority, _rest
+               in _authority_readings(host))
 
 
 def redact_userinfo(url: str) -> str:
@@ -268,8 +288,21 @@ def redact_userinfo(url: str) -> str:
     """
     if not has_userinfo(url):
         return url
-    lead, authority, rest = _authority_any_scheme(url)
-    return f"{lead}…@{authority.rpartition('@')[2]}{rest}"
+    shown = url
+    # One pass hides the userinfo one reading finds; a url can name more
+    # than one (`http://a:pw@h/x://b:pw2@y`), so repeat until no reading
+    # finds any. The mark stands in for "…@" meanwhile -- an `@` left in
+    # would read as userinfo still -- and each pass removes at least one
+    # `@`, so this ends; the bound is only a guard, and past it nothing of
+    # the address is shown.
+    for _ in range(8):
+        if not has_userinfo(shown):
+            return shown.replace(_HIDDEN, "…@")
+        lead, authority, rest = next(
+            r for r in _authority_readings(shown) if "@" in r[1]
+        )
+        shown = f"{lead}{_HIDDEN}{authority.rpartition('@')[2]}{rest}"
+    return "(address hidden: it names a user name or password)"
 
 
 #: Matches userinfo wherever it appears in free text, not only in an
@@ -313,7 +346,7 @@ def address_problem(host: str) -> Optional[str]:
 
     Two refusals, named separately because they call for different
     corrections: userinfo (``USERINFO_REFUSED``, found whatever the scheme
-    -- see ``_authority_any_scheme``), and a handful of shapes that are not
+    -- see ``_authority_readings``), and a handful of shapes that are not
     a usable address at all -- a scheme other than http or https (``ftp://``,
     ``file://``), a leading ``//``, a scheme with one slash, a non-numeric port, more than
     one of them, or something after a bracketed host's ``]`` that is not
