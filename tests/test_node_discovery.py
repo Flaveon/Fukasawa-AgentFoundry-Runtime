@@ -491,9 +491,12 @@ class TestUserinfoWhateverTheScheme:
         assert address_problem(url) is None
         assert has_userinfo(url) is False
 
-    def test_an_at_sign_after_the_host_is_still_not_userinfo(self):
-        assert has_userinfo("ftp://10.0.0.9/p@x") is False
-        assert has_userinfo("http://box?a=@b") is False
+    def test_an_at_sign_anywhere_counts(self):
+        """Fourth review: parsing where the authority ends was wrong four
+        different ways in four rounds. A base address never needs an
+        ``@``, so any one -- path and query included -- now counts."""
+        assert has_userinfo("ftp://10.0.0.9/p@x") is True
+        assert has_userinfo("http://box?a=@b") is True
 
 
 class TestUserinfoWhateverPrecedesTheAuthority:
@@ -537,8 +540,8 @@ class TestUserinfoWhateverPrecedesTheAuthority:
         assert "s3cret" not in problem
 
     @pytest.mark.parametrize("url", [
-        "http://box/p@x", "http://box?a=@b", "http://box#f@g",
         "http://10.0.0.9:11434", "box", "[::1]:9000", "localhost:11434",
+        "https://box:443/v1", "::1", "box.lan:11434",
     ])
     def test_ordinary_addresses_are_unaffected(self, url):
         assert has_userinfo(url) is False
@@ -575,3 +578,36 @@ class TestALaterSchemeMarkerHidesNothing:
     @pytest.mark.parametrize("url", LATER)
     def test_it_is_refused_when_typed(self, url):
         assert address_problem(url) is not None
+
+
+class TestAnyAtSignIsUserinfo:
+    """Fourth review of the #33 fix: folding backslashes into slashes let
+    ``http://al\\ice:pw@host`` through, typed and stored, and the readings
+    used quadratic memory on many ``://``. Any ``@`` now counts."""
+
+    @pytest.mark.parametrize("url", [
+        "http://al\\ice:s3cret@10.0.0.9",
+        "https://x\\y:s3cret@10.0.0.9/v1",
+        "al\\ice:s3cret@10.0.0.9",
+        "http://alice:SE\\CRET@10.0.0.9",
+        "http://alice:SE://CRET@10.0.0.9",
+        "http://alice:s3/cret@10.0.0.9",
+        "http://alice:s3#cret@10.0.0.9",
+    ])
+    def test_it_is_seen_refused_and_fully_redacted(self, url):
+        assert has_userinfo(url) is True
+        assert address_problem(url) == USERINFO_REFUSED
+        shown = redact_userinfo(url)
+        for part in ("alice", "al", "s3", "SE", "CRET", "cret"):
+            assert part not in shown.replace("10.0.0.9", ""), (part, shown)
+        assert shown.endswith("10.0.0.9") or shown.endswith("10.0.0.9/v1")
+
+    def test_huge_inputs_stay_linear(self):
+        import time
+
+        for text in ("http://box/" + "://" * 100_000, "a:pw@b://" * 30_000):
+            started = time.perf_counter()
+            has_userinfo(text)
+            redact_userinfo(text)
+            address_problem(text)
+            assert time.perf_counter() - started < 1.0
