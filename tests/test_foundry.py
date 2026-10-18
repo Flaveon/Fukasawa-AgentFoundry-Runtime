@@ -20,7 +20,7 @@ from src.foundry.generator import (
     detect_workspace_profile,
     generate_packages,
 )
-from src.foundry.validator import validate_package
+from src.foundry.validator import MANDATORY_EVAL_CHECKS, validate_package
 from src.runtime.state_machine import WorkflowRuntime
 from src.schemas.agent_package import AgentCapsuleContract
 from src.schemas.workflow_brief import WorkflowBrief
@@ -234,6 +234,166 @@ class TestValidatorFindings:
         evals_path.write_text(yaml.safe_dump(evals))
         findings = validate_package(pkgs[0])
         assert any("scope_compliance" in f for f in findings)
+
+    # ---------------------------------------------------- Gate G finding F-V2
+    #
+    # Six validator rules that mutation testing found unprotected by any
+    # test: removing the rule from the validator broke nothing in the suite.
+    # Each test below tampers exactly one declaration and nothing else, so a
+    # passing run proves that specific rule — not some other finding that
+    # happened to also fire — caught the tamper.
+
+    def test_agent_name_disagreement_in_skill_only_is_caught(
+        self, brief, cpax_workspace, tmp_path
+    ):
+        pkgs, _ = generate_packages(
+            brief, tmp_path / "out", workspace_root=cpax_workspace
+        )
+        writer = next(p for p in pkgs if p.name == "writer-agent")
+        skill = (writer / "SKILL.md").read_text()
+        (writer / "SKILL.md").write_text(
+            skill.replace("agent: writer-agent", "agent: someone-else")
+        )
+        findings = validate_package(writer)
+        assert any("agent name disagrees" in f for f in findings), findings
+
+    def test_maturity_disagreement_in_skill_only_is_caught(
+        self, brief, cpax_workspace, tmp_path
+    ):
+        pkgs, _ = generate_packages(
+            brief, tmp_path / "out", workspace_root=cpax_workspace
+        )
+        writer = next(p for p in pkgs if p.name == "writer-agent")
+        skill = (writer / "SKILL.md").read_text()
+        (writer / "SKILL.md").write_text(
+            skill.replace("maturity: draft", "maturity: tested", 1)
+        )
+        findings = validate_package(writer)
+        assert any("maturity disagrees" in f for f in findings), findings
+
+    def test_empty_permissions_paths_is_caught(
+        self, brief, cpax_workspace, tmp_path
+    ):
+        pkgs, _ = generate_packages(
+            brief, tmp_path / "out", workspace_root=cpax_workspace
+        )
+        writer = next(p for p in pkgs if p.name == "writer-agent")
+        (writer / "permissions.json").write_text(json.dumps({"paths": {}}))
+        findings = validate_package(writer)
+        assert any("defines no paths" in f for f in findings), findings
+
+    def test_soul_without_doctrine_inheritance_on_cpax_is_caught(
+        self, brief, cpax_workspace, tmp_path
+    ):
+        pkgs, _ = generate_packages(
+            brief, tmp_path / "out", workspace_root=cpax_workspace
+        )
+        writer = next(p for p in pkgs if p.name == "writer-agent")
+        soul = (writer / "SOUL.md").read_text()
+        (writer / "SOUL.md").write_text(soul.replace("inherits: ../../doctrine.md", ""))
+        findings = validate_package(writer)
+        assert any("declares no doctrine" in f for f in findings), findings
+
+    def test_skill_missing_workspace_profile_is_caught(
+        self, brief, cpax_workspace, tmp_path
+    ):
+        pkgs, _ = generate_packages(
+            brief, tmp_path / "out", workspace_root=cpax_workspace
+        )
+        writer = next(p for p in pkgs if p.name == "writer-agent")
+        skill = (writer / "SKILL.md").read_text()
+        (writer / "SKILL.md").write_text(
+            "\n".join(
+                line for line in skill.splitlines(keepends=True)
+                if not line.startswith("workspace_profile:")
+            )
+        )
+        findings = validate_package(writer)
+        assert any(
+            "missing 'workspace_profile'" in f for f in findings
+        ), findings
+
+    def test_empty_skill_front_matter_reports_missing_keys_without_agreement_finding(
+        self, brief, cpax_workspace, tmp_path
+    ):
+        # `{}` is falsy, so the agreement check in `_check_agreements` never
+        # runs for it (see `validate_package`'s `if manifest and capsule and
+        # skill:` guard) — this is deliberate, and this test pins it down.
+        pkgs, _ = generate_packages(
+            brief, tmp_path / "out", workspace_root=cpax_workspace
+        )
+        writer = next(p for p in pkgs if p.name == "writer-agent")
+        skill = (writer / "SKILL.md").read_text()
+        _, _, body = skill.split("---", 2)
+        (writer / "SKILL.md").write_text(f"---\n{{}}\n---{body}")
+        findings = validate_package(writer)
+        for key in ("agent", "maturity", "depth_level", "workspace_profile"):
+            assert any(f"missing '{key}'" in f for f in findings), findings
+        assert not any("disagrees" in f for f in findings), findings
+
+    # ---------------------------------------------------- Gate G finding F-V3
+
+    def test_list_shaped_permissions_json_is_a_finding_not_a_crash(
+        self, brief, cpax_workspace, tmp_path
+    ):
+        pkgs, _ = generate_packages(
+            brief, tmp_path / "out", workspace_root=cpax_workspace
+        )
+        writer = next(p for p in pkgs if p.name == "writer-agent")
+        (writer / "permissions.json").write_text(json.dumps(["not", "an", "object"]))
+        findings = validate_package(writer)
+        assert any("must be a JSON object" in f for f in findings), findings
+
+    def test_list_shaped_evals_yaml_is_a_finding_not_a_crash(
+        self, brief, cpax_workspace, tmp_path
+    ):
+        pkgs, _ = generate_packages(
+            brief, tmp_path / "out", workspace_root=cpax_workspace
+        )
+        writer = next(p for p in pkgs if p.name == "writer-agent")
+        (writer / "evals.yaml").write_text(yaml.safe_dump(["not", "a", "mapping"]))
+        findings = validate_package(writer)
+        assert any("must be a mapping" in f for f in findings), findings
+        # Fails closed: the mandatory checks cannot be located, so they are
+        # reported missing rather than silently skipped.
+        assert any("scope_compliance" in f for f in findings), findings
+
+    # ---------------------------------------------------- Gate G re-review R7
+    #
+    # `_validate_evals` already rejects evals.yaml itself being a list
+    # (F-V3). This predates that fix and is narrower: the top level is a
+    # correct mapping, but 'checks' specifically is a list of check names or
+    # a single string containing them — both pass `required not in checks`
+    # by Python's `in` operator (list membership / substring match) even
+    # though there is no per-check 'result' or 'evidence' to read.
+
+    def test_list_of_names_as_checks_is_a_finding_not_a_silent_pass(
+        self, brief, cpax_workspace, tmp_path
+    ):
+        pkgs, _ = generate_packages(
+            brief, tmp_path / "out", workspace_root=cpax_workspace
+        )
+        writer = next(p for p in pkgs if p.name == "writer-agent")
+        evals = yaml.safe_load((writer / "evals.yaml").read_text())
+        evals["checks"] = list(MANDATORY_EVAL_CHECKS)
+        (writer / "evals.yaml").write_text(yaml.safe_dump(evals))
+        findings = validate_package(writer)
+        assert any("'checks' must be a mapping" in f for f in findings), findings
+        assert any("scope_compliance" in f for f in findings), findings
+
+    def test_single_string_as_checks_is_a_finding_not_a_silent_pass(
+        self, brief, cpax_workspace, tmp_path
+    ):
+        pkgs, _ = generate_packages(
+            brief, tmp_path / "out", workspace_root=cpax_workspace
+        )
+        writer = next(p for p in pkgs if p.name == "writer-agent")
+        evals = yaml.safe_load((writer / "evals.yaml").read_text())
+        evals["checks"] = " ".join(MANDATORY_EVAL_CHECKS)
+        (writer / "evals.yaml").write_text(yaml.safe_dump(evals))
+        findings = validate_package(writer)
+        assert any("'checks' must be a mapping" in f for f in findings), findings
+        assert any("scope_compliance" in f for f in findings), findings
 
 
 class TestWorkspaceDetection:

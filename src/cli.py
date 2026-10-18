@@ -97,7 +97,7 @@ from src.kernel.kernel import (
 from src.schemas.graph import GraphRunStatus
 from src.security.trust import TrustStore
 from src.runtime.handoff import DEFAULT_HANDOFF_DIR, write_handoff
-from src.runtime.ledger import DEFAULT_DB_PATH, RunLedger
+from src.runtime.ledger import DEFAULT_DB_PATH, RunLedger, brief_content_hash
 from src.runtime.review_gate import ReviewDecision, open_review_gate
 from src.runtime.state_machine import NonConformanceError, WorkflowRuntime
 from src.schemas.process_capsule import CapsuleStatus, ProcessCapsule
@@ -359,11 +359,82 @@ def run(
     capsule, run_state = runtime.start(
         brief, assigned_to=assigned_to, operator=operator, brief_path=brief_path
     )
+    # Pin the exact brief content this run started under — explicitly, not
+    # inferred from a clock reading — so a later resume/review/runs-command
+    # can tell "the brief never changed" from "someone edited it under the
+    # same id". start() is FROZEN, so this is recorded here instead. Hashed
+    # from the brief object started, never read back from the ledger -- a
+    # save by another process in between would otherwise be what is pinned.
+    runtime.ledger.pin_run_brief(run_state.run_id, brief.id, brief_content_hash(brief))
     console.print(
         f"[bold]{brief.title}[/bold] started — run [cyan]{run_state.run_id}[/cyan], "
         f"capsule [cyan]{capsule.id}[/cyan] in state [yellow]{capsule.state}[/yellow]\n"
     )
     _interactive_loop(runtime, brief, capsule, run_state, handoff_dir)
+
+
+def _refuse_if_brief_drifted(ledger: RunLedger, run_state: RuntimeState) -> None:
+    """Refuse to continue a run if its workflow brief has changed since the
+    run started, or if no provable pin exists for it at all.
+
+    Called by every CLI command that continues an existing, persisted run
+    under its brief's rules: `resume`, `graph resume`, `review`,
+    `runs block` and `runs complete`. `WorkflowRuntime.resume_run()` and
+    `GraphRunner.resume()` (both FROZEN) reload whatever brief snapshot
+    `RunLedger.load_workflow()` currently holds for the workflow id, and
+    `review`'s own path to `runtime.advance()` (via `_apply_decision`) does
+    the same; none of them check that it is the brief the run actually
+    agreed to. A brief edited in place between a pause and any of these —
+    same id, different `evidence_required` on some transition, for instance
+    — would silently change what the run accepts. This is the one gate
+    standing in front of all of them.
+
+    Prefers the explicit pin `run`/`graph run` record via
+    `ledger.pin_run_brief()` right after the frozen `start()` returns.
+    Falls back to the older, time-based `brief_hash_at()` lookup only when
+    no explicit pin exists at all — a run started before `run_brief_pins`
+    existed, which that lookup still answers correctly except across a
+    backwards clock step (a narrow, documented gap an explicit pin does not
+    have).
+
+    The safe default, absent a provable match, is to refuse. A false
+    positive costs re-running `fukasawa run` against a brief that never
+    actually changed; a false negative lets a run continue under rules it
+    never agreed to. There is deliberately no override flag here: accepting
+    a changed brief for one specific run is a decision for the workflow
+    owner to make and record, not something this CLI should offer as a
+    one-liner.
+    """
+    pinned = ledger.pinned_brief_hash(run_state.run_id)
+    if pinned is None:
+        pinned = ledger.brief_hash_at(run_state.workflow_id, run_state.created_at)
+    current = ledger.current_brief_hash(run_state.workflow_id)
+    if pinned is not None and pinned == current:
+        return
+    way_out = (
+        f"Start a fresh run from the brief instead: "
+        f"[bold]fukasawa run <brief.yaml>[/bold]. Run '{run_state.run_id}' "
+        f"is not lost — it stays in the ledger as history."
+    )
+    reason = (
+        f"the brief for workflow '{run_state.workflow_id}' has changed since "
+        f"run '{run_state.run_id}' started.\n\n{way_out}"
+        if pinned is not None
+        else (
+            f"no brief snapshot is pinned to run '{run_state.run_id}' — likely "
+            f"a database from before this safety check existed. Refusing "
+            f"rather than guessing that the brief is still the same one.\n\n"
+            f"{way_out}"
+        )
+    )
+    console.print(
+        Panel(
+            reason,
+            title="[red]Refused — this run's brief may have changed[/red]",
+            border_style="red",
+        )
+    )
+    raise typer.Exit(1)
 
 
 @app.command()
@@ -374,6 +445,12 @@ def resume(
 ) -> None:
     """Continue a persisted run from exactly where it left off."""
     runtime = WorkflowRuntime(RunLedger(db))
+    try:
+        run_probe = runtime.ledger.load_run(run_id)
+    except Exception:
+        console.print(f"[red]Unknown run:[/red] {run_id}")
+        raise typer.Exit(1)
+    _refuse_if_brief_drifted(runtime.ledger, run_probe)
     try:
         brief, capsule, run_state = runtime.resume_run(run_id)
     except Exception:
@@ -467,6 +544,7 @@ def review(
     if run_state is None:
         console.print(f"[red]No tracked run found for capsule:[/red] {capsule_id}")
         raise typer.Exit(1)
+    _refuse_if_brief_drifted(ledger, run_state)
     options = runtime.valid_transitions(brief, capsule)
     if not options:
         console.print(
@@ -671,6 +749,7 @@ def runs_block(
     except Exception:
         console.print(f"[red]Unknown run:[/red] {run_id}")
         raise typer.Exit(1)
+    _refuse_if_brief_drifted(ledger, run_state)
     runtime.block_run(run_state, reason, next_action)
     brief = ledger.load_workflow(run_state.workflow_id)
     capsule = ledger.load_capsule(run_state.capsule_id)
@@ -698,6 +777,7 @@ def runs_complete(
     except Exception:
         console.print(f"[red]Unknown run:[/red] {run_id}")
         raise typer.Exit(1)
+    _refuse_if_brief_drifted(ledger, run_state)
     run_state.completed_checks.append(
         CompletedCheck(check=check, result=CheckResult.PASS, evidence=evidence)
     )
@@ -950,6 +1030,10 @@ def graph_run(
     except GraphSpecError as exc:
         console.print(Panel(escape(str(exc)), title="[red]Graph refused[/red]", border_style="red"))
         raise typer.Exit(1)
+    # Pin the exact brief content this run started under — same reasoning as
+    # the plain `run` command above; `GraphRunner.start()` calls the FROZEN
+    # `WorkflowRuntime.start()` internally, so this is recorded here instead.
+    runner.ledger.pin_run_brief(state.run_id, brief.id, brief_content_hash(brief))
     console.print(
         f"[bold]{graph.graph_id}[/bold] started as [cyan]{state.graph_run_id}[/cyan] "
         f"(workflow run {state.run_id})\n"
@@ -970,6 +1054,18 @@ def graph_resume(
     """Resume a blocked or paused graph run from its checkpoint."""
     runner = _make_runner(db, handoff_dir, require_signed)
     graph = load_graph(graph_path)
+    try:
+        graph_run_state = runner.ledger.load_graph_run(graph_run_id)
+        run_probe = runner.ledger.load_run(graph_run_state.run_id)
+    except Exception:
+        # `load_graph_run`/`load_run` raise sqlite_utils' NotFoundError on an
+        # unknown id, not KeyError despite what their docstrings say — this
+        # mirrors the broad catch `resume()` already uses for the same
+        # reason, rather than the (too narrow) `except KeyError` below that
+        # wraps `runner.resume()` itself.
+        console.print(f"[red]Unknown graph run:[/red] {graph_run_id}")
+        raise typer.Exit(1)
+    _refuse_if_brief_drifted(runner.ledger, run_probe)
     try:
         state = runner.resume(
             graph, graph_run_id, signature=_sidecar_signature(graph_path)
