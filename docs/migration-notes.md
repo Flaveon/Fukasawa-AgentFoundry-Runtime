@@ -31,6 +31,25 @@ Tables added for the human & cooperative workflow lifecycle:
 | `cooperation_assessments` | per-step executor recommendations and human overrides | append-only |
 | `cooperative_workflows` | built and approved executor assignments | append-only |
 
+Tables added for the brief-drift safety check (Gate G finding F1 and its
+re-review follow-up):
+
+| Table | Holds | Mutability |
+|---|---|---|
+| `workflow_snapshots` | every *distinct* brief content ever saved for a workflow id, content-hashed and dated | append-only |
+| `run_brief_pins` | the exact brief hash a run started under, recorded explicitly by the CLI right after `start()` returns | append-only |
+
+Both tables carry a `schema_version` column (currently `"1"`), per the rule
+below that every new row gets one. Opening an existing database with this
+build also re-attaches, on every table in `_APPEND_ONLY_TABLES`, a third
+trigger (`<table>_no_replace`) alongside the pre-existing update/delete
+guards — closing a gap where `INSERT OR REPLACE` through a raw `sqlite3`
+handle could silently rewrite an append-only row. This is the same
+"gains the new tables/triggers empty and keeps every row it already had"
+upgrade path: nothing is rewritten, and `RunLedger._ensure_schema()` already
+runs its trigger-creation statements unconditionally on every open, so an
+older database gets the new guard the first time this build touches it.
+
 `cooperation_assessments` and `cooperative_workflows` use a **surrogate
 `record_id`** rather than a natural key, and this is deliberate. `apply_override`
 returns a copy carrying the *same* `assessment_id`, so an override is a later row
