@@ -1,7 +1,9 @@
 # Issue #27 — Handoff/Quality-Report Verdict Consistency: Experiment Protocol
 
 This dataset and its baselines were FROZEN as a commit boundary (Commit 1:
-`baseline.py`, `results/baseline-run1.json`, `results/donor-diagnosis-run1.json`)
+`baseline.py`, `results/v1/baseline-run1.json`, `results/v1/donor-diagnosis-run1.json`
+— archived under `results/v1/` as of Amendment 3; written at
+`results/baseline-run1.json` etc. at the time of Commit 1 itself)
 before any rule code was *committed* under `src/governance/` — it was not,
 in fact, written before the rule existed in the working tree at all; see
 the Disclosure immediately below, which says so precisely rather than
@@ -170,10 +172,10 @@ kept visually and numerically separate in `results/comparison.md`:
 ### Infrastructure failure vs. wrong answer
 
 A model call that fails or times out is recorded as `INFRASTRUCTURE_FAILURE`
-in `results/baseline-run1.json` (run 1; see Amendment 1 for
-`results/baseline-run2.json`), distinct from a call that completed but gave
-a wrong SHIP/HOLD/ESCALATE adjudication. These are never merged into the
-same count.
+in `results/v1/baseline-run1.json` (run 1; see Amendment 1 for
+`results/v1/baseline-run2.json` — both archived under `results/v1/` as of
+Amendment 3), distinct from a call that completed but gave a wrong
+SHIP/HOLD/ESCALATE adjudication. These are never merged into the same count.
 
 ## Model configuration (Baseline B and the donor-diagnosis call)
 
@@ -269,8 +271,8 @@ Level-0 rule sees. One call per case. A failed/timed-out call is recorded as
 ### Checkpointing / resumability
 
 Given the timeout behavior above, a full Baseline B run can take well over
-an hour of wall time. `baseline.py` writes `results/baseline-run1.json`
-(see Amendment 1 for `results/baseline-run2.json`) after
+an hour of wall time. `baseline.py` writes `results/v1/baseline-run1.json`
+(see Amendment 1 for `results/v1/baseline-run2.json`) after
 **every single case** (success or `INFRASTRUCTURE_FAILURE`), and on
 startup re-reads whatever is already there, skipping any case already
 recorded with `status: "OK"`. An interrupted run loses at most the one call
@@ -423,12 +425,27 @@ step, per the review process:
   real or synthetic cases are added for this revision — and its results
   are written fresh to `results/treatment.json` / `results/comparison.md`
   (v1's copies, under `results/v1/`, are untouched).
-* **v2's labels are assigned post-hoc, after the rule was rewritten to
-  know what it needs to parse.** This is disclosed, not hidden: the
-  dataset's ground-truth labels (`dataset/manifest.json`) were not
-  re-derived independently of the rule before this rewrite — see M1 below
-  for why neither v1's nor v2's numbers on this dataset are evidence of
-  generalization to inputs no one has looked at yet.
+* **Correction (round 2 of review): labels did NOT change.** An earlier
+  version of this bullet said "v2's labels are assigned post-hoc", which
+  reads as though the dataset's labels were edited to fit v2 — they were
+  not. `dataset/manifest.json` is byte-identical to how it stood at `c1eb681`
+  and is never edited by this rewrite. What actually changed is narrower:
+  v2's rule logic was written by the implementing agent with knowledge of
+  what it needs to parse (it could hardly be written otherwise), and the
+  rule's logic was NOT independently re-derived by someone who could not
+  see the dataset first — see M1 below for why neither v1's nor v2's
+  numbers on this dataset are evidence of generalization to inputs no one
+  has looked at yet. (One case's EXPECTED OUTCOME under the rule, not its
+  frozen label, does change — `synthetic-adversarial-hold-prose-001`; see
+  `results/comparison.md`'s Treatment section for exactly what and why.)
+* **Timing, stated honestly.** This amendment (`122c294`) was committed at
+  2026-10-17 23:03:40 UTC; the v2 rule rewrite (`6a34f2b`) was committed at
+  2026-10-17 23:19:34 UTC — 16 minutes later. Nothing in git records
+  whether the v2 rule was drafted entirely inside that 16-minute window or
+  had already been drafted (in the working tree, uncommitted) before this
+  amendment was committed. This cannot be proven either way from the
+  repository's history; it is recorded here rather than asserted one way
+  or the other.
 * **M1, stated plainly:** `CANDIDATES.md` already said the rule's
   parsing decisions were "arrived at through hand iteration against the
   real 35-case corpus" — that corpus is ALL 35 real cases, including every
@@ -444,6 +461,68 @@ step, per the review process:
   apparent sample size is repetition, not variety. `results/comparison.md`
   states this beside the split table rather than reporting "23/23" without
   context.
+
+## Amendment 4 (post-review round 2)
+
+A second independent review of `122c294`, `6a34f2b`, `d847616` (and the
+merges up to `7b93dd3`) found one High, residual fail-open gap in v2: a
+single DISGUISED or RENAMED field could still make the OTHER field decide
+the outcome alone, reaching `CONSISTENT` by accident. Concretely, against
+a HOLD report with `Angela verdict: NEEDS_REVISION` and real "ship"
+bullets, v2 returned `CONSISTENT` (not `ABSTAIN`) whenever the Shipping
+Decision section's loose "is this even attempted" detector failed to
+notice the section at all — a renamed header (`## Shipping`, `## Ship
+Decision`, `## Publish Decision`, `## Shipping-Decision` with a hyphen
+instead of a space), a zero-width space or a Cyrillic homoglyph inside
+"Shipping Decision", or no header at all (bullets with nothing introducing
+them). The mirror case — a renamed or disguised Angela label (`Angela's
+verdict:`, a ZWSP or Cyrillic letter in "Angela", `Reviewer verdict:`)
+paired with real, clean "hold" bullets — missed an Angela PASS claim the
+same way. Neither case triggered any of v2's existing ABSTAIN branches,
+because from the rule's point of view that field was never "attempted" at
+all, not malformed — and a field that is absent, by v2's rule-before-this-
+amendment, simply does not contribute to the comparison, letting the OTHER
+field decide alone.
+
+**The fix, effective immediately (committed in the SAME step as this
+amendment, per the review process — code changes follow in the next
+commit):** on a HOLD report, `CONSISTENT` now requires BOTH the Angela
+line AND the Shipping Decision section to be present and successfully
+parsed. A single recognized field can still produce `BLOCK` on its own (a
+clean, unqualified Angela PASS, or any clean "ship" bullet, is still acted
+on immediately — see Amendment 1-era decision 10, BLOCK still takes
+priority). But a single recognized, NON-blocking field (a clean
+NEEDS_REVISION with no parseable Shipping section at all, or a clean
+"hold"/"do not ship" Shipping section with no parseable Angela line at
+all) now resolves to `ABSTAIN`, not `CONSISTENT` — the renamed/disguised
+field is simply missing evidence, and missing evidence is never read as
+"everything is fine."
+
+**Label impact — verified, not assumed:** the frozen ground-truth label
+definition in this file (see "Label definitions" above) is amended
+identically, for consistency between what the rule does and what the
+label definition says a correct rule should do. Checked directly against
+`dataset/`: **all 35 real run_ids have BOTH an Angela verdict line and a
+Shipping Decision section present** (verified by reading
+`dataset/cases/*.json`'s `handoff.angela_verdict_line` and
+`handoff.shipping_decision_lines` for every real case) — so **no real
+case's label changes**. Of the 9 synthetic cases, the 3 that have NEITHER
+field at all (`synthetic-adversarial-missing-section-001`,
+`synthetic-malformed-empty-handoff-001`,
+`synthetic-tool-failure-unreadable-handoff-001`) were already `NO_EVIDENCE`
+/ `ABSTAIN` under the "neither field attempted" branch that existed before
+this amendment and is unchanged by it — **no synthetic case's label or
+expected outcome changes either.** `dataset/manifest.json` itself is not
+edited by this amendment; only the rule's logic and this file's label
+definition change, and both changes land on data this dataset does not
+actually contain an example of (every real and synthetic case either has
+both fields or neither).
+
+**Scope of the fix:** this closes the specific gap `adv2.py`'s 11
+disguised/renamed-field cases demonstrate. It does not change how a field
+that IS attempted but fails to parse (markup, decoration, qualifiers,
+duplicates, etc. — the round-1 H1 fixes) is handled; those already
+ABSTAIN and continue to.
 
 ## What this experiment does not show
 
