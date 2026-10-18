@@ -1,0 +1,290 @@
+{
+  "case_count": 35,
+  "cases": [
+    {
+      "run_id": "2026-05-31-9g1bby-qwen",
+      "sha256": {
+        "handoff": "df7efa75686d4b9f02c8c8c876ee6991453ece84679e820e846b8204dcce227a",
+        "quality_report": "a78ecfcf6a2aa91469b624fca9fef35b51a1667600cb0c8d1d3ac2b8f8beffce"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-01-ba5jeu-qwen",
+      "sha256": {
+        "handoff": "d5d289e1f240a63d67d3cab77e98ec6463acdb106dd71a2619cd6cb9e5c944b9",
+        "quality_report": "bfcf6821ab1670945dc57a383be01580040de4c374bb2bea8061c94f14cc8e22"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-01-srbg5n-qwen",
+      "sha256": {
+        "handoff": "34cd22a84579416b96724d0ce45081b7765f3943a3a5e13fbacac32820188d23",
+        "quality_report": "b9e5cfc937d282bf31505765a3616beb69d56526345136a0fb5d6096359bc5a8"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-02-eh9b86-qwen",
+      "sha256": {
+        "handoff": "2537c792a2bdcf260522166456071cee159a4370a2594670c3b89da20efd6e93",
+        "quality_report": "057bc15b45e052cb07d1eb388d748c281ab549969deb7b74423625e09898a787"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-03-udu9ao-qwen",
+      "sha256": {
+        "handoff": "997a5c5bedfce45e28525054282b14f668e263f263ab3382794b605410697869",
+        "quality_report": "8ebda2d2238a8c703a34f4377b68928c48dd4a3b02f8931bcfa17e86dc3b34ad"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-04-xnbb4a-qwen",
+      "sha256": {
+        "handoff": "94a8b7b8d1b8e1b7a19c607fca60513cc48258909c90ae6475c53205b9d4d2b8",
+        "quality_report": "fde42d0d8cbed275b62f5e5e70cadd894e32cb82fe52567d9952b87af49ea5a4"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-05-ekybc8-qwen",
+      "sha256": {
+        "handoff": "d4b1f83117a73b157da9806fffa7ec462794123102b94a17f7da05a824fc4eb9",
+        "quality_report": "bfc649cea352e0e6c8a784ffd06d12479ef4e265282ac09dd2772e0a96e21972"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-07-cjqitx-qwen",
+      "sha256": {
+        "handoff": "0f67bc0d92110b88c40d1236d5f0569ad1b16061da5aa6a269384b03886123cf",
+        "quality_report": "47b018c8567cb557ac581ce9aadb2e370a0865d401238c64596293e977b2767f"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-08-hdtkkb-qwen",
+      "sha256": {
+        "handoff": "3082ba583c0976a0d76260805b991fa15a2407efe9c31efacd40ce6f85f274a6",
+        "quality_report": "60aaa48949121b770596e864e5d1f1696a3a2a7465277772a6d1ad9767d35d2b"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-08-n8ozaf-qwen",
+      "sha256": {
+        "handoff": "4edf776821f18e3e2c232b0ca020aafa2dfc668a2c2df6c5b3cfdeee9c62e981",
+        "quality_report": "cb4e38241f2f33ef1415f133b758d7a2ff02ccf0660753158c51f1cef5c07502"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-09-7w2lpc-qwen",
+      "sha256": {
+        "handoff": "303b6eefe652482cc57e6e990b1c7c071184728a3836dd2d4f9bb63e5a1126b6",
+        "quality_report": "f7f1f4d137f76b4a6d9086aa510ed96217c2b7e1298eabb31eeac7e2318a95e3"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-10-6ltoq6-qwen",
+      "sha256": {
+        "handoff": "f69ac5d3ce83a1a44bfe3323ebd1b1b36a893d9f191eb6c66e10a2234124bdc3",
+        "quality_report": "6b8d5bdc88c48b4d47d6ed633450c38c153ba167163d25bd77c0de4b280cc11d"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-11-hgw14w-qwen",
+      "sha256": {
+        "handoff": "d9981fa18cd9a4c13cef75565f4d77701b92799b7dc3ea7889c07b0b848fa8d9",
+        "quality_report": "1fa7e949e8c50dfb3719b68e145d5f0733020cffe62d9eff1d89cbf3905d5eb5"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-12-at6n35-qwen",
+      "sha256": {
+        "handoff": "b2928c28a6694f97759a668b109bb25f392ada8cdb614b3d9f4c8d1cf1e837c2",
+        "quality_report": "1cd91e4b25ea9f1adadc99150c83339a20c45159d3dbacdbada515ecafbdee29"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-14-pz9w7x-qwen",
+      "sha256": {
+        "handoff": "0e3ac80c2760e9a8fb187e95d139f15ab13a2f70e861494d8453a2d66bd80310",
+        "quality_report": "4f40d492804f77ff7ac88cc7ffeb393b6b394a4cb3a977993204903a16ca4ed7"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-15-hd2vdp-qwen",
+      "sha256": {
+        "handoff": "588baf859f71ffdadb41a9014fddf95bdcf42d5604c7bf05f5379ec8ca91a74d",
+        "quality_report": "b7b210127def12611fd1d3013e309fe781acc2357bd645f63b20e0ddf04bcbee"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-15-jka6fm-qwen",
+      "sha256": {
+        "handoff": "04410d380d748b55699682db4858e04a3a0dcd5ff032b19865b6a9e4a1cf5945",
+        "quality_report": "71662ab92570652988b720896d9cff88e75d2aaa8b80facb148ec551983b6a30"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-16-pd5de4-qwen",
+      "sha256": {
+        "handoff": "bc4324ef95d9e23f8530a4805c2d054ce10b0ffd77c2459d17ee78e6dd4130e3",
+        "quality_report": "082345ed9efd5908ac28071e83a0e20f1c24cc5b2dc0f88f4335f591483e5981"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-17-qotwco-qwen",
+      "sha256": {
+        "handoff": "63689d64e0aca64f677afc1bfcbf8da11b68085f53a709ecd040e67a486cc502",
+        "quality_report": "830806b2018298ee308f56223e9acf42c1e27dd17002e845ac2e7e4dc2d703d8"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-18-zi2xoz-qwen",
+      "sha256": {
+        "handoff": "2c8ed1746195f8fec3c950ed612517e59d82415bab18aa9ad12f4aed27684a68",
+        "quality_report": "ca7dea5bde48eb6fca160ed12589ce32d955e996a00c16b05d37090aebcd20e5"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-19-5zluoi-qwen",
+      "sha256": {
+        "handoff": "f0ba552f53c7dd2e134f1f956d09f485c0a2e2114dc73b04cc0950eddbe1abb0",
+        "quality_report": "dd03518f21cae62946153ebad60267547f9da88202ab652225d89eae49d4545d"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-21-6xnpnd-qwen",
+      "sha256": {
+        "handoff": "81fdaaa6d81ea1a9f91748ce734c4249a22a24fd30a405674cda0936be4b1784",
+        "quality_report": "f9e733bc86d3de9cdefaaf755fe91e286aeeecfb52a71f43d90e1ca94a1b4681"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-22-jwxir2-qwen",
+      "sha256": {
+        "handoff": "e9494f7a79580aabe6c53b70d64acf0c3eff3901300d2aebf470aaa98795eb6f",
+        "quality_report": "662f6b4d227bb4637e1c47c45106342ab59dc689fac4fe128853f590daf6f2f7"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-22-zxxg0t-qwen",
+      "sha256": {
+        "handoff": "faa248399dc9b3e04027fa77a70b20466b0c6ff8adb8463dbe1be44a22f9f70e",
+        "quality_report": "900416e61d9f7f1b9888ff45c70769c7e5a230253910b70b10de75ed2d2bc713"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-23-jl1vfi-qwen",
+      "sha256": {
+        "handoff": "7eb3ac791f53824ce7a86bd5f88ae7400e561075bd01c45a8170cabbaf163fb6",
+        "quality_report": "5e8dec8e5bc111972cefbf5094c928b5fd358e42caac989bae7457439df3677d"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-24-th9m1a-qwen",
+      "sha256": {
+        "handoff": "6bc7ed1f78dcf2bcab39a56fecb6d2180e4709dcb7c2242b963df249384409c5",
+        "quality_report": "22cb714fbe1c916f14630fe8cb02fc8b9dfbba3ad392ad182c46a5c78aa983cf"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-25-22mg2t-qwen",
+      "sha256": {
+        "handoff": "a35122c3c9e142c6bd7da316d9d9e13be2eab432af80ce264824bec2c50a193e",
+        "quality_report": "7fee114bbe897a1da32147287a678b308f4b51614bf954b7dbfad566b8b08787"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-26-sie9rv-qwen",
+      "sha256": {
+        "handoff": "8bc66316d6f9a6a76a69cf535a0833f09864316b70d6ce8d91eaf222fa4cdc29",
+        "quality_report": "a715bb01a83584167694b172f12512b3dd9cc5cf731d5a953d40d3159878bbfb"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-28-bwttks-qwen",
+      "sha256": {
+        "handoff": "e63873bfb772c671c5dab8d505d9845c02310d420dc5a7e6a4091ea7ae4fb7a2",
+        "quality_report": "c8c06ef6a8469fa9ebf6632d81ec2d47d919ad444bb2819c096b95930ea313cb"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-29-eibsww-qwen",
+      "sha256": {
+        "handoff": "422602fdb291343db5e2bba7d500e37175b7e0213247145e9ee1bf7a5db81bfe",
+        "quality_report": "899e8c34ad55792fe3cb4a01a09c08ca6d35ec08bc33d5be948539961404b311"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-29-k2r6mf-qwen",
+      "sha256": {
+        "handoff": "1a93af9c8a425d661932cda16e013c2b7ad0fdd8bef0e60f52f30bc36472e1e8",
+        "quality_report": "c88c55bf11e21fddb7798b5a192d499fae957ce6043c887ab415db2a6fddce33"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-06-30-c4c1oc-qwen",
+      "sha256": {
+        "handoff": "f33127f61f22fe58e2ed148979227bc856032f5b27f9961bb8504b36ba81d80b",
+        "quality_report": "4665788ce8b19aac612862aac49a801bd3245c0a987d9248ea6ac6b7643557b1"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-07-01-3yl25b-qwen",
+      "sha256": {
+        "handoff": "17926ddaa0598743e8f0ccecad70d6a550e16d43819fc411a4dcd2def61a6c5f",
+        "quality_report": "8b4f7e7eaa374067d969b377925beb127a9737bc9746b4bba01c0dc1d54c281b"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-07-02-irhj4k-qwen",
+      "sha256": {
+        "handoff": "c9c4e392be17fb88e0028e4c3227d5dab299ae812ab18a7811f92f6b3934bd68",
+        "quality_report": "b8510b3d7db9e13b61906be1d0cc63fb57a678f95f9aba9c92ee2bc0c424016a"
+      },
+      "verdict": "BLOCK"
+    },
+    {
+      "run_id": "2026-07-03-dr3o6n-qwen",
+      "sha256": {
+        "handoff": "be6b8430b26b1113b4b9831edb506f42522f7f589c3a0d1efd9d36427ac99cd9",
+        "quality_report": "9c830f0eae343a1ae603bf893178f262784db2ccd5e32563efef41c89accc812"
+      },
+      "verdict": "BLOCK"
+    }
+  ],
+  "note": "Rule run against the RAW real files under ~/substack (read-only), not the rebuilt text shadow.py feeds it. No file content is stored here, only verdicts and SHA-256 checksums. See PROTOCOL.md Amendment 3 (M4).",
+  "source_root": "~/substack",
+  "verdict_counts": {
+    "BLOCK": 35
+  }
+}

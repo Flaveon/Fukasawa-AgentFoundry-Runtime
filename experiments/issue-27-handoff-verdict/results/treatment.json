@@ -1,0 +1,546 @@
+{
+  "completion_tokens": 0,
+  "model_calls": 0,
+  "per_case": {
+    "2026-05-31-9g1bby-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "development",
+      "wall_time_seconds": 2.8260983526706696e-05
+    },
+    "2026-06-01-ba5jeu-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "development",
+      "wall_time_seconds": 2.198002766817808e-05
+    },
+    "2026-06-01-srbg5n-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "development",
+      "wall_time_seconds": 1.8079997971653938e-05
+    },
+    "2026-06-02-eh9b86-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "development",
+      "wall_time_seconds": 1.525995321571827e-05
+    },
+    "2026-06-03-udu9ao-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "development",
+      "wall_time_seconds": 1.9311089999973774e-05
+    },
+    "2026-06-04-xnbb4a-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "development",
+      "wall_time_seconds": 1.4950055629014969e-05
+    },
+    "2026-06-05-ekybc8-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "development",
+      "wall_time_seconds": 1.5869969502091408e-05
+    },
+    "2026-06-07-cjqitx-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "development",
+      "wall_time_seconds": 1.4560064300894737e-05
+    },
+    "2026-06-08-hdtkkb-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "development",
+      "wall_time_seconds": 1.4191027730703354e-05
+    },
+    "2026-06-08-n8ozaf-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "development",
+      "wall_time_seconds": 1.4050048775970936e-05
+    },
+    "2026-06-09-7w2lpc-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "development",
+      "wall_time_seconds": 1.4030025340616703e-05
+    },
+    "2026-06-10-6ltoq6-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "development",
+      "wall_time_seconds": 1.4630029909312725e-05
+    },
+    "2026-06-11-hgw14w-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.423107460141182e-05
+    },
+    "2026-06-12-at6n35-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.425005029886961e-05
+    },
+    "2026-06-14-pz9w7x-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.755997072905302e-05
+    },
+    "2026-06-15-hd2vdp-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.689000055193901e-05
+    },
+    "2026-06-15-jka6fm-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.501000951975584e-05
+    },
+    "2026-06-16-pd5de4-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.4710938557982445e-05
+    },
+    "2026-06-17-qotwco-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.3770069926977158e-05
+    },
+    "2026-06-18-zi2xoz-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.4730030670762062e-05
+    },
+    "2026-06-19-5zluoi-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.4239922165870667e-05
+    },
+    "2026-06-21-6xnpnd-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.3750046491622925e-05
+    },
+    "2026-06-22-jwxir2-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.3570999726653099e-05
+    },
+    "2026-06-22-zxxg0t-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.3630022294819355e-05
+    },
+    "2026-06-23-jl1vfi-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.3470067642629147e-05
+    },
+    "2026-06-24-th9m1a-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.722003798931837e-05
+    },
+    "2026-06-25-22mg2t-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.4940975233912468e-05
+    },
+    "2026-06-26-sie9rv-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.4330027624964714e-05
+    },
+    "2026-06-28-bwttks-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.4579971320927143e-05
+    },
+    "2026-06-29-eibsww-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.3779965229332447e-05
+    },
+    "2026-06-29-k2r6mf-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.4191027730703354e-05
+    },
+    "2026-06-30-c4c1oc-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.4579971320927143e-05
+    },
+    "2026-07-01-3yl25b-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.4639925211668015e-05
+    },
+    "2026-07-02-irhj4k-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.3850047253072262e-05
+    },
+    "2026-07-03-dr3o6n-qwen": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "held-out",
+      "wall_time_seconds": 1.3920944184064865e-05
+    },
+    "synthetic-adversarial-hold-prose-001": {
+      "ground_truth_label": "CONSISTENT",
+      "matches_ground_truth": false,
+      "reasons": [
+        "the 'Shipping Decision' line '- Article HTML: hold (ship once blockers fixed)' has a value that is not one of the recognized values (ship / hold / do not ship)"
+      ],
+      "rule_verdict": "ABSTAIN",
+      "split": "synthetic",
+      "wall_time_seconds": 1.6061007045209408e-05
+    },
+    "synthetic-adversarial-lowercase-001": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'article html: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'visual support: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "synthetic",
+      "wall_time_seconds": 1.4369958080351353e-05
+    },
+    "synthetic-adversarial-missing-section-001": {
+      "ground_truth_label": "NO_EVIDENCE",
+      "matches_ground_truth": true,
+      "reasons": [
+        "operator handoff is missing, empty, or unreadable"
+      ],
+      "rule_verdict": "ABSTAIN",
+      "split": "synthetic",
+      "wall_time_seconds": 1.949956640601158e-06
+    },
+    "synthetic-adversarial-spacing-001": {
+      "ground_truth_label": "CONTRADICTION",
+      "matches_ground_truth": true,
+      "reasons": [
+        "handoff's Angela verdict is PASS but quality report verdict is HOLD",
+        "handoff line 'Article HTML: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Visual support: ship' authorizes shipping but quality report verdict is HOLD",
+        "handoff line 'Interactive tool: ship' authorizes shipping but quality report verdict is HOLD"
+      ],
+      "rule_verdict": "BLOCK",
+      "split": "synthetic",
+      "wall_time_seconds": 1.9449973478913307e-05
+    },
+    "synthetic-clean-pass-001": {
+      "ground_truth_label": "CONSISTENT",
+      "matches_ground_truth": true,
+      "reasons": [],
+      "rule_verdict": "CONSISTENT",
+      "split": "synthetic",
+      "wall_time_seconds": 1.4049932360649109e-05
+    },
+    "synthetic-malformed-empty-handoff-001": {
+      "ground_truth_label": "NO_EVIDENCE",
+      "matches_ground_truth": true,
+      "reasons": [
+        "operator handoff is missing, empty, or unreadable"
+      ],
+      "rule_verdict": "ABSTAIN",
+      "split": "synthetic",
+      "wall_time_seconds": 1.5600817278027534e-06
+    },
+    "synthetic-malformed-missing-verdict-key-001": {
+      "ground_truth_label": "NO_EVIDENCE",
+      "matches_ground_truth": true,
+      "reasons": [
+        "quality report is missing, unreadable, or has no valid 'verdict' field"
+      ],
+      "rule_verdict": "ABSTAIN",
+      "split": "synthetic",
+      "wall_time_seconds": 1.8400605767965317e-06
+    },
+    "synthetic-malformed-truncated-json-001": {
+      "ground_truth_label": "NO_EVIDENCE",
+      "matches_ground_truth": true,
+      "reasons": [
+        "quality report is missing, unreadable, or has no valid 'verdict' field"
+      ],
+      "rule_verdict": "ABSTAIN",
+      "split": "synthetic",
+      "wall_time_seconds": 1.5900004655122757e-06
+    },
+    "synthetic-tool-failure-unreadable-handoff-001": {
+      "ground_truth_label": "NO_EVIDENCE",
+      "matches_ground_truth": true,
+      "reasons": [
+        "operator handoff is missing, empty, or unreadable"
+      ],
+      "rule_verdict": "ABSTAIN",
+      "split": "synthetic",
+      "wall_time_seconds": 1.369975507259369e-06
+    }
+  },
+  "per_split": {
+    "development": {
+      "cases": 12,
+      "matches_ground_truth": 12
+    },
+    "held-out": {
+      "cases": 23,
+      "matches_ground_truth": 23
+    },
+    "synthetic": {
+      "abstentions": 6,
+      "cases": 9,
+      "matches_ground_truth": 8
+    }
+  },
+  "prompt_tokens": 0,
+  "total_wall_time_seconds": 0.0006132603157311678
+}
