@@ -1545,3 +1545,48 @@ class TestCopyRules:
         """Word boundaries, so §3.6's "Fastest measured speed" stays legal."""
         assert judgements_in("Fastest measured speed  40 words a second") == []
         assert judgements_in("This computer is fast.") == ["fast"]
+
+
+class TestReviewOfPr33:
+    """Two findings from the owner's review of PR #33."""
+
+    SECRET = "s3cret"
+
+    @pytest.mark.parametrize("url", [
+        "ftp://alice:s3cret@10.0.0.9", "ssh://alice:s3cret@10.0.0.9",
+        "//alice:s3cret@10.0.0.9",
+    ])
+    def test_node_add_refuses_userinfo_in_any_scheme(self, store_path, url):
+        result = CliRunner().invoke(app, [
+            "node", "add", "--label", "Box", "--kind", "ollama", "--url", url,
+        ])
+        assert result.exit_code == 1, result.output
+        assert self.SECRET not in result.output
+        assert not store_path.exists() or self.SECRET not in (
+            store_path.read_text(encoding="utf-8")
+        )
+
+    def test_node_list_never_shows_a_stored_one(self, store_path):
+        from src.schemas.node import InferenceNode, NodeKind
+
+        NodeStore(store_path).upsert(InferenceNode(
+            node_id="old", label="Old box", kind=NodeKind.OLLAMA,
+            url="ftp://alice:s3cret@10.0.0.9:11434",
+        ))
+        for args in (["node", "list"], ["node", "list", "--json"],
+                     ["node", "show", "old"]):
+            result = CliRunner().invoke(app, args)
+            assert self.SECRET not in result.output, args
+            assert "alice" not in result.output, args
+
+    def test_node_add_works_beside_a_non_utf8_endpoint_file(self, store_path):
+        (store_path.parent / "model_endpoints.yaml").write_bytes(
+            b"endpoints:\n  bad: \"\xff\xfe\"\n"
+        )
+        result = CliRunner().invoke(app, [
+            "node", "add", "--label", "Kitchen", "--kind", "ollama",
+            "--url", "http://10.0.0.8",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "Traceback" not in result.output
+        assert [n.label for n in NodeStore(store_path).load()[0]] == ["Kitchen"]

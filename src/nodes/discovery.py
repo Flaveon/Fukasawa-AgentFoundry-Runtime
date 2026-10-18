@@ -191,6 +191,43 @@ USERINFO_REFUSED = (
 MALFORMED_ADDRESS = "That address is not one this program can use. Check it and try again."
 
 
+#: A URL scheme as RFC 3986 spells one: a letter, then letters, digits,
+#: ``+``, ``-`` or ``.``, then a colon.
+_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*:")
+
+#: The only schemes this program can reach a computer with.
+_USABLE_SCHEMES = ("http", "https")
+
+
+def _authority_any_scheme(text: str) -> tuple[str, str, str]:
+    """Split an address into ``(lead, authority, rest)`` whatever its scheme.
+
+    ``_normalise`` recognises only ``http`` and ``https``; anything else gets
+    ``http://`` put in front, so ``ftp://alice:pw@host`` read as a host
+    called "ftp" and its userinfo was never seen -- accepted, saved, and
+    shown in clear (review of PR #33). The checks that keep a password out
+    of the program therefore read the authority here instead, before any
+    scheme is judged usable: ``lead`` is whatever scheme and slashes came
+    first (``ftp://``, ``//``, ``http:/``, or nothing), ``authority`` runs
+    to the first ``/``, ``?`` or ``#`` after it, and ``rest`` is the
+    remainder. A scheme with no slash after it (``mailto:``) is left inside
+    the authority, where its ``@`` is still found.
+    """
+    s = text.strip()
+    lead = ""
+    found = _SCHEME.match(s)
+    if found and s[found.end():].startswith("/"):
+        lead, s = found.group(0), s[found.end():]
+    slashes = len(s) - len(s.lstrip("/"))
+    lead, s = lead + s[:slashes], s[slashes:]
+    end = len(s)
+    for mark in ("/", "?", "#"):
+        at = s.find(mark)
+        if at != -1:
+            end = min(end, at)
+    return lead, s[:end], s[end:]
+
+
 def has_userinfo(host: str) -> bool:
     """Whether this address names a user name and/or a password.
 
@@ -201,8 +238,8 @@ def has_userinfo(host: str) -> bool:
     through ``_normalise``/``_split_authority`` exactly as any other
     address is, so this never raises on its own.
     """
-    _scheme, prefix, _netloc, _rest = _split_authority(_normalise(host))
-    return bool(prefix)
+    _lead, authority, _rest = _authority_any_scheme(host)
+    return "@" in authority
 
 
 def redact_userinfo(url: str) -> str:
@@ -214,11 +251,10 @@ def redact_userinfo(url: str) -> str:
     old record naming one is still visible enough to find and fix, without
     the secret itself ever being shown again.
     """
-    base = _normalise(url)
-    scheme, prefix, netloc, rest = _split_authority(base)
-    if not prefix:
+    if not has_userinfo(url):
         return url
-    return f"{scheme}://…@{netloc}{rest}"
+    lead, authority, rest = _authority_any_scheme(url)
+    return f"{lead}…@{authority.rpartition('@')[2]}{rest}"
 
 
 #: Matches userinfo wherever it appears in free text, not only in an
@@ -261,8 +297,10 @@ def address_problem(host: str) -> Optional[str]:
     (``NodeStore.load``); only a *new* one is held to this.
 
     Two refusals, named separately because they call for different
-    corrections: userinfo (``USERINFO_REFUSED``), and a handful of shapes
-    that are not a usable address at all -- a non-numeric port, more than
+    corrections: userinfo (``USERINFO_REFUSED``, found whatever the scheme
+    -- see ``_authority_any_scheme``), and a handful of shapes that are not
+    a usable address at all -- a scheme other than http or https (``ftp://``,
+    ``file://``), a leading ``//``, a scheme with one slash, a non-numeric port, more than
     one of them, or something after a bracketed host's ``]`` that is not
     ``:<port>``. The "more than one colon" check is skipped when the host
     has no ``.`` in it: a bare IPv6 host (``::1``) is also full of colons
@@ -270,10 +308,19 @@ def address_problem(host: str) -> Optional[str]:
     rather than refuses it -- a dotted host with more than one colon
     (``10.0.0.9:11434:1``) is not that, so it is still caught.
     """
-    base = _normalise(host)
-    _scheme, prefix, netloc, _rest = _split_authority(base)
-    if prefix:
+    if has_userinfo(host):
         return USERINFO_REFUSED
+    typed = host.strip()
+    if "://" in typed and typed.partition("://")[0].lower() not in _USABLE_SCHEMES:
+        return MALFORMED_ADDRESS
+    found = _SCHEME.match(typed)
+    if typed.startswith("/") or (
+        found and typed[found.end():].startswith("/")
+        and not typed[found.end():].startswith("//")
+    ):
+        return MALFORMED_ADDRESS
+    base = _normalise(host)
+    _scheme, _prefix, netloc, _rest = _split_authority(base)
     if netloc.startswith("["):
         close = netloc.find("]")
         if close == -1:

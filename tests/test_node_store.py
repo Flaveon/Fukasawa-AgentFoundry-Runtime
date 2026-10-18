@@ -554,3 +554,50 @@ class TestLegacyEndpointsRefuseUserinfo:
         )
         with pytest.raises(ValueError):
             legacy_endpoints(path)
+
+
+class TestUserinfoInAnyScheme:
+    """Review of PR #33: a stored address in a scheme other than http/https
+    hid its userinfo from every check, so it resolved and was displayed."""
+
+    def test_a_computer_naming_a_password_in_another_scheme_is_left_out(
+        self, store
+    ):
+        store.upsert(node(node_id="tainted",
+                          url="ftp://alice:s3cret@10.0.0.9:11434"))
+        assert "tainted" not in merged_endpoints(store)
+
+    def test_an_endpoint_naming_a_password_in_another_scheme_is_refused(
+        self, store
+    ):
+        path = store.path.parent / "model_endpoints.yaml"
+        path.write_text(
+            "endpoints:\n  mine:\n    kind: ollama\n"
+            "    url: ssh://alice:s3cret@10.0.0.9:11434\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError) as exc:
+            legacy_endpoints(path)
+        assert "s3cret" not in str(exc.value)
+
+
+class TestANonUtf8EndpointFile:
+    """Review of PR #33: `_legacy_names` caught `OSError` and `YAMLError`
+    but not `UnicodeDecodeError`, so a non-UTF-8 `model_endpoints.yaml`
+    crashed `node add` with a traceback. A file that cannot be read
+    reserves no names -- the rule for any unreadable file -- and adding a
+    computer still works."""
+
+    def test_it_reserves_no_names_instead_of_crashing(self, store):
+        from src.nodes.registry import names_in_use
+
+        path = store.path.parent / "model_endpoints.yaml"
+        path.write_bytes(b"endpoints:\n  gpu:\n    kind: ollama\n"
+                         b"    url: http://10.0.0.9:11434\n  bad: \"\xff\xfe\"\n")
+        assert names_in_use(path) >= set()  # no exception
+
+    def test_a_computer_can_still_be_added(self, store):
+        path = store.path.parent / "model_endpoints.yaml"
+        path.write_bytes(b"endpoints:\n  bad: \"\xff\xfe\"\n")
+        store.upsert(node(node_id="kitchen", url="http://10.0.0.8:11434"))
+        assert [n.node_id for n in store.load()[0]] == ["kitchen"]

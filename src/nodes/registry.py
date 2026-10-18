@@ -94,7 +94,10 @@ def _legacy_names(path: Path) -> set[str]:
         return set()
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
+    except (OSError, yaml.YAMLError, UnicodeDecodeError):
+        # Not UTF-8 is unreadable too (review of PR #33): it crashed `node
+        # add` with a traceback instead of reserving nothing, the rule for
+        # any file this program cannot read.
         return set()
     if not isinstance(raw, dict):
         return set()

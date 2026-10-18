@@ -437,3 +437,60 @@ class TestTheStream:
         assert node_a.node_id != node_b.node_id
         assert node_a.node_id == "ollama-10-0-0-9-11434"
         assert node_b.node_id == "ollama-10-0-0-5-11434"
+
+
+class TestUserinfoWhateverTheScheme:
+    """Review of PR #33: only `http` and `https` were recognised as schemes,
+    so `ftp://alice:s3cret@host` read as a host called "ftp" -- the
+    userinfo was never seen, the address was accepted, saved, and then
+    shown in clear by every listing. Userinfo is found before any scheme
+    decision, and a scheme this program cannot use is refused outright.
+    """
+
+    TAINTED = [
+        "ftp://alice:s3cret@10.0.0.9",
+        "ssh://alice:s3cret@10.0.0.9:22",
+        "git+ssh://alice:s3cret@10.0.0.9",
+        "svn+https://alice:s3cret@10.0.0.9/repo",
+        "//alice:s3cret@10.0.0.9",
+        "http:/alice:s3cret@10.0.0.9",
+        "HTTPS://alice:s3cret@10.0.0.9",
+        "mailto:alice:s3cret@10.0.0.9",
+    ]
+
+    @pytest.mark.parametrize("url", TAINTED)
+    def test_userinfo_is_seen_in_any_scheme(self, url):
+        assert has_userinfo(url) is True
+
+    @pytest.mark.parametrize("url", TAINTED)
+    def test_redaction_hides_it_in_any_scheme(self, url):
+        redacted = redact_userinfo(url)
+        assert "alice" not in redacted
+        assert "s3cret" not in redacted
+        assert "10.0.0.9" in redacted
+
+    @pytest.mark.parametrize("url", TAINTED)
+    def test_a_typed_one_is_refused_without_echoing_it(self, url):
+        problem = address_problem(url)
+        assert problem is not None
+        assert "alice" not in problem
+        assert "s3cret" not in problem
+
+    @pytest.mark.parametrize("url", [
+        "ftp://10.0.0.9", "ssh://10.0.0.9:22", "file:///etc/hosts",
+        "//10.0.0.9", "http:/10.0.0.9",
+    ])
+    def test_a_scheme_this_program_cannot_use_is_refused(self, url):
+        assert address_problem(url) == MALFORMED_ADDRESS
+
+    @pytest.mark.parametrize("url", [
+        "http://10.0.0.9", "https://10.0.0.9:443", "HTTP://box:9000",
+        "10.0.0.9", "box",
+    ])
+    def test_http_https_and_bare_hosts_are_still_fine(self, url):
+        assert address_problem(url) is None
+        assert has_userinfo(url) is False
+
+    def test_an_at_sign_after_the_host_is_still_not_userinfo(self):
+        assert has_userinfo("ftp://10.0.0.9/p@x") is False
+        assert has_userinfo("http://box?a=@b") is False
