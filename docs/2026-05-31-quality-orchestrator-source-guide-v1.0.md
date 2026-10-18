@@ -7,4 +7,4 @@ Original core decision: bootstrap with high-reasoning quality orchestrator; prog
 
 Critical specific acceptance examples: Angela PASS must never override a placeholder blocker; a claimed tool needs working code; publish notes cannot authorize held artifacts; stable checked corrections become transferable validated capsules; ambiguity escalates to humans.
 
-The original source is *not* proven present at this path in the GitHub default branch. Import its full text from the original local workspace into a versioned source archive during M0, preserving original date, and record its checksum/provenance. Do not relabel this summary as the original source. See `docs/fukasawa-north-star-v1.0.md`.
+**The original is now archived verbatim** at `docs/source-archive/2026-05-31-fukasawa-quality-orchestrator-plan.md` (SHA-256 `82ca7abf…10ad122f`; provenance, original commit and the hashes of the doctrine it cites are in `docs/source-archive/PROVENANCE.md`). Read that file for the source; this page stays a summary. Do not relabel this summary as the original source. See `docs/fukasawa-north-star-v1.0.md`.
