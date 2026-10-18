@@ -51,6 +51,7 @@ RULE_FILE = SRC_DIR / "governance" / "package_consistency.py"
 
 
 def _load_module(name: str, filename: str):
+    """Load one experiment-directory script as a module (its dir name is not a valid package id)."""
     spec = importlib.util.spec_from_file_location(name, EXPERIMENT_DIR / filename)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

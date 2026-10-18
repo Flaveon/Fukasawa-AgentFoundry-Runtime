@@ -68,18 +68,37 @@ Nothing is wired in. Rollback is: delete every one of these files —
 * `tests/test_package_consistency_rollback.py`
 * `experiments/issue-27-handoff-verdict/shadow.py` (its only purpose is
   running this rule; it has no function without it)
+* `experiments/issue-27-handoff-verdict/local_only_run.py` (added after
+  the list above was first written — round-2 review nit: it also imports
+  the rule directly, and was missing here)
 * `experiments/issue-27-handoff-verdict/capsule/` (this file and
   `process_capsule.yaml` — a promotion-review artifact for a rule that no
   longer exists)
 
 — and nothing else. `experiments/issue-27-handoff-verdict/PROTOCOL.md`,
-`CANDIDATES.md`, `extract.py`, `baseline.py`, `rerun_timeouts*.py`, and
-everything under `results/` are NOT part of this rollback: they record
-history (the dataset, the baselines, the review, the decision to build
-and then retire this rule) and do not import or depend on the rule module.
+`CANDIDATES.md`, `MUTATIONS.md`, `extract.py`, `baseline.py`,
+`rerun_timeouts*.py`, and everything under `results/` are NOT part of this
+rollback: they record history (the dataset, the baselines, the review,
+the decision to build and then retire this rule) and do not import or
+depend on the rule module.
 `tests/test_package_consistency_rollback.py::test_rest_of_src_does_not_import_the_rule`
 is the automated version of this claim for everything under `src/`; the
 full-suite run above is the automated version of it for the whole repo.
+
+**Verification caveat for `local_only_run.py` specifically (round-2
+review):** it is a standalone script, not a pytest module, so it does not
+automatically benefit from `pyproject.toml`'s `pythonpath = ["."]`. If
+this venv has an editable install of this package (`pip install -e .`),
+that install records an ABSOLUTE path to this worktree's `src/` at install
+time. Deleting `src/governance/package_consistency.py` in a SEPARATE
+scratch copy and then running `python local_only_run.py` there (without
+also setting `PYTHONPATH` to the scratch copy's own root) can silently
+resolve the import back through the editable install to THIS worktree's
+(undeleted) copy — looking like the rollback left something working when
+it did not. Verify this file's rollback the same way the rollback TESTS
+verify the rest: with `PYTHONPATH` pointed explicitly at the copy being
+tested, or via `sys.modules[...] = None`, not by trusting a bare `python
+local_only_run.py` invocation's exit code alone.
 
 ### From a future Advisory or Blocking stage (what it would need; none exists yet)
 

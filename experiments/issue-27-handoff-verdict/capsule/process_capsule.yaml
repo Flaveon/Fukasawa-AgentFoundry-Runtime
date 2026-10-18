@@ -64,6 +64,17 @@ known_failures:
     signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator"
     response: "a human reads the raw handoff directly; an unrecognized shape is never read as 'not
       ship' (this is the v1-to-v2 fail-closed correction; see CANDIDATES.md and PROTOCOL.md Amendment 3)"
+  - failure: "a HOLD report, with exactly ONE of the two fields present and resolved cleanly to a
+      non-blocking value, while the OTHER field is renamed, disguised, or otherwise invisible to even
+      the loose 'is this attempted at all' detector (a zero-width space or homoglyph inside 'Angela
+      verdict' or 'Shipping Decision', a renamed header like '## Shipping' or '## Publish Decision',
+      'Angela's verdict:', 'Reviewer verdict:', or no header/line at all) -- v2.0 read this as
+      genuinely absent and let the one resolved field decide CONSISTENT alone (round-2 review
+      H1-residual)"
+    signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator" (v2.1, PROTOCOL.md Amendment 4)
+    response: "a single resolved, non-blocking field is not enough evidence that the other field has
+      nothing to say -- CONSISTENT on a HOLD report now requires BOTH fields present and resolved; a
+      single CLEAN BLOCKING field (Angela PASS, or a ship line) still BLOCKs on its own, unaffected"
   - failure: quality report verdict is PASS but still lists findings
     signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator"
     response: a PASS verdict with recorded findings is internally inconsistent; do not trust it at face value

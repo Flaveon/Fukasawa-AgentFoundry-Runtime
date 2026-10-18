@@ -82,10 +82,12 @@ def _case_to_rule_inputs(payload: dict[str, Any]) -> tuple[Optional[str], Option
 
 
 def _load_case(case_id: str) -> dict[str, Any]:
+    """Load one sanitized dataset case payload by id."""
     return json.loads((CASES_DIR / f"{case_id}.json").read_text(encoding="utf-8"))
 
 
 def _load_manifest() -> list[dict[str, Any]]:
+    """Load the frozen dataset manifest (case_id, split, label, provenance)."""
     return json.loads((DATASET_DIR / "manifest.json").read_text(encoding="utf-8"))
 
 
@@ -156,6 +158,7 @@ def test_all_real_cases_match_manifest_label() -> None:
     ],
 )
 def test_synthetic_cases(case_id: str, expected: ConsistencyVerdict) -> None:
+    """Run one synthetic dataset fixture through the rule and check its (hand-reasoned) expected verdict."""
     handoff_text, quality_report = _case_to_rule_inputs(_load_case(case_id))
     result = check_package_consistency(handoff_text, quality_report)
     assert result.verdict is expected, f"{case_id}: expected {expected}, got {result.verdict} ({result.reasons})"
@@ -318,9 +321,16 @@ ADVERSARIAL_CASES: dict[str, tuple[str, ConsistencyVerdict]] = {
     ),
     "angela_only_NR_no_section": (
         _BASE_HEADER + _NEEDS_REVISION + "\n",
-        # NEEDS_REVISION (not PASS) and no Shipping section attempted at
-        # all: nothing contradicts a HOLD report here.
-        ConsistencyVerdict.CONSISTENT,
+        # v2.1 correction (PROTOCOL.md Amendment 4, round-2 review H1-residual):
+        # NEEDS_REVISION (not PASS) alone, with NO Shipping Decision section
+        # attempted at all, used to resolve CONSISTENT ("nothing contradicts
+        # a HOLD report here"). That let a renamed/disguised Shipping header
+        # silently drop out of the comparison and still reach CONSISTENT. A
+        # HOLD report now requires BOTH fields present and resolved to reach
+        # CONSISTENT -- one clean, non-blocking field alone is not enough
+        # evidence that the (possibly just-renamed) other field has nothing
+        # to say. See CANDIDATES.md and MUTATIONS.md.
+        ConsistencyVerdict.ABSTAIN,
     ),
     "angela_NR_section_unparseable": (
         _handoff(_NEEDS_REVISION, "## Shipping Decision\nShip everything."),
@@ -341,11 +351,110 @@ ADVERSARIAL_CASES: dict[str, tuple[str, ConsistencyVerdict]] = {
         # either loose detector.
         ConsistencyVerdict.ABSTAIN,
     ),
+    # --- Round 2 (adv2.py): a field disguised/renamed so the LOOSE "is
+    # this even attempted" detector misses it, leaving the OTHER field to
+    # decide CONSISTENT alone (H1-residual; fixed by Amendment 4's
+    # both-fields-required rule). All of these pair a clean, NON-blocking
+    # value on one field (NEEDS_REVISION, or "hold") with a disguised
+    # attempt at the other -- none of them contain a clean block signal,
+    # so the fix must turn every one of these into ABSTAIN.
+    "hdr_renamed_Shipping": (
+        _handoff(_NEEDS_REVISION, "## Shipping\n- Article HTML: ship\n- Visual support: ship"),
+        ConsistencyVerdict.ABSTAIN,
+    ),
+    "hdr_renamed_ShipDecision": (
+        _handoff(_NEEDS_REVISION, "## Ship Decision\n- Article HTML: ship\n- Visual support: ship"),
+        ConsistencyVerdict.ABSTAIN,
+    ),
+    "hdr_renamed_Publish": (
+        _handoff(_NEEDS_REVISION, "## Publish Decision\n- Article HTML: ship\n- Visual support: ship"),
+        ConsistencyVerdict.ABSTAIN,
+    ),
+    "hdr_zwsp": (
+        _handoff(_NEEDS_REVISION, "## Shipping​Decision\n- Article HTML: ship\n- Visual support: ship"),
+        ConsistencyVerdict.ABSTAIN,  # zero-width space defeats the loose detector
+    ),
+    "hdr_cyrillic_e": (
+        _handoff(_NEEDS_REVISION, "## Shipping Dеcision\n- Article HTML: ship\n- Visual support: ship"),
+        ConsistencyVerdict.ABSTAIN,  # Cyrillic е is not Latin "e"
+    ),
+    "hdr_hyphen": (
+        _handoff(_NEEDS_REVISION, "## Shipping-Decision\n- Article HTML: ship\n- Visual support: ship"),
+        ConsistencyVerdict.ABSTAIN,
+    ),
+    "no_header_bullets_only": (
+        _handoff(_NEEDS_REVISION, "- Article HTML: ship\n- Visual support: ship"),
+        ConsistencyVerdict.ABSTAIN,  # bullets with no header at all -> never attempted
+    ),
+    "angela_renamed_possessive_ship_hold": (
+        _handoff("Angela's verdict: PASS", "## Shipping Decision\n- Article HTML: hold"),
+        ConsistencyVerdict.ABSTAIN,  # "Angela's" breaks the loose detector; shipping alone is clean+non-blocking
+    ),
+    "angela_zwsp_label": (
+        _handoff("Angela​verdict: PASS", "## Shipping Decision\n- Article HTML: hold"),
+        ConsistencyVerdict.ABSTAIN,
+    ),
+    "angela_cyrillic_label": (
+        _handoff("Аngela verdict: PASS", "## Shipping Decision\n- Article HTML: hold"),
+        ConsistencyVerdict.ABSTAIN,  # Cyrillic А is not Latin "A"
+    ),
+    "angela_reviewer_renamed": (
+        _handoff("Reviewer verdict: PASS", "## Shipping Decision\n- Article HTML: hold"),
+        ConsistencyVerdict.ABSTAIN,
+    ),
+    # --- Round 2 regression guards: these were already correct in v2 and
+    # must stay that way under the Amendment 4 fix.
+    "value_zwsp_ship": (
+        _handoff(_NEEDS_REVISION, "## Shipping Decision\n- Article HTML: s​hip"),
+        ConsistencyVerdict.ABSTAIN,  # ZWSP inside the VALUE -> not an exact "ship" match
+    ),
+    "h1_after_section": (
+        _handoff(_NEEDS_REVISION, "## Shipping Decision\n- Article HTML: hold\n# Later\n- Visual: ship"),
+        ConsistencyVerdict.ABSTAIN,
+    ),
+    "h3_inside_section": (
+        _handoff(_NEEDS_REVISION, "## Shipping Decision\n- Article HTML: hold\n### more\n- Visual: ship"),
+        ConsistencyVerdict.ABSTAIN,
+    ),
+    "html_comment_hidden": (
+        _handoff(_NEEDS_REVISION, "## Shipping Decision\n- Article HTML: hold <!-- ship -->"),
+        ConsistencyVerdict.ABSTAIN,  # trailing content -> not an exact value match
+    ),
+    "label_with_colon": (
+        _handoff(_NEEDS_REVISION, "## Shipping Decision\n- Article HTML: v2: ship"),
+        ConsistencyVerdict.ABSTAIN,
+    ),
+    "all_hold_NR": (
+        _handoff(_NEEDS_REVISION, "## Shipping Decision\n- Article HTML: hold\n- Visual support: do not ship"),
+        # BOTH fields present and resolved, neither blocking -> genuinely CONSISTENT.
+        ConsistencyVerdict.CONSISTENT,
+    ),
+    "section_then_prose_same_para": (
+        _handoff(_NEEDS_REVISION, "## Shipping Decision\n- Article HTML: hold\nActually ship it."),
+        ConsistencyVerdict.ABSTAIN,
+    ),
+    "fenced_code_section": (
+        _handoff(_NEEDS_REVISION, "```\n## Shipping Decision\n- Article HTML: ship\n```"),
+        ConsistencyVerdict.ABSTAIN,
+    ),
+    "empty_section_then_header": (
+        _handoff(_NEEDS_REVISION, "## Shipping Decision\n## Next\n- Article HTML: ship"),
+        ConsistencyVerdict.ABSTAIN,  # zero bullets in the section itself
+    ),
+    "angela_FAIL_ship_HOLD": (
+        _handoff("Angela verdict: FAIL", "## Shipping Decision\n- Article HTML: ship"),
+        ConsistencyVerdict.BLOCK,  # FAIL is not PASS, but the clean "ship" line still blocks
+    ),
+    "lowercase_hdr": (
+        _handoff(_NEEDS_REVISION, "## shipping decision\n- Article HTML: ship\n- Visual support: ship"),
+        ConsistencyVerdict.BLOCK,
+    ),
 }
 
 
 @pytest.mark.parametrize("name", sorted(ADVERSARIAL_CASES))
 def test_adversarial_cases_from_independent_review(name: str) -> None:
+    """Run one ADVERSARIAL_CASES fixture (from the review's adv.py/adv2.py) against a HOLD report."""
     handoff_text, expected = ADVERSARIAL_CASES[name]
     result = check_package_consistency(handoff_text, _HOLD_REPORT)
     assert result.verdict is expected, f"{name}: expected {expected}, got {result.verdict} ({result.reasons})"
@@ -374,6 +483,29 @@ def test_report_variants_from_independent_review(name: str, report) -> None:
         assert result.verdict is ConsistencyVerdict.ABSTAIN, f"{name}: got {result.verdict}"
 
 
+@pytest.mark.parametrize(
+    "name,report,expected",
+    [
+        # Round 2 (adv2.py): PASS-report "findings" shape variants.
+        (
+            "findings_empty_list_counts_nonempty",
+            {"verdict": "PASS", "findings": [], "finding_counts": {"x": 1}},
+            ConsistencyVerdict.ABSTAIN,  # finding_counts disagrees with the empty findings list
+        ),
+        ("findings_dict_empty", {"verdict": "PASS", "findings": {}}, ConsistencyVerdict.CONSISTENT),
+        ("findings_zero", {"verdict": "PASS", "findings": 0}, ConsistencyVerdict.CONSISTENT),
+        ("findings_str", {"verdict": "PASS", "findings": "x"}, ConsistencyVerdict.ABSTAIN),
+    ],
+)
+def test_pass_report_findings_shape_variants_from_independent_review(
+    name: str, report: dict, expected: ConsistencyVerdict
+) -> None:
+    """PASS-report 'findings' shapes the round-2 review tried, against a clean, real-shaped handoff."""
+    handoff_text = _handoff("Angela verdict: PASS", "## Shipping Decision\n- Article HTML: ship")
+    result = check_package_consistency(handoff_text, report)
+    assert result.verdict is expected, f"{name}: expected {expected}, got {result.verdict}"
+
+
 def test_nonstr_handoff_text_raises_rather_than_silently_passing() -> None:
     """bytes/int are not a supported handoff_text type; this documents what happens, not a crash fix."""
     with pytest.raises(TypeError):
@@ -395,9 +527,30 @@ def test_angela_pass_alone_blocks_with_no_shipping_section_at_all() -> None:
 
 
 @pytest.mark.parametrize("value", ["NEEDS_REVISION", "FAIL"])
-def test_angela_qualified_values_alone_are_consistent_not_blocked(value: str) -> None:
-    """The qualifier, pinned alone: NEEDS_REVISION and FAIL are recognized but never a PASS claim."""
+def test_angela_qualified_values_alone_abstain_not_block(value: str) -> None:
+    """The qualifier, pinned alone: NEEDS_REVISION/FAIL are recognized but never read as a PASS claim.
+
+    v2.1 correction (PROTOCOL.md Amendment 4): this used to assert
+    CONSISTENT for a qualified value with no Shipping section at all. That
+    is now ABSTAIN (Amendment 4 -- a HOLD report needs BOTH fields to
+    reach CONSISTENT). What this test still pins is narrower, but still
+    real: NEEDS_REVISION/FAIL must NOT be treated as a PASS claim and
+    BLOCK -- compare test_angela_pass_alone_blocks_with_no_shipping_section_at_all,
+    which proves PASS alone DOES block the same way.
+    """
     handoff_text = f"# Duath Operator Handoff\n\nAngela verdict: {value}\n"
+    result = check_package_consistency(handoff_text, {"verdict": "HOLD"})
+    assert result.verdict is ConsistencyVerdict.ABSTAIN
+    assert result.verdict is not ConsistencyVerdict.BLOCK
+
+
+@pytest.mark.parametrize("value", ["NEEDS_REVISION", "FAIL"])
+def test_angela_qualified_values_with_clean_shipping_are_consistent(value: str) -> None:
+    """With BOTH fields present and resolved, a qualified Angela value + an all-hold Shipping section is CONSISTENT."""
+    handoff_text = (
+        f"# Duath Operator Handoff\n\nAngela verdict: {value}\n\n"
+        "## Shipping Decision\n- Article HTML: hold\n- Visual support: do not ship\n"
+    )
     result = check_package_consistency(handoff_text, {"verdict": "HOLD"})
     assert result.verdict is ConsistencyVerdict.CONSISTENT
 
@@ -405,6 +558,24 @@ def test_angela_qualified_values_alone_are_consistent_not_blocked(value: str) ->
 def test_angela_unknown_alone_abstains() -> None:
     """UNKNOWN is a recognized token, but the pipeline's own placeholder value, not a real answer."""
     handoff_text = "# Duath Operator Handoff\n\nAngela verdict: UNKNOWN\n"
+    result = check_package_consistency(handoff_text, {"verdict": "HOLD"})
+    assert result.verdict is ConsistencyVerdict.ABSTAIN
+
+
+def test_angela_unknown_with_shipping_present_still_abstains() -> None:
+    """UNKNOWN is rejected on its OWN terms, isolated from Amendment 4's both-fields rule.
+
+    test_angela_unknown_alone_abstains (above) has no Shipping Decision
+    section at all, so after the Amendment 4 fix it would ABSTAIN anyway
+    (missing field), even if the UNKNOWN-specific check were deleted --
+    it no longer isolates that check. This test gives UNKNOWN a BOTH
+    fields present scenario (shipping resolves cleanly, non-blocking) so
+    ABSTAIN can only come from the UNKNOWN rejection itself.
+    """
+    handoff_text = (
+        "# Duath Operator Handoff\n\nAngela verdict: UNKNOWN\n\n"
+        "## Shipping Decision\n- Article HTML: hold\n"
+    )
     result = check_package_consistency(handoff_text, {"verdict": "HOLD"})
     assert result.verdict is ConsistencyVerdict.ABSTAIN
 
@@ -470,6 +641,23 @@ def test_abstain_branch_handoff_readable_but_missing_both_fields() -> None:
     assert result.verdict is ConsistencyVerdict.ABSTAIN
 
 
+def test_abstain_branch_neither_field_present_isolated_from_amendment_4_on_a_pass_report() -> None:
+    """The "neither field attempted" ABSTAIN, isolated from Amendment 4's both-fields rule.
+
+    On a HOLD report, Amendment 4's "both fields required for CONSISTENT"
+    branch would ALSO reach ABSTAIN for a handoff with neither field
+    present, even without this earlier, more specific check -- so a HOLD
+    report can't isolate this branch anymore. The PASS branch, by design,
+    never reaches Amendment 4's check at all (a PASS report's CONSISTENT
+    does not require any handoff field), so a PASS report with a
+    completely unrelated handoff can only reach ABSTAIN through THIS
+    check.
+    """
+    handoff_text = "# Some Other Document\n\nThis has nothing to do with Duath at all.\n"
+    result = check_package_consistency(handoff_text, {"verdict": "PASS"})
+    assert result.verdict is ConsistencyVerdict.ABSTAIN
+
+
 def test_abstain_branch_pass_report_with_findings() -> None:
     """Pinned alone: a PASS verdict that still lists findings is internally inconsistent."""
     handoff_text = "# Duath Operator Handoff\n\nAngela verdict: PASS\n"
@@ -491,6 +679,30 @@ def test_block_takes_priority_over_an_unrelated_abstain_worthy_field() -> None:
     )
     result = check_package_consistency(handoff_text, {"verdict": "HOLD"})
     assert result.verdict is ConsistencyVerdict.BLOCK
+
+
+def test_consistent_on_hold_requires_both_fields_angela_side() -> None:
+    """Amendment 4, pinned directly: Angela clean+non-blocking, Shipping Decision never attempted at all -> ABSTAIN, not CONSISTENT."""
+    handoff_text = "# Duath Operator Handoff\n\nAngela verdict: NEEDS_REVISION\n"
+    result = check_package_consistency(handoff_text, {"verdict": "HOLD"})
+    assert result.verdict is ConsistencyVerdict.ABSTAIN
+
+
+def test_consistent_on_hold_requires_both_fields_shipping_side() -> None:
+    """Amendment 4, pinned directly: Shipping Decision clean+non-blocking, Angela line never attempted at all -> ABSTAIN, not CONSISTENT."""
+    handoff_text = "# Duath Operator Handoff\n\n## Shipping Decision\n- Article HTML: hold\n"
+    result = check_package_consistency(handoff_text, {"verdict": "HOLD"})
+    assert result.verdict is ConsistencyVerdict.ABSTAIN
+
+
+def test_consistent_on_hold_with_both_fields_present_and_clean() -> None:
+    """Amendment 4's positive case: both fields present and resolved, neither blocking -> genuinely CONSISTENT."""
+    handoff_text = (
+        "# Duath Operator Handoff\n\nAngela verdict: NEEDS_REVISION\n\n"
+        "## Shipping Decision\n- Article HTML: hold\n"
+    )
+    result = check_package_consistency(handoff_text, {"verdict": "HOLD"})
+    assert result.verdict is ConsistencyVerdict.CONSISTENT
 
 
 # --- Mutation check: break the HOLD comparison and confirm the test goes red ---

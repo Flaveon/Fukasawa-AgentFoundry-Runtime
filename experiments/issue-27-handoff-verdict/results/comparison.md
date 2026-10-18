@@ -13,7 +13,7 @@ and capsule/ROLLOUT.md for promotion status.
 | held-out | 23 | 0 | 0 | 0 | 23 |
 | synthetic | 9 | 0 | 0 | 6 | 8 |
 
-Total wall time: 0.000613s. Model calls: 0. Prompt tokens: 0. Completion tokens: 0.
+Total wall time: 0.000611s. Model calls: 0. Prompt tokens: 0. Completion tokens: 0.
 
 **One known, deliberate synthetic mismatch (not a defect):**
 `synthetic-adversarial-hold-prose-001`'s FROZEN manifest label is
@@ -102,7 +102,7 @@ run 2's 18 NOT_RUNs at 600s, hard stop 2026-10-18T09:30Z.
 - Runs 1+2 'combined' wall time (replaces a case's run-1 entry with its run-2 outcome, so run 1's time on a later-superseded case is NOT counted twice, but also not counted at all): 6153.4s
 - Runs 1+2+3 'combined' wall time (same caveat): 11736.2s
 - **Total wall time ACTUALLY spent across every attempt in all three runs, including the 36 run-1 calls that timed out and were later superseded** (M4b — this is the real cost, not the 'combined' figure above, which silently drops superseded attempts): **18219.0s** (7226.8 + 5409.2 + 5582.9).
-- Rule (treatment) wall time for all 44 cases: 0.000613s, 0 tokens, 0 calls.
+- Rule (treatment) wall time for all 44 cases: 0.000611s, 0 tokens, 0 calls.
 
 ### Baseline B on the SAME frozen metric as the Treatment table (M4a)
 
@@ -110,6 +110,20 @@ PROTOCOL.md's Metrics section defines escaped blockers / false
 positives / abstentions for every method, not just the rule.
 Mapped onto Baseline B's SHIP/HOLD/ESCALATE answer (SHIP~allow,
 HOLD~flag, ESCALATE~abstain), combined across all three runs:
+
+**Caveat on this mapping (round-2 review nit):** counting every HOLD
+answer as a 'false positive' when the label is not CONTRADICTION is
+coarser than it sounds. B's HOLD means 'don't ship' -- a cautious,
+safe recommendation, not necessarily a claim that a contradiction was
+found. On `synthetic-adversarial-hold-prose-001` (label CONSISTENT; a
+HOLD report whose handoff ALSO legitimately says hold) and the 3
+NO_EVIDENCE cases whose underlying report happens to be HOLD, B
+correctly said HOLD -- the SAFE answer -- and it is counted below as a
+'false positive' anyway, because this metric only tracks SHIP/HOLD/
+ESCALATE against CONTRADICTION/not-CONTRADICTION, not against what a
+human would actually have wanted B to say. Read the table's
+'false positives' column as 'B said HOLD on a non-CONTRADICTION case',
+not as 'B invented a contradiction that was not there'.
 
 | split | cases | escaped blockers | false positives | abstentions | matches ground truth |
 |---|---|---|---|---|---|

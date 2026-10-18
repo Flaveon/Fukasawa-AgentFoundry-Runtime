@@ -315,18 +315,27 @@ def check_package_consistency(
             dict is ignored.
 
     Returns:
-        A ``ConsistencyResult``. Verdict is BLOCK only when the report says
-        HOLD and the handoff contains a recognized, unqualified Angela PASS
-        claim or a recognized Shipping Decision line whose value is exactly
-        "ship"; CONSISTENT when a full comparison was possible and found no
-        such claim; ABSTAIN whenever the comparison itself could not be
-        made — including when a field exists but does not match this
-        check's allowlist of recognized shapes and values. ABSTAIN is
-        never collapsed into CONSISTENT: a field this check cannot
-        confidently read is treated as evidence that the check could not
-        be performed, not as evidence that nothing is wrong. This is the
-        core correction from v1 (see module docstring): a document that
-        LOOKS unlike what this check expects is never silently treated as
+        A ``ConsistencyResult``. Verdict is BLOCK when the report says HOLD
+        and the handoff contains a recognized, unqualified Angela PASS
+        claim OR a recognized Shipping Decision line whose value is
+        exactly "ship" (either one alone is sufficient); CONSISTENT on a
+        HOLD report only when BOTH the Angela line and the Shipping
+        Decision section are present and resolve cleanly to a recognized,
+        non-blocking value (PROTOCOL.md Amendment 4 — a single resolved,
+        non-blocking field is not enough: the OTHER field may be missing,
+        renamed, or disguised rather than genuinely absent, so one field
+        alone cannot prove nothing is wrong); ABSTAIN whenever the
+        comparison itself could not be made — including when a field
+        exists but does not match this check's allowlist of recognized
+        shapes and values, OR when exactly one of the two fields was never
+        attempted at all. ABSTAIN is never collapsed into CONSISTENT: a
+        field this check cannot confidently read, or cannot find at all
+        while the other field offers no blocking claim, is treated as
+        evidence that the check could not be performed, not as evidence
+        that nothing is wrong. This is the core correction from v1 (see
+        module docstring): a document that LOOKS unlike what this check
+        expects — including one where a renamed or disguised field quietly
+        drops out of the comparison — is never silently treated as
         "not ship" / "not PASS".
 
     What this function does NOT check (boundaries):
@@ -434,16 +443,19 @@ def check_package_consistency(
         # The real pipeline's quality-report.json carries findings as a
         # list under "findings"; this repo's sanitized dataset reduces that
         # to a dict of counts under "finding_counts" (see extract.py). A
-        # caller may hand either shape — prefer "findings" (the real,
-        # unreduced shape) when both happen to be present.
+        # caller may hand either shape, or (inconsistently) both -- treat
+        # EITHER being non-empty as "still lists findings". An earlier
+        # version of this check only looked at "findings" and fell through
+        # to CONSISTENT when it was an empty list even if "finding_counts"
+        # was non-empty (round-2 review nit); checking both closes that.
         findings = quality_report.get("findings") if isinstance(quality_report, dict) else None
-        if findings is None and isinstance(quality_report, dict):
-            findings = quality_report.get("finding_counts")
-        if findings:
+        finding_counts = quality_report.get("finding_counts") if isinstance(quality_report, dict) else None
+        if findings or finding_counts:
             return ConsistencyResult(
                 verdict=ConsistencyVerdict.ABSTAIN,
                 reasons=(
-                    f"quality report verdict is PASS but still lists findings ({findings}) "
+                    f"quality report verdict is PASS but still lists findings "
+                    f"(findings={findings}, finding_counts={finding_counts}) "
                     "— the report is internally inconsistent",
                 ),
                 escalation_target="human operator",
@@ -455,6 +467,28 @@ def check_package_consistency(
 
     # report_verdict == "HOLD", no block_reasons were found above, and
     # neither field was unparseable (abstain_reasons is empty, or this
-    # point would not have been reached) -- both fields are either absent
-    # or resolved to a non-blocking value.
-    return ConsistencyResult(verdict=ConsistencyVerdict.CONSISTENT)
+    # point would not have been reached).
+    #
+    # v2.1 fix (PROTOCOL.md Amendment 4, post-review round 2): CONSISTENT
+    # requires BOTH fields to be present and successfully resolved. A
+    # single clean, non-blocking field is not enough — if the OTHER field
+    # was never attempted at all (a renamed header, a disguised label, a
+    # zero-width space or homoglyph that defeats even the loose "is this
+    # attempted" detector), that is missing evidence, not evidence of
+    # nothing wrong. Only a field this check can actually read counts; one
+    # resolved field plus one genuinely absent field abstains.
+    if angela.attempted and shipping.attempted:
+        return ConsistencyResult(verdict=ConsistencyVerdict.CONSISTENT)
+    return ConsistencyResult(
+        verdict=ConsistencyVerdict.ABSTAIN,
+        reasons=(
+            "only one of the Angela verdict line and the Shipping Decision section was "
+            "present and parsed; both are required to conclude CONSISTENT on a HOLD report "
+            "-- a single resolved field is not enough evidence that nothing is wrong",
+        ),
+        escalation_target="human operator",
+        escalation_reason=(
+            "the other field may be missing, renamed, or disguised rather than genuinely "
+            "absent; a single field's clean, non-blocking value is not sufficient evidence"
+        ),
+    )

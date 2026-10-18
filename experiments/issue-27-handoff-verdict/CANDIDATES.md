@@ -213,3 +213,58 @@ ABSTAIN. New decisions made during that rewrite:
     value as the clean token it resembles; it ABSTAINs. This is a
     deliberate behavior change, not a bug: it is stricter, and strictness
     in the ABSTAIN direction is the entire point of the rewrite.
+
+## v2.1 (post-review round 2, PROTOCOL.md Amendment 4) — the H1-residual fix
+
+A second review found the "attempted" vs. "absent" distinction itself
+was fail-open: a field detector that fires on literal text (`angela\s*verdict`,
+`shipping\s*decision`) treats a RENAMED or DISGUISED field (a ZWSP or
+Cyrillic homoglyph inside the header, `## Shipping` instead of
+`## Shipping Decision`, `Angela's verdict:`, `Reviewer verdict:`, no
+header at all) as genuinely absent rather than malformed — letting the
+OTHER field decide `CONSISTENT` alone, with no `ABSTAIN` branch ever
+triggered for the disguised one. See `adv2.py`'s 11 cases (now committed
+as `tests/test_package_consistency.py::ADVERSARIAL_CASES`).
+
+13. **Accepted: on a HOLD report, `CONSISTENT` now requires BOTH fields
+    present and resolved; a single clean field can still `BLOCK` on its
+    own.** This is the direct fix. `CANDIDATES` decision 3 (Angela-PASS-
+    alone is sufficient for `BLOCK`) is preserved exactly — only the
+    `CONSISTENT` path tightens. Verified against the dataset: all 35 real
+    cases have both fields, so no real label changes; the 3 synthetic
+    cases with neither field were already `ABSTAIN` via the earlier
+    "neither attempted" branch, so no synthetic label changes either (see
+    PROTOCOL.md Amendment 4 for the full verification).
+
+14. **Rejected: trying to detect "this LOOKS like a renamed field" and
+    abstain on that basis specifically**, e.g. a fuzzy/edit-distance match
+    against "Shipping Decision" or "Angela verdict". This would require
+    guessing at a threshold (how close is "close enough to flag as
+    suspicious"?) and risks either missing genuinely unrelated text
+    (threshold too strict) or flagging legitimately different documents
+    as "suspiciously similar" (threshold too loose) — a new source of
+    exactly the brittle, clever-matching failure mode H1 already removed
+    once. The both-fields-required rule achieves the same safety
+    (nothing slips through to CONSISTENT on a disguised field) without
+    needing to characterize what a "disguise" looks like at all.
+
+15. **Accepted: two existing tests had to be INVERTED rather than left
+    passing by coincidence** — `angela_only_NR_no_section` (in
+    `ADVERSARIAL_CASES`) and the renamed
+    `test_angela_qualified_values_alone_abstain_not_block` (was
+    `..._are_consistent_not_blocked`). Both pinned the old, now-wrong
+    behavior (a single non-blocking field → CONSISTENT). Flipping their
+    expected value to ABSTAIN, rather than deleting them, keeps the
+    history of what changed and why visible in the test file itself.
+
+16. **Accepted: fixed a PASS-report `findings`/`finding_counts` disagreement
+    nit found during round-2 mutation testing** — `{"findings": [],
+    "finding_counts": {"x": 1}}` used to return CONSISTENT (the empty
+    `findings` list won over the non-empty `finding_counts`). Both keys
+    are now checked; either being non-empty triggers the PASS-with-findings
+    ABSTAIN.
+
+See `MUTATIONS.md` for the full, reproducible mutation-check log (14
+mutations, including the two — M3 and M4 — that needed a NEW test added
+because Amendment 4's own safety net made their original fixtures stop
+isolating them).
