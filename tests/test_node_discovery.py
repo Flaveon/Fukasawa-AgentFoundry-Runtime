@@ -18,11 +18,17 @@ reason, even where a single stage answers deterministically.
 import pytest
 
 from src.nodes.discovery import (
+    MALFORMED_ADDRESS,
+    USERINFO_REFUSED,
     ConsentRefused,
     DiscoveryEvent,
     address_for,
+    address_problem,
     candidate_addresses,
     discover,
+    has_userinfo,
+    redact_userinfo,
+    scrub_userinfo,
 )
 from src.schemas.node import NodeKind, ScanScope
 
@@ -172,9 +178,17 @@ class TestTypedAddresses:
 
     #: Ways a person really types an address. The trailing-slash and
     #: capitalised forms are what a browser's address bar hands over; the
-    #: bracketed one is how an IPv6 address is written in a URL.
+    #: bracketed one is how an IPv6 address is written in a URL. The last
+    #: two carry a path and a query with no port named -- a port appended
+    #: after the whole string, rather than into the host, landed on the
+    #: path instead (m2): ``http://box/v1`` became ``http://box/v1:11434``,
+    #: which both names no real port and changes again on a second read.
+    #: Re-review nits (r4's report, #2): a fragment, userinfo, an empty
+    #: port, and a bare (unbracketed) IPv6 host, each with no port named.
     TYPED = ["box", "box:9000", "http://box:9000/", "box/", "box:9000/",
-             "HTTP://box:9000", "Http://box/", "[::1]", "[::1]:9000"]
+             "HTTP://box:9000", "Http://box/", "[::1]", "[::1]:9000",
+             "box/v1", "box?x=1", "box#frag", "user:pw@box",
+             "user:pw@box:9000", "box:", "[::1]:", "::1", "[::1]/v1"]
 
     def test_a_trailing_slash_does_not_become_part_of_the_host(self):
         """``10.0.0.9/`` once became ``http://10.0.0.9/:11434`` -- a path, not
@@ -190,6 +204,46 @@ class TestTypedAddresses:
     def test_an_ipv6_address_is_not_mistaken_for_one_naming_a_port(self):
         assert address_for("[::1]", NodeKind.OLLAMA) == "http://[::1]:11434"
         assert address_for("[::1]:9000", NodeKind.OLLAMA) == "http://[::1]:9000"
+
+    def test_a_port_is_inserted_into_the_host_not_appended_after_a_path(self):
+        """m2: ``http://box/v1`` named no port, so one was appended after the
+        whole string -- ``http://box/v1:11434`` -- which is a port on the
+        path, reaches nothing on 11434, and still goes to port 80."""
+        assert address_for("box/v1", NodeKind.OLLAMA) == "http://box:11434/v1"
+
+    def test_a_port_is_inserted_before_a_query_not_appended_after_it(self):
+        assert address_for("box?x=1", NodeKind.OLLAMA) == "http://box:11434?x=1"
+
+    def test_a_port_is_inserted_before_a_fragment_not_appended_after_it(self):
+        """Re-review nit: ``#`` was not a boundary mark, so a fragment with
+        no ``/`` or ``?`` anywhere (``http://box#frag``) read as part of
+        the host, the same class of bug ``?`` alone was."""
+        assert address_for("box#frag", NodeKind.OLLAMA) == "http://box:11434#frag"
+
+    def test_userinfo_s_colon_is_not_mistaken_for_a_port(self):
+        """Re-review nit: ``user:pw@box`` was read as naming a port -- the
+        one in ``user:pw`` -- so no real port was appended and a look went
+        to port 80. Userinfo is split off before the host is read, and put
+        back afterwards rather than dropped or refused."""
+        assert address_for("user:pw@box", NodeKind.OLLAMA) == (
+            "http://user:pw@box:11434"
+        )
+        assert address_for("user:pw@box:9000", NodeKind.OLLAMA) == (
+            "http://user:pw@box:9000"
+        )
+
+    def test_an_empty_port_gets_the_default_not_a_dangling_colon(self):
+        """Re-review nit: ``box:`` and ``[::1]:`` were read as already
+        naming a port -- an empty one -- and kept the dangling colon with
+        nothing after it instead of filling in the default."""
+        assert address_for("box:", NodeKind.OLLAMA) == "http://box:11434"
+        assert address_for("[::1]:", NodeKind.OLLAMA) == "http://[::1]:11434"
+
+    def test_a_bare_ipv6_host_is_bracketed_before_a_port_is_added(self):
+        """Re-review nit: an unbracketed ``::1`` is full of colons with no
+        brackets, so it named no port by this function's own rule, but
+        appending one unbracketed (``::1:11434``) is not a usable address."""
+        assert address_for("::1", NodeKind.OLLAMA) == "http://[::1]:11434"
 
     @pytest.mark.parametrize("typed", TYPED)
     @pytest.mark.parametrize("kind", list(NodeKind))
@@ -218,6 +272,94 @@ class TestTypedAddresses:
         saved = address_for(typed, kind)
         tried = [url for url, _kind in candidate_addresses(ScanScope.NAMED_HOST, saved)]
         assert saved in tried
+
+    def test_an_at_sign_in_a_path_is_not_mistaken_for_userinfo(self):
+        """Final re-review regression: finding the authority's end before
+        looking for ``@`` must not stop at the first one in the whole
+        string -- it has to look only inside the authority. A path or
+        query character that happens to be ``@`` (``http://box/p@x``) was
+        split off as if it were a user name, which also meant no real
+        port was ever appended (m2's bug, one character later)."""
+        assert address_for("box/p@x", NodeKind.OLLAMA) == "http://box:11434/p@x"
+        assert address_for("box?a=@b", NodeKind.OLLAMA) == "http://box:11434?a=@b"
+
+
+class TestUserinfoAndMalformedAddresses:
+    """Final re-review (1): a typed user name and password are refused, not
+    kept -- `urllib` never turns "user:pw@host" into Basic auth (no
+    ``Authorization`` header is sent), so keeping it bought no function and
+    cost a plaintext secret saved to `nodes.yaml`, printed by every listing,
+    and copied into a failed run's ledger note.
+    """
+
+    def test_userinfo_is_refused_without_echoing_it(self):
+        problem = address_problem("alice:s3cret@10.0.0.9")
+        assert problem == USERINFO_REFUSED
+        assert "alice" not in problem
+        assert "s3cret" not in problem
+
+    def test_a_plain_address_has_no_problem(self):
+        assert address_problem("10.0.0.9") is None
+        assert address_problem("box:9000") is None
+        assert address_problem("box:") is None
+        assert address_problem("[::1]") is None
+        assert address_problem("[::1]:9000") is None
+        assert address_problem("::1") is None
+        assert address_problem("2001:db8::1") is None
+
+    @pytest.mark.parametrize("bad", [
+        "box:abc",          # a port that is not a number
+        "10.0.0.9:11434:1",  # more than one port
+        "[::1]x",            # something after "]" that is not ":<port>"
+        "[::1",               # an unclosed bracket
+    ])
+    def test_a_malformed_address_is_refused_not_guessed(self, bad):
+        assert address_problem(bad) == MALFORMED_ADDRESS
+
+    def test_has_userinfo_reads_a_stored_address_the_same_way(self):
+        assert has_userinfo("http://alice:s3cret@10.0.0.9:11434") is True
+        assert has_userinfo("http://10.0.0.9:11434") is False
+
+    def test_redaction_hides_the_secret_but_keeps_the_host(self):
+        redacted = redact_userinfo("http://alice:s3cret@10.0.0.9:11434")
+        assert "alice" not in redacted
+        assert "s3cret" not in redacted
+        assert "10.0.0.9:11434" in redacted
+
+    def test_redaction_keeps_a_path_after_the_host(self):
+        redacted = redact_userinfo("http://alice:s3cret@10.0.0.9:11434/v1")
+        assert "alice" not in redacted
+        assert redacted.endswith("/v1")
+
+    def test_redaction_leaves_a_clean_address_unchanged(self):
+        assert redact_userinfo("http://10.0.0.9:11434") == "http://10.0.0.9:11434"
+
+    def test_redaction_is_idempotent(self):
+        once = redact_userinfo("http://alice:s3cret@10.0.0.9:11434")
+        assert redact_userinfo(once) == once
+
+    @pytest.mark.parametrize("text", [
+        "it has the single value 'http://alice:s3cret@10.0.0.9'",
+        "input_value='http://alice:s3cret@10.0.0.9'",
+        "input_value=['http://alice:s3cret@10.0.0.9']",
+        'while scanning ... tp://alice:s3cret@10.0.0.9:11434: x',
+        "nodes: http://alice:s3cret@10.0.0.9",
+        "consent: http://alice:s3cret@10.0.0.9",
+    ])
+    def test_scrub_userinfo_removes_it_from_arbitrary_text(self, text):
+        """Final re-review's residual leak: a *malformed* file's own
+        content, or a pydantic/YAML exception's message, can still quote a
+        secret back -- this is swept over free text rather than one known
+        address field, because by the time a message like this is built
+        there is no single field left to read it from."""
+        scrubbed = scrub_userinfo(text)
+        assert "alice" not in scrubbed
+        assert "s3cret" not in scrubbed
+
+    def test_scrub_userinfo_leaves_ordinary_text_alone(self):
+        assert scrub_userinfo("10.0.0.9:11434 should start with `nodes:`") == (
+            "10.0.0.9:11434 should start with `nodes:`"
+        )
 
 
 class TestTheStream:
@@ -295,3 +437,185 @@ class TestTheStream:
         assert node_a.node_id != node_b.node_id
         assert node_a.node_id == "ollama-10-0-0-9-11434"
         assert node_b.node_id == "ollama-10-0-0-5-11434"
+
+
+class TestUserinfoWhateverTheScheme:
+    """Review of PR #33: only `http` and `https` were recognised as schemes,
+    so `ftp://alice:s3cret@host` read as a host called "ftp" -- the
+    userinfo was never seen, the address was accepted, saved, and then
+    shown in clear by every listing. Userinfo is found before any scheme
+    decision, and a scheme this program cannot use is refused outright.
+    """
+
+    TAINTED = [
+        "ftp://alice:s3cret@10.0.0.9",
+        "ssh://alice:s3cret@10.0.0.9:22",
+        "git+ssh://alice:s3cret@10.0.0.9",
+        "svn+https://alice:s3cret@10.0.0.9/repo",
+        "//alice:s3cret@10.0.0.9",
+        "http:/alice:s3cret@10.0.0.9",
+        "HTTPS://alice:s3cret@10.0.0.9",
+        "mailto:alice:s3cret@10.0.0.9",
+    ]
+
+    @pytest.mark.parametrize("url", TAINTED)
+    def test_userinfo_is_seen_in_any_scheme(self, url):
+        assert has_userinfo(url) is True
+
+    @pytest.mark.parametrize("url", TAINTED)
+    def test_redaction_hides_it_in_any_scheme(self, url):
+        redacted = redact_userinfo(url)
+        assert "alice" not in redacted
+        assert "s3cret" not in redacted
+        assert "10.0.0.9" in redacted
+
+    @pytest.mark.parametrize("url", TAINTED)
+    def test_a_typed_one_is_refused_without_echoing_it(self, url):
+        problem = address_problem(url)
+        assert problem is not None
+        assert "alice" not in problem
+        assert "s3cret" not in problem
+
+    @pytest.mark.parametrize("url", [
+        "ftp://10.0.0.9", "ssh://10.0.0.9:22", "file:///etc/hosts",
+        "//10.0.0.9", "http:/10.0.0.9",
+    ])
+    def test_a_scheme_this_program_cannot_use_is_refused(self, url):
+        assert address_problem(url) == MALFORMED_ADDRESS
+
+    @pytest.mark.parametrize("url", [
+        "http://10.0.0.9", "https://10.0.0.9:443", "HTTP://box:9000",
+        "10.0.0.9", "box",
+    ])
+    def test_http_https_and_bare_hosts_are_still_fine(self, url):
+        assert address_problem(url) is None
+        assert has_userinfo(url) is False
+
+    def test_an_at_sign_anywhere_counts(self):
+        """Fourth review: parsing where the authority ends was wrong four
+        different ways in four rounds. A base address never needs an
+        ``@``, so any one -- path and query included -- now counts."""
+        assert has_userinfo("ftp://10.0.0.9/p@x") is True
+        assert has_userinfo("http://box?a=@b") is True
+
+
+class TestUserinfoWhateverPrecedesTheAuthority:
+    """Second review of 97fd856: the authority was taken off only after a
+    *valid* scheme, so anything else before ``://`` -- a pasted BOM or
+    zero-width space, ``1ftp``, a space, a control character, a backslash
+    -- left the userinfo unseen in a *stored* record, which was then shown
+    and resolved. A fullwidth ``＠`` did the same; urllib itself reads it
+    as ``@`` once normalised."""
+
+    STORED = [
+        "\ufeffhttp://alice:s3cret@10.0.0.9:11434",
+        "\u200bhttp://alice:s3cret@10.0.0.9:11434",
+        "1ftp://alice:s3cret@10.0.0.9",
+        "_x://alice:s3cret@10.0.0.9",
+        "-://alice:s3cret@10.0.0.9",
+        "://alice:s3cret@10.0.0.9",
+        "http ://alice:s3cret@10.0.0.9",
+        "ht tp://alice:s3cret@10.0.0.9",
+        "\x00ftp://alice:s3cret@10.0.0.9",
+        "\x01http://alice:s3cret@10.0.0.9",
+        "http:\\/alice:s3cret@10.0.0.9",
+        "http:\\\\alice:s3cret@10.0.0.9",
+        "http://alice:s3cret\uff2010.0.0.9:11434",
+    ]
+
+    @pytest.mark.parametrize("url", STORED)
+    def test_it_is_seen(self, url):
+        assert has_userinfo(url) is True
+
+    @pytest.mark.parametrize("url", STORED)
+    def test_it_is_redacted(self, url):
+        redacted = redact_userinfo(url)
+        assert "s3cret" not in redacted
+        assert "alice" not in redacted
+
+    @pytest.mark.parametrize("url", STORED)
+    def test_it_is_refused_when_typed(self, url):
+        problem = address_problem(url)
+        assert problem is not None
+        assert "s3cret" not in problem
+
+    @pytest.mark.parametrize("url", [
+        "http://10.0.0.9:11434", "box", "[::1]:9000", "localhost:11434",
+        "https://box:443/v1", "::1", "box.lan:11434",
+    ])
+    def test_ordinary_addresses_are_unaffected(self, url):
+        assert has_userinfo(url) is False
+
+
+class TestALaterSchemeMarkerHidesNothing:
+    """Third review: reading the authority after the *first* ``://`` let a
+    ``://`` later in a path, query or fragment swallow the real userinfo
+    in front of it. Every reasonable reading is now checked, and any one
+    of them finding userinfo is enough."""
+
+    LATER = [
+        "alice:s3cret@10.0.0.9:11434/v1://",
+        "alice:s3cret@10.0.0.9/x://y",
+        "alice:s3cret@10.0.0.9?q=a://b",
+        "alice:s3cret@10.0.0.9#://",
+        "http:alice:s3cret@10.0.0.9/a://b",
+        "//alice:s3cret@10.0.0.9/://",
+        "http:/alice:s3cret@10.0.0.9/a://b",
+        "http://alice:s3cret@10.0.0.9/x://bob:other@y",
+    ]
+
+    @pytest.mark.parametrize("url", LATER)
+    def test_it_is_seen(self, url):
+        assert has_userinfo(url) is True
+
+    @pytest.mark.parametrize("url", LATER)
+    def test_every_secret_is_redacted(self, url):
+        redacted = redact_userinfo(url)
+        assert "s3cret" not in redacted
+        assert "other" not in redacted
+        assert "alice" not in redacted
+
+    @pytest.mark.parametrize("url", LATER)
+    def test_it_is_refused_when_typed(self, url):
+        assert address_problem(url) is not None
+
+
+class TestAnyAtSignIsUserinfo:
+    """Fourth review of the #33 fix: folding backslashes into slashes let
+    ``http://al\\ice:pw@host`` through, typed and stored, and the readings
+    used quadratic memory on many ``://``. Any ``@`` now counts."""
+
+    @pytest.mark.parametrize("url", [
+        "http://al\\ice:s3cret@10.0.0.9",
+        "https://x\\y:s3cret@10.0.0.9/v1",
+        "al\\ice:s3cret@10.0.0.9",
+        "http://alice:SE\\CRET@10.0.0.9",
+        "http://alice:SE://CRET@10.0.0.9",
+        "http://alice:s3/cret@10.0.0.9",
+        "http://alice:s3#cret@10.0.0.9",
+    ])
+    def test_it_is_seen_refused_and_fully_redacted(self, url):
+        assert has_userinfo(url) is True
+        assert address_problem(url) == USERINFO_REFUSED
+        shown = redact_userinfo(url)
+        for part in ("alice", "al", "s3", "SE", "CRET", "cret"):
+            assert part not in shown.replace("10.0.0.9", ""), (part, shown)
+        assert shown.endswith("10.0.0.9") or shown.endswith("10.0.0.9/v1")
+
+    def test_huge_inputs_stay_linear(self):
+        import time
+
+        for text in ("http://box/" + "://" * 100_000, "a:pw@b://" * 30_000):
+            started = time.perf_counter()
+            has_userinfo(text)
+            redact_userinfo(text)
+            address_problem(text)
+            assert time.perf_counter() - started < 1.0
+
+
+def test_only_a_real_scheme_is_kept_in_front_of_a_redaction():
+    """Review of 6511fc1: text before "://" was shown as if it were a
+    scheme, so ``alice:s3cret://x@host`` displayed its secret."""
+    shown = redact_userinfo("alice:s3cret://x@10.0.0.9")
+    assert "s3cret" not in shown and "alice" not in shown
+    assert redact_userinfo("http://alice:s3cret@10.0.0.9") == "http://…@10.0.0.9"
