@@ -18,6 +18,7 @@ than in the interface, so no caller can skip it.
 """
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterator, Optional
@@ -212,12 +213,26 @@ def _authority_any_scheme(text: str) -> tuple[str, str, str]:
     to the first ``/``, ``?`` or ``#`` after it, and ``rest`` is the
     remainder. A scheme with no slash after it (``mailto:``) is left inside
     the authority, where its ``@`` is still found.
+
+    Read for safety, not for use, so it is deliberately loose. The text is
+    NFKC-normalised first (a fullwidth ``＠`` *is* an ``@`` to urllib) and
+    backslashes count as slashes. When ``://`` appears, the authority starts
+    after the first one **whatever precedes it**: a second review found that
+    taking it off only after a *valid* scheme let a stored record keep its
+    password hidden behind a pasted byte-order mark, a zero-width space,
+    ``1ftp``, a space or a control character -- shown in clear and handed to
+    the kernel. Reading too much as userinfo only refuses an odd address;
+    reading too little leaks a password.
     """
-    s = text.strip()
+    s = unicodedata.normalize("NFKC", text).replace("\\", "/").strip()
     lead = ""
-    found = _SCHEME.match(s)
-    if found and s[found.end():].startswith("/"):
-        lead, s = found.group(0), s[found.end():]
+    marker = s.find("://")
+    if marker != -1:
+        lead, s = s[:marker + 3], s[marker + 3:]
+    else:
+        found = _SCHEME.match(s)
+        if found and s[found.end():].startswith("/"):
+            lead, s = found.group(0), s[found.end():]
     slashes = len(s) - len(s.lstrip("/"))
     lead, s = lead + s[:slashes], s[slashes:]
     end = len(s)

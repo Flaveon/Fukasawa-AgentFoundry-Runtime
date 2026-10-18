@@ -601,3 +601,29 @@ class TestANonUtf8EndpointFile:
         path.write_bytes(b"endpoints:\n  bad: \"\xff\xfe\"\n")
         store.upsert(node(node_id="kitchen", url="http://10.0.0.8:11434"))
         assert [n.node_id for n in store.load()[0]] == ["kitchen"]
+
+
+class TestStoredRecordWithAnOddPrefix:
+    """Second review of 97fd856, end to end: a stored record whose url has
+    a BOM or a non-scheme before ``://`` must not resolve, so the FROZEN
+    kernel never copies its password into a failure note."""
+
+    @pytest.mark.parametrize("url", [
+        "\ufeffhttp://alice:s3cret@10.0.0.9:11434",
+        "1ftp://alice:s3cret@10.0.0.9",
+        "http://alice:s3cret\uff2010.0.0.9:11434",
+    ])
+    def test_it_is_left_out_of_the_endpoints(self, store, url):
+        store.upsert(node(node_id="old", url=url))
+        assert "old" not in merged_endpoints(store)
+
+    def test_the_endpoint_file_refuses_it_too(self, store):
+        path = store.path.parent / "model_endpoints.yaml"
+        path.write_text(
+            'endpoints:\n  mine:\n    kind: ollama\n'
+            '    url: "\\ufeffhttp://alice:s3cret@10.0.0.9:11434"\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError) as exc:
+            legacy_endpoints(path)
+        assert "s3cret" not in str(exc.value)

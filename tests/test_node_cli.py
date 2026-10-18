@@ -1590,3 +1590,23 @@ class TestReviewOfPr33:
         assert result.exit_code == 0, result.output
         assert "Traceback" not in result.output
         assert [n.label for n in NodeStore(store_path).load()[0]] == ["Kitchen"]
+
+
+class TestStoredOddPrefixNeverShown:
+    """Second review of 97fd856: listings showed these in clear."""
+
+    @pytest.mark.parametrize("url", [
+        "\ufeffhttp://alice:s3cret@10.0.0.9:11434",
+        "1ftp://alice:s3cret@10.0.0.9",
+        "http://alice:s3cret\uff2010.0.0.9:11434",
+    ])
+    def test_no_listing_shows_it(self, store_path, url):
+        from src.schemas.node import InferenceNode, NodeKind
+
+        NodeStore(store_path).upsert(InferenceNode(
+            node_id="old", label="Old box", kind=NodeKind.OLLAMA, url=url,
+        ))
+        for args in (["node", "list"], ["node", "list", "--json"],
+                     ["node", "show", "old"], ["model", "list"]):
+            result = CliRunner().invoke(app, args)
+            assert "s3cret" not in result.output, args

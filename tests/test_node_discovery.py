@@ -494,3 +494,51 @@ class TestUserinfoWhateverTheScheme:
     def test_an_at_sign_after_the_host_is_still_not_userinfo(self):
         assert has_userinfo("ftp://10.0.0.9/p@x") is False
         assert has_userinfo("http://box?a=@b") is False
+
+
+class TestUserinfoWhateverPrecedesTheAuthority:
+    """Second review of 97fd856: the authority was taken off only after a
+    *valid* scheme, so anything else before ``://`` -- a pasted BOM or
+    zero-width space, ``1ftp``, a space, a control character, a backslash
+    -- left the userinfo unseen in a *stored* record, which was then shown
+    and resolved. A fullwidth ``＠`` did the same; urllib itself reads it
+    as ``@`` once normalised."""
+
+    STORED = [
+        "\ufeffhttp://alice:s3cret@10.0.0.9:11434",
+        "\u200bhttp://alice:s3cret@10.0.0.9:11434",
+        "1ftp://alice:s3cret@10.0.0.9",
+        "_x://alice:s3cret@10.0.0.9",
+        "-://alice:s3cret@10.0.0.9",
+        "://alice:s3cret@10.0.0.9",
+        "http ://alice:s3cret@10.0.0.9",
+        "ht tp://alice:s3cret@10.0.0.9",
+        "\x00ftp://alice:s3cret@10.0.0.9",
+        "\x01http://alice:s3cret@10.0.0.9",
+        "http:\\/alice:s3cret@10.0.0.9",
+        "http:\\\\alice:s3cret@10.0.0.9",
+        "http://alice:s3cret\uff2010.0.0.9:11434",
+    ]
+
+    @pytest.mark.parametrize("url", STORED)
+    def test_it_is_seen(self, url):
+        assert has_userinfo(url) is True
+
+    @pytest.mark.parametrize("url", STORED)
+    def test_it_is_redacted(self, url):
+        redacted = redact_userinfo(url)
+        assert "s3cret" not in redacted
+        assert "alice" not in redacted
+
+    @pytest.mark.parametrize("url", STORED)
+    def test_it_is_refused_when_typed(self, url):
+        problem = address_problem(url)
+        assert problem is not None
+        assert "s3cret" not in problem
+
+    @pytest.mark.parametrize("url", [
+        "http://box/p@x", "http://box?a=@b", "http://box#f@g",
+        "http://10.0.0.9:11434", "box", "[::1]:9000", "localhost:11434",
+    ])
+    def test_ordinary_addresses_are_unaffected(self, url):
+        assert has_userinfo(url) is False
