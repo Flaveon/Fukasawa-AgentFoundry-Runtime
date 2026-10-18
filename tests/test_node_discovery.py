@@ -611,3 +611,11 @@ class TestAnyAtSignIsUserinfo:
             redact_userinfo(text)
             address_problem(text)
             assert time.perf_counter() - started < 1.0
+
+
+def test_only_a_real_scheme_is_kept_in_front_of_a_redaction():
+    """Review of 6511fc1: text before "://" was shown as if it were a
+    scheme, so ``alice:s3cret://x@host`` displayed its secret."""
+    shown = redact_userinfo("alice:s3cret://x@10.0.0.9")
+    assert "s3cret" not in shown and "alice" not in shown
+    assert redact_userinfo("http://alice:s3cret@10.0.0.9") == "http://…@10.0.0.9"

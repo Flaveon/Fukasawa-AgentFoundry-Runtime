@@ -68,9 +68,9 @@ def legacy_endpoints(path: Path) -> dict[str, dict]:
             # along with it -- the same rule a malformed `kind:`/`url:`
             # already gets (review finding 7) -- not just this one.
             raise ValueError(
-                f"{path}: '{name}' under `endpoints:` names a user name or "
-                f"password in its url. Remove it: edit {path} and take the "
-                f"user name and password back out of that address."
+                f"{path}: '{name}' under `endpoints:` has \"@\" in its url -- "
+                f"a user name or password, or something that looks like one. "
+                f"Edit {path} and take it back out of that address."
             )
     return dict(entries)
 

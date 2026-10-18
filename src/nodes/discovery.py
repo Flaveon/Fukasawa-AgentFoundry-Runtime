@@ -241,7 +241,10 @@ def redact_userinfo(url: str) -> str:
     # recognise it -- and the scheme if one comes before every "@". Nothing
     # between them is shown, wherever a secret might have been put.
     scheme_end = text.find("://")
-    lead = text[:scheme_end + 3] if -1 < scheme_end < text.find("@") else ""
+    is_scheme = -1 < scheme_end < text.find("@") and bool(
+        _SCHEME.fullmatch(text[:scheme_end + 1])
+    )
+    lead = text[:scheme_end + 3] if is_scheme else ""
     return f"{lead}…@{text.rpartition('@')[2]}"
 
 #: Matches userinfo wherever it appears in free text, not only in an

@@ -287,9 +287,9 @@ def _tainted_message(node: InferenceNode) -> str:
     enough to find the card (final re-review finding 1).
     """
     return (
-        f"{node.label} names a user name or password in its address. It "
-        f"is not used to reach anything until that is removed. Forget "
-        f"this card, or edit its address."
+        f"{node.label}'s address contains \"@\" -- a user name or password, "
+        f"or something that looks like one. It is not used to reach anything "
+        f"until that is removed. Forget this card, or edit its address."
     )
 
 
