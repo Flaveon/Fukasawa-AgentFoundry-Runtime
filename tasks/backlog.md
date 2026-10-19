@@ -1,60 +1,67 @@
 # Backlog
 
+> **Reconciled 2026-10-17** against `main` at `95d8867`. A box is ticked only where a
+> named carrier exists and a test exercises it; the carrier follows in italics. The
+> Phase 0–4 lists were written before Phase 1 and had not been updated since, so most
+> of their unticked boxes described shipped work. Items that are partial, proposed,
+> or waiting on an owner decision stay unticked and say so. Run record:
+> `handoffs/implementation/2026-10-17-backlog-run-plan-v1.0.md`.
+
 ## Phase 0
 
-- [ ] Create `docs/glossary.md`.
+- [ ] Create `docs/glossary.md`. *Not done — no glossary exists (verified 2026-10-17).*
 - [x] Create `docs/source-to-contract-map.md`.
-- [ ] Choose pilot workflow.
-- [ ] Convert one real workflow into a `WorkflowDesignBrief`.
-- [ ] Identify all required schemas from source doctrine.
-- [ ] Record open product questions.
+- [x] Choose pilot workflow. *Substack publication: `examples/workflows/substack-publication/`, walked through in `docs/pilot-walkthrough.md`.*
+- [x] Convert one real workflow into a `WorkflowDesignBrief`. *Carried as `HumanWorkflowDraft` (`src/schemas/human_workflow.py:407`) — renamed, and narrower than the doctrine's brief; see `docs/source-to-contract-map.md`. Pilot draft in `examples/workflows/substack-publication/`.*
+- [ ] Identify all required schemas from source doctrine. *Partial: `src/schemas/` carries most, but `docs/source-to-contract-map.md` records doctrine structures still missing or weakened (complexity budget, structured non-conformance diagnosis, per-level output shapes). Reopened by issue #27, not closed by it.*
+- [ ] Record open product questions. *Partial: scattered across ADR proposals, `README.md` "still open", completion notes and issue #27 — no single register.*
 
 ## Phase 1
 
-- [ ] Decide Pydantic vs JSON Schema.
-- [ ] Create runtime source folder.
-- [ ] Implement `WorkflowDesignBrief` model.
-- [ ] Implement `ProcessCapsule` model.
-- [ ] Implement `ObservationPacket` model.
-- [ ] Implement `RuntimeState` model.
-- [ ] Implement file-backed run ledger.
-- [ ] Add CLI validation commands.
-- [ ] Add tests for valid and invalid artifacts.
+- [x] Decide Pydantic vs JSON Schema. *ADR-001, approved with revisions (`handoffs/reviews/approved-adrs.md`): Pydantic v2 canonical, JSON Schema generated (`src/schemas/export_jsonschema.py`).*
+- [x] Create runtime source folder. *`src/runtime/`.*
+- [x] Implement `WorkflowDesignBrief` model. *As `HumanWorkflowDraft` — see the Phase 0 note above; tests in `tests/test_workflow_contracts.py`.*
+- [x] Implement `ProcessCapsule` model. *`src/schemas/process_capsule.py`; exercised by `tests/test_state_machine.py`, `tests/test_review_gate.py`.*
+- [x] Implement `ObservationPacket` model. *`src/schemas/observation_packet.py`; `tests/test_schemas.py`. Still flagged draft pending human review.*
+- [x] Implement `RuntimeState` model. *`src/schemas/runtime_state.py`; `tests/test_schemas.py`.*
+- [x] Implement file-backed run ledger. *SQLite, append-only: `src/runtime/ledger.py`; `tests/test_state_machine.py`.*
+- [x] Add CLI validation commands. *`fukasawa validate brief|capsule`, `fukasawa workflow validate|findings` (`src/cli.py`); `tests/test_workflow_cli.py`.*
+- [x] Add tests for valid and invalid artifacts. *`tests/test_schemas.py`, `tests/test_workflow_contracts.py`.*
 
 ## Phase 2
 
-- [ ] Create agent package templates.
-- [ ] Generate sample package for pilot workflow.
-- [ ] Validate package schema.
-- [ ] Add C-Pax numbered directory profile.
-- [ ] Add deployment method metadata.
-- [ ] Add package-generation tests.
+- [x] Create agent package templates. *Generated rather than static: `src/foundry/generator.py`.*
+- [x] Generate sample package for pilot workflow. *`examples/packages/publisher-agent/`, `examples/packages/writer-agent/`.*
+- [x] Validate package schema. *`src/schemas/agent_package.py`, `src/foundry/validator.py`; `tests/test_foundry.py`.*
+- [x] Add C-Pax numbered directory profile. *`detect_workspace_profile` in `src/foundry/generator.py:73`; `tests/test_foundry.py`.*
+- [x] Add deployment method metadata. *`DeploymentMethod` in `src/schemas/agent_spec.py:22`.*
+- [x] Add package-generation tests. *`tests/test_foundry.py`.*
 
 ## Phase 3
 
-- [ ] Define eval case YAML.
-- [ ] Implement handoff completeness scoring.
-- [ ] Implement depth compliance scoring.
-- [ ] Implement escalation correctness scoring.
-- [ ] Implement non-conformance writer.
-- [ ] Add maturity transition checks.
-- [ ] Collect reviewed examples.
+- [x] Define eval case YAML. *`src/schemas/eval_case.py`; examples in `examples/evals/`.*
+- [x] Implement handoff completeness scoring. *`check_handoff_completeness`, `src/governance/checks.py:40`; `tests/test_governance.py`.*
+- [x] Implement depth compliance scoring. *`check_depth_compliance`, `src/governance/checks.py:105`.*
+- [x] Implement escalation correctness scoring. *`check_escalation_correctness`, `src/governance/checks.py:143`.*
+- [ ] Implement non-conformance writer. *Partial: `NonConformanceRecord` (`src/schemas/non_conformance.py`) and `fukasawa nonconformance` commands exist, but carry free text where the doctrine's corrective-action template asks for a structured diagnosis — `docs/source-to-contract-map.md`, issue #27.*
+- [x] Add maturity transition checks. *Agents: `src/governance/maturity.py`; workflows: `src/governance/workflow_promotion.py`; `tests/test_workflow_promotion.py`, `tests/test_governance.py`.*
+- [ ] Collect reviewed examples. *Partial: the Substack pilot exists, but no set of examples has a recorded human review. Issue #27's real Q2C case would be the first.*
 
 ## Phase 4
 
-- [ ] Keep CLI as baseline interface.
-- [ ] Decide app wrapper: FastAPI, local web UI, desktop, MCP, or GPT Action backend.
-- [ ] Add project initialization command.
-- [ ] Add run history viewer.
-- [ ] Add export/import.
-- [ ] Write operator docs.
+- [x] Keep CLI as baseline interface. *`src/cli.py`; the desktop calls the same services (ADR-007).*
+- [x] Decide app wrapper: FastAPI, local web UI, desktop, MCP, or GPT Action backend. *Desktop (CustomTkinter) over a service layer — ADR-007, approved with revisions.*
+- [x] Add project initialization command. *`fukasawa workflow init` (`src/cli.py`); `tests/test_workflow_cli.py`.*
+- [x] Add run history viewer. *`fukasawa history`, `fukasawa workflow status`; desktop lifecycle "Runs" stage.*
+- [x] Add export/import. *`fukasawa bundle export|inspect|import` (signed), `workflow export-agent-brief`; `tests/test_bundle.py`, `tests/test_workflow_export.py`.*
+- [x] Write operator docs. *`docs/cli-guide.md`, `docs/desktop-guide.md`, `docs/environment-guide.md`, `docs/pilot-walkthrough.md` and others.*
 
 ## Research
 
 - [ ] Prototype LangGraph only after the local state machine becomes cumbersome.
 - [ ] Prototype DSPy only after reviewed prompt/module eval examples exist.
 - [ ] Compare SQLite and DuckDB for run ledger plus analytics.
-- [ ] Evaluate whether existing C-Pax directory standards need a runtime-specific profile.
+- [ ] Evaluate whether existing C-Pax directory standards need a runtime-specific profile. *Open: a C-Pax profile is injected into generated packages, but no evaluation of the standard itself is recorded.*
 
 ## Outcome Evaluation (post-release — see ADR-008)
 
@@ -63,7 +70,9 @@ yet measures whether the optimized workflow *produced better work*. Both halves
 are needed before "the optimization worked" is a claim rather than a hope.
 
 - [ ] Adopt `smevals` (MIT, external peer tool — no import, no vendoring) as the
-      outcome-measurement harness.
+      outcome-measurement harness. *Partial: an optional subprocess adapter exists
+      (`src/governance/smevals_adapter.py`, `docs/smevals-adapter.md`); it compiles an
+      artifact-echo runner and has not run a real A/B loop.*
 - [ ] Build the first A/B experiment: identical model and tasks, baseline vs
       Fukasawa-optimized workflow configuration, one grader. Model held constant
       as the control; the workflow configuration is the variable under test.
