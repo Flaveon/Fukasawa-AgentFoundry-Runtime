@@ -472,6 +472,215 @@ class TestWhatTheEnvironmentTabNeeds:
         assert recorder.asked == []
 
 
+class TestAStoreAlreadyHoldingTwoAtOneAddress:
+    """I2: what finding 1 (pre-fix) left behind for one address, or a hand
+    edit can leave the same way. ``upsert`` refuses the pair going forward;
+    this is the store that already has it.
+    """
+
+    @staticmethod
+    def _seed(store):
+        store.save([
+            InferenceNode(node_id="kitchen-box", label="Kitchen Box",
+                         kind=NodeKind.OLLAMA, url="http://10.0.0.9",
+                         reachable=False,
+                         provenance={"label": Provenance.DECLARED,
+                                     "url": Provenance.DECLARED}),
+            InferenceNode(node_id="ollama-10-0-0-9-11434",
+                         label="Ollama on 10.0.0.9", kind=NodeKind.OLLAMA,
+                         url="http://10.0.0.9:11434", reachable=True),
+        ], ScanConsent())
+
+    def test_listing_still_works_and_names_both_cards(self, store):
+        """Re-review nit: this screen has no ids on it, so the notice names
+        the pair the way a card does -- its label and address -- not the
+        ids the terminal would use."""
+        self._seed(store)
+        result = service.list_nodes(store)
+        assert result.ok
+        assert {r.node_id for r in result.rows} == {
+            "kitchen-box", "ollama-10-0-0-9-11434"}
+        assert "kitchen-box" not in result.duplicate_notice
+        assert "Kitchen Box" in result.duplicate_notice
+        assert "http://10.0.0.9" in result.duplicate_notice
+        assert "Ollama on 10.0.0.9" in result.duplicate_notice
+        assert "http://10.0.0.9:11434" in result.duplicate_notice
+        assert "fukasawa node forget" not in result.duplicate_notice
+        assert "Forget" in result.duplicate_notice
+
+    def test_forgetting_either_one_still_works(self, store):
+        self._seed(store)
+        result = service.forget_node("kitchen-box", store)
+        assert result.ok
+        assert [n.node_id for n in store.load()[0]] == ["ollama-10-0-0-9-11434"]
+
+    def test_a_check_that_would_have_to_guess_is_refused_not_misattributed(
+        self, store
+    ):
+        """What review finding I2 reproduces: a look at the record that
+        answers must not update the *other* record and then read the one
+        that just answered as silent. `recorded_at` would have picked
+        `kitchen-box` -- first in the list, at the same address -- and
+        `check_node`'s own by-id lookup never gets a chance to tell the two
+        apart, because the write it would judge never completes."""
+        self._seed(store)
+        recorder = Recorder(answering={"10.0.0.9:11434"})
+        events = list(service.check_node("ollama-10-0-0-9-11434", store,
+                                         fetch=recorder, post=recorder.post))
+        last = events[-1]
+        assert last.stage == "store"
+        assert not last.ok and last.finished
+        # Re-review nit: the desktop names the pair by card, not by id.
+        assert "kitchen-box" not in last.message
+        assert "Kitchen Box" in last.message
+        assert "Ollama on 10.0.0.9" in last.message
+        # Refused, not guessed: neither record changed.
+        nodes = {n.node_id: n for n in store.load()[0]}
+        assert nodes["ollama-10-0-0-9-11434"].reachable is True, (
+            "the record that answered must not be read back as silent"
+        )
+        assert nodes["kitchen-box"].reachable is False
+
+    def test_the_pair_is_named_whichever_one_is_checked(self, store):
+        """Not an artefact of which id happens to be asked for -- checking
+        the *other* record in the pair hits the same ambiguous write."""
+        self._seed(store)
+        recorder = Recorder(answering={"10.0.0.9:11434"})
+        events = list(service.check_node("kitchen-box", store,
+                                         fetch=recorder, post=recorder.post))
+        assert events[-1].stage == "store"
+        assert "Ollama on 10.0.0.9" in events[-1].message
+        assert "Kitchen Box" in events[-1].message
+
+    def test_an_unrelated_finding_in_the_same_scan_still_survives(self, store):
+        """Re-review r4: a single `try` around the whole upsert loop stopped
+        at the first refusal, so a `this-machine` scan that also found an
+        unrelated llama.cpp on :8081 lost it, because `PORTS` tries :11434
+        (the ambiguous one) first. Each computer now gets its own try."""
+        store.save([
+            InferenceNode(node_id="home", label="Home", kind=NodeKind.OLLAMA,
+                         url="127.0.0.1:11434"),
+            InferenceNode(node_id="ollama-127-0-0-1-11434",
+                         label="Ollama on this computer", kind=NodeKind.OLLAMA,
+                         url="http://127.0.0.1:11434"),
+        ], ScanConsent())
+        recorder = Recorder(answering={"127.0.0.1:11434", "127.0.0.1:8081"})
+        events = list(service.scan(ScanScope.THIS_MACHINE, store=store,
+                                   fetch=recorder, post=recorder.post))
+        ids = [n.node_id for n in store.load()[0]]
+        assert any("llamacpp" in i for i in ids), (
+            "the unrelated :8081 finding was lost to the :11434 refusal"
+        )
+        # Re-review nit: the closing event replaced discovery's own "Found
+        # 2 computers." outright, so a person who found two and kept one
+        # was never told that one *was* saved.
+        assert "Saved 1 computer" in events[-1].message
+
+
+class TestUserinfoIsRefused:
+    """Final re-review finding 1, on the desktop: a typed user name and
+    password are refused, never saved -- `urllib` never turns
+    "user:pw@host" into Basic auth, so keeping it bought no function and
+    cost a plaintext secret.
+    """
+
+    SECRET = "s3cret"
+
+    def test_add_node_refuses_it_without_saving_or_echoing_it(self, store):
+        result = service.add_node(
+            "Box", "ollama", f"alice:{self.SECRET}@10.0.0.9", store
+        )
+        assert not result.ok
+        assert self.SECRET not in result.refusal
+        assert self.SECRET not in result.summary
+        assert store.load()[0] == []
+
+    def test_update_field_refuses_it_on_the_url_field(self, store):
+        seed(store)
+        result = service.update_field(
+            "home-pc", "url", f"alice:{self.SECRET}@10.0.0.9", store
+        )
+        assert not result.ok
+        assert self.SECRET not in result.refusal
+        assert store.load()[0][0].url == "http://localhost:11434"
+
+    def test_a_named_host_scan_refuses_it(self, store):
+        recorder = Recorder()
+        events = list(service.scan(
+            ScanScope.NAMED_HOST, f"alice:{self.SECRET}@10.0.0.9",
+            store=store, fetch=recorder, post=recorder.post,
+        ))
+        assert events[-1].finished and not events[-1].ok
+        assert self.SECRET not in events[-1].message
+        assert recorder.asked == [], "a refused address must open nothing"
+        assert store.load()[0] == []
+
+    def test_a_check_on_an_already_tainted_record_refuses_without_a_look(
+        self, store
+    ):
+        """Load must still work -- it does -- but a look is refused rather
+        than reach for an address naming a password, and names the card's
+        own remedy (Forget, or edit the address) instead of the
+        terminal's `node forget <id>` command."""
+        store.save([InferenceNode(
+            node_id="tainted", label="Tainted Box", kind=NodeKind.OLLAMA,
+            url=f"http://alice:{self.SECRET}@10.0.0.9:11434",
+        )], ScanConsent())
+        recorder = Recorder(answering={"10.0.0.9:11434"})
+        events = list(service.check_node("tainted", store,
+                                         fetch=recorder, post=recorder.post))
+        assert events[-1].finished and not events[-1].ok
+        assert self.SECRET not in events[-1].message
+        assert "Tainted Box" in events[-1].message
+        assert "Forget" in events[-1].message
+        assert "node forget" not in events[-1].message
+        assert recorder.asked == [], "a refused look must open nothing"
+        nodes = store.load()[0]
+        assert nodes[0].last_probed_at is None, "a refused look must not stamp the record"
+
+    def test_listing_an_already_tainted_record_redacts_it_and_names_the_remedy(
+        self, store
+    ):
+        store.save([InferenceNode(
+            node_id="tainted", label="Tainted Box", kind=NodeKind.OLLAMA,
+            url=f"http://alice:{self.SECRET}@10.0.0.9:11434",
+        )], ScanConsent())
+        result = service.list_nodes(store)
+        assert result.ok
+        assert self.SECRET not in result.tainted_notice
+        assert "Tainted Box" in result.tainted_notice
+        assert "Forget" in result.tainted_notice
+        row = result.rows[0]
+        assert self.SECRET not in row.url
+        assert self.SECRET not in next(
+            f.value for f in row.fields if f.name == "url"
+        )
+        assert "10.0.0.9:11434" in row.url
+
+    def test_the_duplicate_address_notice_also_redacts_a_tainted_pair(
+        self, store
+    ):
+        """Final check nit: `_ambiguity_message` names each computer by
+        label and address -- two hand-edited records sharing the same
+        userinfo and host are a duplicate pair *and* each one's address
+        still needs redacting there, not only on its own card. Nothing
+        covered this combination before."""
+        store.save([
+            InferenceNode(node_id="kitchen-box", label="Kitchen Box",
+                         kind=NodeKind.OLLAMA,
+                         url=f"http://alice:{self.SECRET}@10.0.0.9"),
+            InferenceNode(node_id="garage-box", label="Garage Box",
+                         kind=NodeKind.OLLAMA,
+                         url=f"http://alice:{self.SECRET}@10.0.0.9:11434"),
+        ], ScanConsent())
+        result = service.list_nodes(store)
+        assert result.ok
+        assert self.SECRET not in result.duplicate_notice
+        assert "Kitchen Box" in result.duplicate_notice
+        assert "Garage Box" in result.duplicate_notice
+        assert "10.0.0.9:11434" in result.duplicate_notice
+
+
 class TestAddingByHand:
     def test_a_typed_computer_is_stored_and_marked_as_typed(self, store):
         assert service.add_node("Kitchen Box", "ollama",

@@ -24,7 +24,9 @@ Phase 3 review gate — no automated promotion, ever.
 """
 
 import json
+import os
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -190,27 +192,33 @@ def assess(package_dir: str | Path, ledger: RunLedger) -> MaturityReport:
     return MaturityReport(agent, workflow_id, current, target, criteria)
 
 
-def _rewrite_maturity_declarations(pkg: Path, old: str, new: str) -> None:
-    """Rewrite maturity declarations across all manifest files."""
+def _render_maturity_declarations(pkg: Path, old: str, new: str) -> dict[Path, str]:
+    """Compute the new text for SKILL.md, process_capsule.yaml and
+    manifest.json, without writing anything to disk yet.
+
+    Kept separate from writing so that a promotion can fully prepare every
+    file's new content — and discover any rendering problem — before the
+    ledger is ever touched. See `promote()` for why that ordering matters.
+    """
+    rendered: dict[Path, str] = {}
     for name in ("SKILL.md", "process_capsule.yaml"):
         path = pkg / name
-        path.write_text(
-            re.sub(
-                rf"^maturity: {old}$",
-                f"maturity: {new}",
-                path.read_text(encoding="utf-8"),
-                count=1,
-                flags=re.MULTILINE,
-            ),
-            encoding="utf-8",
+        rendered[path] = re.sub(
+            rf"^maturity: {old}$",
+            f"maturity: {new}",
+            path.read_text(encoding="utf-8"),
+            count=1,
+            flags=re.MULTILINE,
         )
     manifest = _read_manifest(pkg)
     manifest["maturity"] = new
-    (pkg / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    rendered[pkg / "manifest.json"] = json.dumps(manifest, indent=2)
+    return rendered
 
 
-def _fill_mandatory_eval_checks(pkg: Path, coverage: dict[CheckCategory, str]) -> None:
-    """Fill mandatory eval checks from recorded evidence."""
+def _render_mandatory_eval_checks(pkg: Path, coverage: dict[CheckCategory, str]) -> str:
+    """Compute the new evals.yaml text with mandatory checks filled in from
+    recorded evidence, without writing anything to disk yet."""
     evals_path = pkg / "evals.yaml"
     evals = yaml.safe_load(evals_path.read_text(encoding="utf-8"))
     for check_name, category in _MANDATORY_CHECK_SOURCES.items():
@@ -220,56 +228,106 @@ def _fill_mandatory_eval_checks(pkg: Path, coverage: dict[CheckCategory, str]) -
                 f"eval result {coverage[category]} ({category.value})"
             )
     evals["overall"] = "pass"
-    evals_path.write_text(yaml.safe_dump(evals, sort_keys=False), encoding="utf-8")
+    return yaml.safe_dump(evals, sort_keys=False)
 
 
-def _record_audit_trail(
-    pkg: Path,
-    ledger: RunLedger,
-    agent: str,
-    workflow_id: str,
-    old: str,
-    new: str,
-    reviewed_by: str,
-    rationale: str,
-    coverage: dict[CheckCategory, str],
-) -> None:
-    """Append promotion to learning log and record in ledger."""
-    evidence = ", ".join(
-        f"{category.value}={rid}" for category, rid in sorted(
-            coverage.items(), key=lambda kv: kv[0].value
-        )
+def _coverage_evidence(coverage: dict[CheckCategory, str]) -> str:
+    """The evidence string recorded against the promotion: which eval result
+    backed which mandatory category, in a stable (sorted) order."""
+    return ", ".join(
+        f"{category.value}={rid}"
+        for category, rid in sorted(coverage.items(), key=lambda kv: kv[0].value)
     )
+
+
+def _render_learning_log_entry(
+    pkg: Path, old: str, new: str, reviewed_by: str, rationale: str, evidence: str
+) -> str:
+    """Compute the new learning_log.md text with the promotion entry
+    appended, without writing anything to disk yet."""
     today = datetime.now(timezone.utc).date().isoformat()
     log = pkg / "learning_log.md"
-    log.write_text(
-        log.read_text(encoding="utf-8")
-        + "\n".join(
-            [
-                "",
-                f"## {today} — correction",
-                "",
-                f"**What happened:** Promoted {old} -> {new}, reviewed by "
-                f"{reviewed_by}.",
-                "",
-                f"**Evidence:** {evidence or 'see promotions ledger'}",
-                ""
-                + (f"\n**Lower-depth rationale:** {rationale}\n" if rationale else ""),
-                "**Status:** resolved",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    return log.read_text(encoding="utf-8") + "\n".join(
+        [
+            "",
+            f"## {today} — correction",
+            "",
+            f"**What happened:** Promoted {old} -> {new}, reviewed by "
+            f"{reviewed_by}.",
+            "",
+            f"**Evidence:** {evidence or 'see promotions ledger'}",
+            ""
+            + (f"\n**Lower-depth rationale:** {rationale}\n" if rationale else ""),
+            "**Status:** resolved",
+            "",
+        ]
     )
-    ledger.record_promotion(
-        agent=agent,
-        workflow_id=workflow_id,
-        from_maturity=old,
-        to_maturity=new,
-        reviewed_by=reviewed_by,
-        rationale=rationale,
-        evidence=evidence,
-    )
+
+
+def _stage_files(staged: dict[Path, str]) -> dict[Path, Path]:
+    """Write every staged file's new content to a sibling temp file, and
+    nothing else — no live file is touched here.
+
+    This is the half of the write that must finish, in full, *before*
+    `promote()` commits the ledger row: if staging raises (a full disk, a
+    permissions error, anything), every temp file created so far is removed
+    and the exception propagates with every live file exactly as it was and
+    no ledger row written. Returns `{real_path: temp_path}` for
+    `_commit_staged_files` to swap in once the ledger row has committed.
+    """
+    temp_paths: dict[Path, Path] = {}
+    try:
+        for real_path, content in staged.items():
+            tmp_path = real_path.with_name(
+                f"{real_path.name}.promotion-tmp-{uuid.uuid4().hex[:8]}"
+            )
+            tmp_path.write_text(content, encoding="utf-8")
+            temp_paths[real_path] = tmp_path
+    except OSError:
+        for tmp_path in temp_paths.values():
+            tmp_path.unlink(missing_ok=True)
+        raise
+    return temp_paths
+
+
+def _commit_staged_files(temp_paths: dict[Path, Path]) -> None:
+    """Swap every already-staged temp file into place over its live file.
+
+    Called only after `promote()`'s ledger row has committed — see that
+    docstring for why. Every file passed in here was already fully written
+    to disk by `_stage_files`, so the only thing left to do is a sequence of
+    `os.replace()` calls, each an atomic rename on the same filesystem.
+
+    What this cannot close is a crash or killed process *between* two of
+    those `os.replace()` calls: the set of (up to) five replacements is not
+    one atomic transaction, even though the content behind each of them was
+    long since fully written to the filesystem as a temp file (written, not
+    fsynced: a power cut can still lose it, which this guards no better than
+    any ordinary write).
+    `manifest.json` is deliberately replaced last to shrink the blast radius
+    of that gap: `assess()` and `validate_package()` both read the package's
+    current maturity from `manifest.json`, and `validate_package()`
+    separately cross-checks maturity across SKILL.md, manifest.json and
+    process_capsule.yaml. So a swap interrupted before manifest.json's
+    replace leaves `assess()` still reading the OLD maturity — a retry
+    re-assesses honestly instead of compounding the mix-up — and if the
+    interruption happens after some *other* file replaced but
+    SKILL.md/process_capsule.yaml disagree with manifest.json,
+    `validate_package()` reports exactly that disagreement as a finding on
+    the next validation, rather than the mismatch sitting silently. A human
+    then finishes or reverts the swap by hand. This is the one place in
+    `promote()` that is "visible and repairable" rather than fully atomic —
+    a true multi-file transaction would need a shared write-ahead log this
+    codebase does not have. (A crash here, followed by a naive retry, also
+    produces a *duplicate* ledger row at the same `from_maturity ->
+    to_maturity`, because `assess()` still reads the old maturity from
+    manifest.json and sees the same unmet-then-met criteria again — the
+    duplicate is visible in `promotions_for()`, which is why a retry after
+    an interrupted swap should be a human decision, not an automatic one.)
+    """
+    ordered = sorted(temp_paths.items(), key=lambda kv: kv[0].name == "manifest.json")
+    for real_path, tmp_path in ordered:
+        os.replace(tmp_path, real_path)
 
 
 def promote(
@@ -288,6 +346,22 @@ def promote(
     process_capsule.yaml, fills the package's mandatory eval checks from
     recorded eval evidence, appends the promotion to learning_log.md, and
     records it in the append-only promotions ledger.
+
+    Ordering (and its residual risk): every new file's content is rendered
+    in memory, then fully staged to a sibling temp file by `_stage_files` —
+    *before* anything changes and *before* the ledger is touched, so a
+    rendering or disk error during staging leaves the package and the
+    ledger exactly as they were (no promotion row, no file changed). The
+    ledger row is written next — this is the one irreversible step, since
+    the promotions table is append-only and this function never deletes a
+    row to roll back. Only after that commit does `_commit_staged_files`
+    swap the already-written temp files into place; its docstring documents
+    the one residual risk this leaves open: a crash during that swap can
+    leave the ledger saying "promoted" while a file or two still show the
+    old maturity. That state is detectable (`validate_package()` reports the
+    cross-file disagreement) and repairable by hand, which is the safer
+    direction to fail in than the reverse — files silently declaring a
+    maturity the audit trail never recorded.
     """
     if not reviewed_by.strip():
         raise PromotionRefusedError(
@@ -314,12 +388,34 @@ def promote(
         )
 
     old, new = report.current.value, report.target.value
-    _rewrite_maturity_declarations(pkg, old, new)
-
     coverage = _passing_by_category(ledger, report.agent)
-    _fill_mandatory_eval_checks(pkg, coverage)
+    evidence = _coverage_evidence(coverage)
 
-    _record_audit_trail(
-        pkg, ledger, report.agent, report.workflow_id, old, new, reviewed_by, rationale, coverage
+    staged: dict[Path, str] = {}
+    staged.update(_render_maturity_declarations(pkg, old, new))
+    staged[pkg / "evals.yaml"] = _render_mandatory_eval_checks(pkg, coverage)
+    staged[pkg / "learning_log.md"] = _render_learning_log_entry(
+        pkg, old, new, reviewed_by, rationale, evidence
     )
+
+    # Every new file is fully written to a temp file before the ledger is
+    # touched: a staging failure here (e.g. disk full) propagates with
+    # nothing committed and nothing live changed.
+    temp_paths = _stage_files(staged)
+
+    # Commit point: once this call returns, the promotion is decided and
+    # recorded in the append-only ledger. Nothing above this line has
+    # touched disk; nothing below it can be undone by this function.
+    ledger.record_promotion(
+        agent=report.agent,
+        workflow_id=report.workflow_id,
+        from_maturity=old,
+        to_maturity=new,
+        reviewed_by=reviewed_by,
+        rationale=rationale,
+        evidence=evidence,
+    )
+
+    _commit_staged_files(temp_paths)
+
     return assess(pkg, ledger)

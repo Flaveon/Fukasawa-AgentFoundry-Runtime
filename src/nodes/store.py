@@ -29,12 +29,57 @@ DEFAULT_HOME = Path(os.environ.get("FUKASAWA_HOME", "~/.fukasawa")).expanduser()
 
 
 def _what(value) -> str:
-    """Name what was found where something else belonged, for a person."""
+    """Name the *shape* of what was found where something else belonged,
+    for a person -- never the value itself.
+
+    A hand-edited file's own scalar can be whatever a person wrote there,
+    including a url naming a user name or password, and quoting it back
+    -- even through a scrubber -- kept leaking it in shapes a regex could
+    not anchor on: a YAML fold inserts a space before the ``@``, an
+    unencoded ``/`` or a ``'`` in the text changes what `repr()` produces,
+    and none of those read as "userinfo" to a pattern built to recognise
+    one (last check's residual leak). The fix is structural: this never
+    had file content to leak in the first place. The shape -- "a single
+    value", "a list", and so on -- plus the path and the key this sits
+    under (already named by every caller) is enough to find the line and
+    fix it.
+    """
     if value is None:
         return "nothing"
     if isinstance(value, list):
         return "a list"
-    return f"the single value {value!r}"
+    if isinstance(value, dict):
+        return "a mapping"
+    if isinstance(value, bool):
+        return "true or false"
+    if isinstance(value, (int, float)):
+        return "a number"
+    return "a single value"
+
+
+def yaml_problem_location(exc: yaml.YAMLError) -> str:
+    """Describe a YAML problem by *where* it is, never by quoting the line
+    it is on.
+
+    ``str(exc)`` builds a context snippet straight from the file's own
+    text -- the one shape a regex scrubber could not reliably catch,
+    since PyYAML can fold it, truncate it before an ``@``, or simply quote
+    it however it likes (last check's residual leak). ``problem`` is
+    PyYAML's own short description of *what* is wrong ("mapping values
+    are not allowed here"), never a copy of the text itself, and
+    ``problem_mark`` is the line and column -- everything a person needs
+    to go find the line and fix it, with nothing from the line repeated
+    back. Every error ``yaml.safe_load`` actually raises for bad syntax
+    (``ScannerError``, ``ParserError``, ...) carries both; the fallback
+    below is for a bare ``yaml.YAMLError`` that, in principle, might not.
+    """
+    problem = getattr(exc, "problem", None)
+    if problem is None:
+        return "the file is not valid YAML"
+    mark = getattr(exc, "problem_mark", None)
+    if mark is not None:
+        return f"{problem} (line {mark.line + 1}, column {mark.column + 1})"
+    return problem
 
 
 def unusable_message(path: Path, exc: Exception) -> str:
@@ -46,14 +91,35 @@ def unusable_message(path: Path, exc: Exception) -> str:
     parses but is not laid out as this file is. ``NodeStore.load`` already
     phrases the third and names the path, so it is passed through as
     written.
+
+    An ``AmbiguousAddressError`` is a fourth: its own sentence is already a
+    complete remedy (remove one of the two it names), so the generic
+    "correct that file" tail is left off -- appended, it read as a second,
+    different instruction after one that had already said what to do
+    (re-review nit).
+
+    A YAML syntax error is described by location (``yaml_problem_location``),
+    never by ``str(exc)``'s own context snippet of the file's text, and a
+    pydantic validation error (raised from ``load()`` as a ``ValueError``)
+    is already built from ``loc``/``msg`` there, never ``input_value`` --
+    both are the structural fix for last check's residual leak, where a
+    regex scrubber kept missing a secret that PyYAML or pydantic had
+    folded, truncated, or quoted in a shape the pattern could not anchor
+    on. ``scrub_userinfo`` is kept here too, as a backstop over whatever
+    this function did not itself build (an ``OSError``'s own message, for
+    one) -- not as the only line of defence.
     """
+    from src.nodes.discovery import scrub_userinfo
+
+    if isinstance(exc, AmbiguousAddressError):
+        return scrub_userinfo(str(exc))
     if isinstance(exc, yaml.YAMLError):
-        detail = f"{path} is not valid YAML: {exc}"
+        detail = f"{path} is not valid YAML: {yaml_problem_location(exc)}"
     elif isinstance(exc, OSError):
         detail = f"{path} could not be opened: {exc}"
     else:
         detail = str(exc)
-    return (
+    return scrub_userinfo(
         f"{detail}\n"
         "Correct that file, or move it aside and record the computers again."
     )
@@ -72,14 +138,80 @@ def recorded_at(
     reading "not answering". ``kind`` is needed because an address with no
     port means that program's usual one. None when nothing is there.
     """
+    matches = _matching_address(nodes, url, kind)
+    return matches[0] if matches else None
+
+
+def _matching_address(
+    nodes: list[InferenceNode], url: str, kind
+) -> list[InferenceNode]:
+    """Every computer in ``nodes`` at this address. Ordinarily at most one.
+
+    ``recorded_at`` is built on this and only ever wants the first; ``upsert``
+    needs to know whether there was more than one, which is the store already
+    holding the pair ``upsert`` exists to prevent -- see I2.
+    """
     # Late, because discovery sits above this module (it imports the network
     # layer) and nothing here should depend on it at import time.
     from src.nodes.discovery import address_for
 
     wanted = address_for(url, kind)
-    return next(
-        (n for n in nodes if address_for(n.url, n.kind) == wanted), None
-    )
+    return [n for n in nodes if address_for(n.url, n.kind) == wanted]
+
+
+def duplicate_node_groups(nodes: list[InferenceNode]) -> list[list[InferenceNode]]:
+    """Groups of two or more computers that read to the same address.
+
+    Ordinarily empty -- ``upsert`` refuses to create one. A store saved
+    before that rule held, or edited by hand, can still carry one in, and a
+    person deserves to know before a look at either one tells them the hard
+    way (review finding I2). The computers themselves, not just their ids,
+    because naming one means something different to each front end -- the
+    terminal says the id, the desktop says the label and address, as each
+    already does on screen (re-review nit). Each inner list is sorted by id
+    so a message built from it reads the same from one run to the next.
+    """
+    from src.nodes.discovery import address_for
+
+    by_address: dict[str, list[InferenceNode]] = {}
+    for n in nodes:
+        by_address.setdefault(address_for(n.url, n.kind), []).append(n)
+    return [
+        sorted(group, key=lambda n: n.node_id)
+        for group in by_address.values() if len(group) > 1
+    ]
+
+
+def duplicate_groups(nodes: list[InferenceNode]) -> list[list[str]]:
+    """Groups of two or more ids that read to the same address.
+
+    The terminal's view of ``duplicate_node_groups``: just the ids, which is
+    what ``fukasawa node forget <id>`` takes.
+    """
+    return [[n.node_id for n in group] for group in duplicate_node_groups(nodes)]
+
+
+class AmbiguousAddressError(ValueError):
+    """``upsert`` cannot tell which stored computer a write belongs to.
+
+    Raised when more than one already reads to the address being written --
+    the pair ``upsert`` exists to prevent, but a store saved before that
+    rule held, or edited by hand, can still carry one in (review finding
+    I2). Carries the computers themselves, not just a finished sentence, so
+    each front end can name them the way it already names a computer on
+    screen -- the terminal by id, the desktop by label and address -- rather
+    than one message written for only one of them (re-review nit).
+    """
+
+    def __init__(self, path: Path, nodes: list[InferenceNode]) -> None:
+        self.path = path
+        self.nodes = nodes
+        ids = ", ".join(sorted(n.node_id for n in nodes))
+        super().__init__(
+            f"{path}: {ids} are recorded at the same address. A look "
+            f"cannot tell which one it means. Remove one with "
+            f"`fukasawa node forget <id>`, then try again."
+        )
 
 
 class NodeStore:
@@ -108,7 +240,16 @@ class NodeStore:
         """
         if not self.path.exists():
             return [], ScanConsent()
-        raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
+        try:
+            text = self.path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            # Caught here, before `yaml.safe_load` sees it, so the file is
+            # named: left to propagate as-is, `str(exc)` reads "'utf-8' codec
+            # can't decode byte 0xff..." with no path in it at all, and
+            # `unusable_message`'s fallback branch passes that straight
+            # through (m5).
+            raise ValueError(f"{self.path} is not UTF-8 text: {exc}") from exc
+        raw = yaml.safe_load(text) or {}
         self._check_shape(raw)
         try:
             nodes = [
@@ -117,7 +258,20 @@ class NodeStore:
             ]
             consent = ScanConsent.model_validate(raw.get("consent") or {})
         except ValidationError as exc:
-            raise ValueError(f"{self.path} does not match the contract — {exc}") from exc
+            # Built from `loc` and `msg` only, never `str(exc)`: pydantic's
+            # own rendering includes `input_value=...` for the field that
+            # failed, which can be the very url a person must never see
+            # echoed back (last check's residual leak -- the structural
+            # fix, same reasoning as `_what()` above). `loc`/`msg` say
+            # which field and what kind of problem without repeating what
+            # was typed into it.
+            problems = "; ".join(
+                f"{'.'.join(str(p) for p in err['loc']) or '(root)'}: {err['msg']}"
+                for err in exc.errors()
+            )
+            raise ValueError(
+                f"{self.path} does not match the contract — {problems}"
+            ) from exc
         return nodes, consent
 
     def _check_shape(self, raw) -> None:
@@ -130,6 +284,25 @@ class NodeStore:
             raise ValueError(
                 f"{self.path} should start with `consent:` and `nodes:`, and "
                 f"it holds {_what(raw)} instead."
+            )
+        # A misspelled top-level key (`node:` for `nodes:`) is not one of the
+        # wrong shapes above -- `raw.get("nodes")` just reads as absent, which
+        # loads as "no computers" rather than a refusal, and the next write
+        # (through `save()`, which only ever writes what `load()` handed
+        # back) erases the ones a person wrote by hand (review finding I3).
+        allowed = {"schema_version", "consent", "nodes"}
+        # `key=str`: a key that is not even text (an int or `null` key, which
+        # YAML allows) must not crash this check by landing next to a string
+        # in a plain `sorted()`.
+        unknown = sorted((set(raw) - allowed), key=str)
+        if unknown:
+            # Every key named is backticked, including the allowed ones: a
+            # bare "nodes" here is the implementation showing through a
+            # sentence a person reads (§3.1), not a key they typed.
+            names = ", ".join(f"`{key}`" for key in sorted(allowed))
+            raise ValueError(
+                f"{self.path}: `{unknown[0]}:` is not one of this file's "
+                f"top-level keys ({names}). Check the spelling."
             )
         computers = raw.get("nodes") or {}
         if not isinstance(computers, dict):
@@ -177,9 +350,28 @@ class NodeStore:
         -- compared as ``address_for`` reads it, not as a string, see
         ``recorded_at`` -- and never silently share an id either: a new id
         already in use gets a numeric suffix (see ``_with_unique_id``).
+
+        Raises ``AmbiguousAddressError`` (a ``ValueError``), carrying the
+        computers involved, when *more* than one stored computer already
+        reads to this address. That pair should never exist -- this method
+        is what stops one forming -- but a store written before this rule
+        held, or edited by hand, can still carry it in. With only one
+        candidate to refresh, picking it by address was safe; with two, it
+        is a guess, and the one review finding I2 reproduces: a look that
+        reached the second record updated the first instead and then read
+        the second, which had just answered, as silent. Refusing the write
+        is the one response here that cannot misattribute anything --
+        ``load()``, ``forget()`` and ``node list`` are unaffected, so the
+        person can still see both and remove one. A caller processing
+        several findings in one pass (``node scan``'s loop, on either front
+        end) should catch this per finding and keep going -- one ambiguous
+        address must not cost an unrelated one in the same scan.
         """
         nodes, consent = self.load()
-        same = recorded_at(nodes, node.url, node.kind)
+        matches = _matching_address(nodes, node.url, node.kind)
+        if len(matches) > 1:
+            raise AmbiguousAddressError(self.path, matches)
+        same = matches[0] if matches else None
         for index, existing in enumerate(nodes):
             if existing is not same:
                 continue
@@ -213,6 +405,18 @@ class NodeStore:
                 if "." in key or key == "url":
                     continue
                 setattr(merged, key, getattr(existing, key))
+            # The label's own provenance is not a top-level typed field by
+            # name -- it is the one key `_run_scan`'s `--label` sets on
+            # `node` itself, not on `existing` -- so the loop above never
+            # touches it. Left to the merge above, the incoming DECLARED
+            # would win even though the *text* just above is always
+            # `existing.label`: a rescan's `--label` over a machine-made
+            # name kept the old text and still marked it "you told me"
+            # (review finding I1). The label's source follows the label's
+            # text, whatever that source is -- including "nobody said".
+            merged.provenance.pop("label", None)
+            if "label" in existing.provenance:
+                merged.provenance["label"] = existing.provenance["label"]
             nodes[index] = merged
             self.save(nodes, consent)
             return merged

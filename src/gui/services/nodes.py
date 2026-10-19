@@ -48,8 +48,20 @@ from typing import Iterator, Optional
 import yaml
 
 from src.gui.services.workflow import Outcome
-from src.nodes.discovery import address_for, discover
-from src.nodes.store import NodeStore, recorded_at, unusable_message
+from src.nodes.discovery import (
+    address_for,
+    address_problem,
+    discover,
+    has_userinfo,
+    redact_userinfo,
+)
+from src.nodes.store import (
+    AmbiguousAddressError,
+    NodeStore,
+    duplicate_node_groups,
+    recorded_at,
+    unusable_message,
+)
 from src.nodes.summary import (
     KIND_WORDS,
     MAY_I_CONTACT,
@@ -181,6 +193,17 @@ class NodeListResult(Outcome):
     rows: list[NodeRowView] = field(default_factory=list)
     summary_rows: list[tuple[str, str]] = field(default_factory=list)
     consequence: str = ""
+    #: Ordinarily empty: `upsert` refuses to create this pair. Set when the
+    #: store already holds two or more ids at one address -- a pre-fix build
+    #: or a hand edit -- so the tab can tell the person before "Check again"
+    #: refuses the write that pair causes (review finding I2).
+    duplicate_notice: str = ""
+    #: Ordinarily empty: every entry route refuses a user name or password
+    #: before it is ever saved. Set when a record an older build or a hand
+    #: edit left with one is in the store -- its card already shows the
+    #: address redacted; this names which computer and the remedy (final
+    #: re-review finding 1).
+    tainted_notice: str = ""
 
 
 @dataclass
@@ -237,17 +260,59 @@ def _unusable(path: Path, exc: Exception) -> str:
     return unusable_message(path, exc)
 
 
+def _ambiguity_message(nodes: list[InferenceNode]) -> str:
+    """Name a store's two-at-one-address pair the way a card does -- its
+    label and address -- and give the one remedy that works from this
+    screen: the card's own Forget button.
+
+    ``unusable_message`` -- what every other store refusal here uses -- is
+    the terminal's words for this one: ids, the ``fukasawa node forget
+    <id>`` command, and then "Correct that file..." tacked on after advice
+    that already told the person what to do, so they read two different
+    remedies (re-review nit). This front end has no ids on screen and no
+    command line, so it gets its own sentence instead of that one.
+    """
+    named = " and ".join(f"{n.label} ({redact_userinfo(n.url)})" for n in nodes)
+    return (
+        f"{named} are recorded at the same address. A look cannot tell "
+        f"which one it means. Forget one on its card to fix it."
+    )
+
+
+def _tainted_message(node: InferenceNode) -> str:
+    """Name a card that cannot be reached because its address names a user
+    name or password, and the one remedy that works from here.
+
+    Never includes the address itself, redacted or not: the label is
+    enough to find the card (final re-review finding 1).
+    """
+    return (
+        f"{node.label}'s address contains \"@\" -- a user name or password, "
+        f"or something that looks like one. It is not used to reach anything "
+        f"until that is removed. Forget this card, or edit its address."
+    )
+
+
 def _row(node: InferenceNode) -> NodeRowView:
-    """Flatten one computer into display rows with plain-language sources."""
+    """Flatten one computer into display rows with plain-language sources.
+
+    The address is redacted here, once, before either copy of it (the row's
+    own ``url`` and the "Address" field's value) reaches a card -- never the
+    secret itself, for a record an older build or a hand edit left with a
+    user name or password in it (final re-review finding 1). The edit box
+    pre-fills with the same redacted text, which is right: the fix is to
+    retype a clean address, not to see the old one back.
+    """
+    shown_url = redact_userinfo(node.url)
     return NodeRowView(
         node_id=node.node_id,
         label=node.label,
-        url=node.url,
+        url=shown_url,
         status=status_of(node),
         fields=[
             FieldView("label", "Call it", node.label,
                       source_label(node.source_of("label")), editable=True),
-            FieldView("url", "Address", node.url,
+            FieldView("url", "Address", shown_url,
                       source_label(node.source_of("url")), editable=True),
             FieldView("models", "Models it can run", model_count(node),
                       source_label(node.source_of("models"))),
@@ -277,12 +342,18 @@ def list_nodes(store: Optional[NodeStore] = None) -> NodeListResult:
             ok=False, summary=UNUSABLE_FILE, refusal=_unusable(target.path, exc)
         )
     summary = summarise(nodes)
+    notice = " ".join(
+        _ambiguity_message(group) for group in duplicate_node_groups(nodes)
+    )
+    tainted = " ".join(_tainted_message(n) for n in nodes if has_userinfo(n.url))
     return NodeListResult(
         ok=True,
         summary=f"{len(nodes)} computer(s) recorded." if nodes else "None recorded yet.",
         rows=[_row(n) for n in nodes],
         summary_rows=[(r.label, r.value) for r in summary.rows],
         consequence=summary.consequence,
+        duplicate_notice=notice,
+        tainted_notice=tainted,
     )
 
 
@@ -369,6 +440,20 @@ def scan(
         )
         return
 
+    if scope is ScanScope.NAMED_HOST:
+        # Checked before anything else about this host, including whether
+        # it is already recorded: a freshly typed address naming a user
+        # name or password is refused outright, and the same check catches
+        # a stored record that already had one (`check_node` passes its
+        # own `match.url` in as `host`) -- either way nothing is opened
+        # (final re-review finding 1).
+        problem = address_problem(host)
+        if problem:
+            yield ScanEventView(
+                stage="address", message=problem, ok=False, finished=True,
+            )
+            return
+
     # After every stop above and before anything is opened, exactly as
     # `node scan` orders it in src/cli.py. A reach that was refused leaves the
     # record alone; a reach that is about to be taken is on the record before
@@ -403,13 +488,38 @@ def scan(
             #
             # Done BEFORE the closing event is yielded, so a scan that says it
             # has finished has already recorded what it found.
-            try:
-                for node in found:
+            #
+            # One computer's address being ambiguous (review finding I2)
+            # must not cost every OTHER computer this same scan found: a
+            # single `try` around the whole loop stopped at the first
+            # refusal, so which finding survived depended on the order
+            # `discover` happened to yield them in (re-review r4). Each is
+            # tried; a refusal is collected rather than raised immediately,
+            # so the rest still get saved.
+            refused: list[str] = []
+            for node in found:
+                try:
                     target.upsert(node)
-            except (OSError, yaml.YAMLError, ValueError) as exc:
+                except AmbiguousAddressError as exc:
+                    # This screen has no ids and no command line, so it
+                    # gets its own words rather than the terminal's
+                    # (re-review nit) -- see `_ambiguity_message`.
+                    refused.append(_ambiguity_message(exc.nodes))
+                except (OSError, yaml.YAMLError, ValueError) as exc:
+                    refused.append(_unusable(target.path, exc))
+            if refused:
+                # Say what was saved, not only what was refused: replacing
+                # discovery's own closing line outright left a person who
+                # found two computers and lost one of them with no word
+                # that the other one *was* saved (re-review nit).
+                saved = len(found) - len(refused)
+                prefix = ""
+                if saved:
+                    noun = "computer" if saved == 1 else "computers"
+                    prefix = f"Saved {saved} {noun}. "
                 yield ScanEventView(
                     stage="store",
-                    message=_unusable(target.path, exc),
+                    message=f"{prefix}{' '.join(refused)}",
                     ok=False,
                     finished=True,
                 )
@@ -445,6 +555,12 @@ def add_node(
             summary="Unknown kind",
             refusal=f"'{kind}' is not one of: {', '.join(k.value for k in NodeKind)}",
         )
+    # Checked before `address_for` ever reads it, so the refusal is this
+    # sentence and not whatever the address became after a port was added
+    # to it (final re-review finding 1).
+    problem = address_problem(url)
+    if problem:
+        return AddResult(ok=False, summary="Address refused", refusal=problem)
     url = address_for(url, NodeKind(kind))
     target = _store(store)
     try:
@@ -526,6 +642,17 @@ def check_node(
                             ok=False, finished=True)
         return
 
+    if has_userinfo(match.url):
+        # Named by card, with the remedy that works from here -- `scan()`
+        # would catch this too (it refuses the same `match.url` as `host`),
+        # but with the generic words for someone about to *type* an
+        # address, not for a card that already has one (final re-review
+        # finding 1).
+        yield ScanEventView(stage="address",
+                            message=_tainted_message(match),
+                            ok=False, finished=True)
+        return
+
     before = match.last_probed_at
     answered = False
     for event in scan(ScanScope.NAMED_HOST, match.url, store=target,
@@ -597,6 +724,11 @@ def update_field(
     if field_name in ("label", "url") and not value.strip():
         return Outcome(ok=False, summary="Missing details", refusal=NEEDS_BOTH)
     if field_name == "url":
+        # Checked before `address_for` ever reads it, same as a fresh add
+        # (final re-review finding 1).
+        problem = address_problem(value)
+        if problem:
+            return Outcome(ok=False, summary="Address refused", refusal=problem)
         # Read the way a typed-in address is read (§3.8), and before the
         # comparison below -- a card is the other place a person types an
         # address, and "10.0.0.9" must collide with the computer stored at

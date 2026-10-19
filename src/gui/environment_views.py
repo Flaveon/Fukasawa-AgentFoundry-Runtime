@@ -273,6 +273,18 @@ class EnvironmentTab(ctk.CTkFrame):
             # a way out, and this is the one screen somebody could act on it.
             self._text(self.content, result.refusal or result.summary)
             return
+        if result.duplicate_notice:
+            # Review finding I2: a store a pre-fix build or a hand edit left
+            # with two ids at one address. Said before the cards, not buried
+            # in the panel below them, because it is what makes "Check
+            # again" on either card below refuse rather than act.
+            self._text(self.content, result.duplicate_notice, bold=True)
+        if result.tainted_notice:
+            # Final re-review finding 1: a card whose stored address names
+            # a user name or password. Its own Address field already shows
+            # that address redacted; said again here, by card, so it is
+            # not missed among several cards.
+            self._text(self.content, result.tainted_notice, bold=True)
         if not result.rows:
             self._empty_state(self.content)
         else:

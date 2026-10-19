@@ -332,8 +332,24 @@ class TestRecordedComputersAreUsable:
         assert "kitchen-box" in result.output
         assert "mine" in result.output, "model_endpoints.yaml stopped resolving"
 
+    def test_an_unparseable_computers_file_is_named_and_left_out(
+        self, tmp_path, monkeypatch
+    ):
+        """A graph that uses no recorded computer must still run.
+
+        This one really could not be read: `nodes: [oops` is not valid YAML
+        at all, so `yaml.safe_load` never returns anything for `NodeStore` to
+        check the shape of.
+        """
+        result = TestEndpointsAreDiscoverable()._run(
+            tmp_path, monkeypatch, exists=True, nodes="nodes: [oops\n"
+        )
+        assert result.exit_code == 0, result.output
+        assert "could not be read" in result.output
+        assert "nodes.yaml" in result.output
+        assert "mine" in result.output
+
     @pytest.mark.parametrize("nodes", [
-        "nodes: [oops\n",
         # YAML of the wrong shape, which raised AttributeError or TypeError
         # straight past the warning below (review finding 2).
         "- one\n- two\n",
@@ -341,27 +357,30 @@ class TestRecordedComputersAreUsable:
         "nodes:\n  - label: x\n",
         "nodes:\n  home-pc:\n",
     ])
-    def test_unreadable_computers_are_named_and_left_out(
+    def test_a_misshapen_computers_file_is_named_once_and_left_out(
         self, tmp_path, monkeypatch, nodes
     ):
-        """A graph that uses no recorded computer must still run."""
+        """Parsed fine, shaped wrong -- not the same failure as above (m6).
+
+        `NodeStore.load` already names the file in the `ValueError` it
+        raises for these ("<path> should start with `consent:` and
+        `nodes:`...", and so on). Leading with "<path> could not be read" in
+        front of that said the path twice and called a file that *was* read,
+        just wrongly shaped, "could not be read".
+        """
         result = TestEndpointsAreDiscoverable()._run(
             tmp_path, monkeypatch, exists=True, nodes=nodes
         )
         assert result.exit_code == 0, result.output
-        assert "could not be read" in result.output
-        assert "nodes.yaml" in result.output
+        assert "could not be read" not in result.output
+        assert result.output.count("nodes.yaml") == 1
         assert "mine" in result.output
+        # `detail` ends in a period of its own (NodeStore.load's ValueError
+        # does), and the clause appended after it must not read "....,".
+        assert ".," not in result.output
 
-    @pytest.mark.parametrize("text", [
-        "endpoints: [oops\n",
-        "- one\n",
-        "endpoints:\n  - mine\n",
-        "endpoints:\n  mine: http://x:11434\n",
-        "endpoints:\n  mine:\n    url: http://x:11434\n",
-    ])
-    def test_a_broken_endpoint_file_is_named_and_left_out(
-        self, tmp_path, monkeypatch, text
+    def test_an_unparseable_endpoint_file_is_named_and_left_out(
+        self, tmp_path, monkeypatch
     ):
         """The same rule as for `nodes.yaml`, for the other file.
 
@@ -369,7 +388,47 @@ class TestRecordedComputersAreUsable:
         which held when `model list` crashed with a ParserError and printed
         nothing at all (review finding 7). Every graph run crashed the same
         way. The exit code and the recorded computer are what make it able
-        to fail.
+        to fail. `endpoints: [oops` really could not be read: it is not
+        valid YAML at all.
+        """
+        from typer.testing import CliRunner
+
+        from src import cli
+
+        home = _home(tmp_path, monkeypatch)
+        _record(home)
+        (home / "model_endpoints.yaml").write_text(
+            "endpoints: [oops\n", encoding="utf-8"
+        )
+        result = CliRunner().invoke(cli.app, ["model", "list"])
+        assert result.exit_code == 0, repr(result.exception)
+        prose = " ".join(result.output.split())
+        assert "model_endpoints.yaml could not be read" in prose.replace(
+            str(home) + "/", "")
+        assert "recorded computers" not in result.output
+        assert "kitchen-box" in result.output, "the computers were left out too"
+        assert cli._model_endpoints().get("kitchen-box").url == RECORDED_URL
+
+    @pytest.mark.parametrize("text", [
+        "- one\n",
+        "endpoints:\n  - mine\n",
+        "endpoints:\n  mine: http://x:11434\n",
+        "endpoints:\n  mine:\n    url: http://x:11434\n",
+        # m4: an unquoted numeric name reads as an int. `model list`'s
+        # `sorted()` over that mapping used to crash with a bare TypeError,
+        # not reach this warning at all -- `exit_code == 0` is the part of
+        # this parametrised test that would have caught it.
+        "endpoints:\n  7:\n    kind: ollama\n    url: http://x:11434\n",
+    ])
+    def test_a_misshapen_endpoint_file_is_named_once_and_left_out(
+        self, tmp_path, monkeypatch, text
+    ):
+        """Parsed fine, shaped wrong -- not the same failure as above (m6).
+
+        `legacy_endpoints` already names the file in the `ValueError` it
+        raises for these. Leading with "<path> could not be read" in front
+        of that said the path twice and called a file that *was* read, just
+        wrongly shaped, "could not be read".
         """
         from typer.testing import CliRunner
 
@@ -380,9 +439,18 @@ class TestRecordedComputersAreUsable:
         (home / "model_endpoints.yaml").write_text(text, encoding="utf-8")
         result = CliRunner().invoke(cli.app, ["model", "list"])
         assert result.exit_code == 0, repr(result.exception)
-        prose = " ".join(result.output.split())
-        assert "model_endpoints.yaml could not be read" in prose.replace(
-            str(home) + "/", "")
+        # The warning is the first thing printed; everything after it,
+        # including "Configured in: <path>", names the path again for an
+        # unrelated reason, so only the warning itself is checked for the
+        # double-naming m6 is about.
+        warning = result.output.split("\n\n", 1)[0]
+        prose = " ".join(warning.split()).replace(str(home) + "/", "")
+        assert "could not be read" not in prose
+        assert prose.count("model_endpoints.yaml") == 1
+        # `detail` ends in a period of its own (`legacy_endpoints`'s
+        # ValueError does for every one of these shapes), and the clause
+        # appended after it must not read "....,".
+        assert ".," not in prose
         assert "recorded computers" not in result.output
         assert "kitchen-box" in result.output, "the computers were left out too"
         assert cli._model_endpoints().get("kitchen-box").url == RECORDED_URL
@@ -416,6 +484,193 @@ class TestRecordedComputersAreUsable:
                 "the historical section mentions the node library without "
                 "pointing at where the rest of the gap is recorded"
             )
+
+
+class TestUserinfoNeverLeaksIntoAFailedRun:
+    """Final re-review finding 1: the FROZEN kernel copies an endpoint's
+    url verbatim into a failed attempt's note, and `save_graph_run` keeps
+    that note in the ledger. A computer whose stored address names a user
+    name or password must never reach the kernel at all, so there is
+    nothing for it to copy.
+    """
+
+    def test_a_tainted_computer_is_never_resolved_and_never_contacted(
+        self, tmp_path, monkeypatch
+    ):
+        from src import cli
+        from src.kernel.models import ModelAdapter
+
+        home = _home(tmp_path, monkeypatch)
+        from src.nodes.store import NodeStore
+        from src.schemas.node import InferenceNode, NodeKind, ScanConsent
+
+        NodeStore(home / "nodes.yaml").save(
+            [InferenceNode(node_id="tainted", label="Tainted Box",
+                           kind=NodeKind.OLLAMA,
+                           url="http://alice:s3cret@10.0.0.9:11434")],
+            ScanConsent(),
+        )
+        registry = cli._model_endpoints()
+        assert "tainted" not in registry.names(), (
+            "a computer naming a password resolved as a usable endpoint"
+        )
+
+        def exploding_poster(*_a, **_k):
+            raise AssertionError("a tainted endpoint was contacted")
+
+        adapter = ModelAdapter(registry, poster=exploding_poster)
+        result = adapter.execute(
+            {"endpoint": "tainted", "model": "m", "prompt": "hi"}
+        )
+        assert result.ok is False
+        assert "alice" not in result.note
+        assert "s3cret" not in result.note
+        assert "10.0.0.9" not in result.note
+
+    def test_model_list_leaves_it_out_entirely(self, tmp_path, monkeypatch):
+        """It never resolves as a usable endpoint at all, so `model list`
+        has nothing of it to redact -- it is simply absent."""
+        from typer.testing import CliRunner
+
+        from src import cli
+        from src.nodes.store import NodeStore
+        from src.schemas.node import InferenceNode, NodeKind, ScanConsent
+
+        home = _home(tmp_path, monkeypatch)
+        NodeStore(home / "nodes.yaml").save(
+            [InferenceNode(node_id="tainted", label="Tainted Box",
+                           kind=NodeKind.OLLAMA,
+                           url="http://alice:s3cret@10.0.0.9:11434")],
+            ScanConsent(),
+        )
+        result = CliRunner().invoke(cli.app, ["model", "list"])
+        assert result.exit_code == 0, result.output
+        assert "s3cret" not in result.output
+        assert "tainted" not in result.output
+
+    def test_a_tainted_model_endpoints_entry_leaves_the_whole_file_out(
+        self, tmp_path, monkeypatch
+    ):
+        """Final check's residual leak and wording nit: `legacy_endpoints`
+        builds this ValueError straight from the entry's own url, and the
+        warning used to print `str(exc)` unscrubbed, so the secret reached
+        `model list` even though the tainted node path (above) never does.
+        The warning also used to say just "so it is left out", with
+        nothing to say *what* -- this names the file and says every entry
+        in it, not only the tainted one, is void."""
+        from typer.testing import CliRunner
+
+        from src import cli
+
+        home = _home(tmp_path, monkeypatch)
+        (home / "model_endpoints.yaml").write_text(
+            "endpoints:\n"
+            "  ok:\n    kind: ollama\n    url: http://10.0.0.1:11434\n"
+            "  gpu:\n    kind: ollama\n"
+            "    url: http://alice:s3cret@10.0.0.9:11434\n",
+            encoding="utf-8",
+        )
+        result = CliRunner().invoke(cli.app, ["model", "list"])
+        assert result.exit_code == 0, result.output
+        assert "s3cret" not in result.output
+        assert "nothing in this file is used" in result.output
+        assert "model_endpoints.yaml" in result.output
+        # The whole file is void, not only the tainted entry: the other,
+        # well-formed "ok" endpoint it defined must not resolve either --
+        # its distinctive address is the clean signal, not its name.
+        assert "10.0.0.1" not in result.output
+
+    def test_a_yaml_error_near_a_password_in_model_endpoints_is_scrubbed(
+        self, tmp_path, monkeypatch
+    ):
+        """Final check's residual leak: unlike the well-formed-entry case
+        above (whose own message never echoes the url), a YAML *syntax*
+        error near the url line makes PyYAML quote the surrounding text
+        back in its own context snippet -- and `left_out` builds this
+        warning straight from `str(exc)`, outside `unusable_message`, so
+        it needed its own scrub."""
+        from typer.testing import CliRunner
+
+        from src import cli
+
+        home = _home(tmp_path, monkeypatch)
+        (home / "model_endpoints.yaml").write_text(
+            "endpoints:\n  gpu:\n    kind: ollama\n"
+            "    url: http://alice:s3cret@10.0.0.9: x\n",
+            encoding="utf-8",
+        )
+        result = CliRunner().invoke(cli.app, ["model", "list"])
+        assert result.exit_code == 0, result.output
+        assert "s3cret" not in result.output
+
+    @pytest.mark.parametrize("nodes_yaml", [
+        "nodes: http://alice:s3cret@10.0.0.9\n",
+        "consent: http://alice:s3cret@10.0.0.9\n",
+        "nodes:\n  box:\n    adress: http://alice:s3cret@10.0.0.9\n"
+        "    label: x\n    kind: ollama\n    url: http://y:1\n",
+        'nodes:\n  box:\n    label: x\n    kind: ollama\n'
+        '    url: ["http://alice:s3cret@10.0.0.9"]\n',
+        "nodes:\n  box:\n    label: x\n    kind: ollama\n"
+        "    url: http://alice:s3cret@10.0.0.9: x\n",
+        "nodes:\n  kitchen: >\n    http://alice:s3cret\n    @10.0.0.9\n",
+        "nodes:\n  kitchen: http://alice:s3cret/more@10.0.0.9\n",
+        "nodes:\n  kitchen: \"http://alice:s3cret'more@10.0.0.9\"\n",
+        "nodes:\n  box:\n    label: x\n    kind: ollama\n    url: "
+        "http://alice:s3cret" + "A" * 100 + "@10.0.0.9: x\n",
+    ], ids=[
+        "nodes-as-scalar", "consent-as-scalar", "misspelled-field",
+        "url-as-list", "yaml-error-on-url-line",
+        "folded-scalar", "unencoded-slash", "apostrophe-in-password",
+        "yaml-error-truncated-before-at",
+    ])
+    def test_a_malformed_nodes_file_never_leaks_through_model_list_either(
+        self, tmp_path, monkeypatch, nodes_yaml
+    ):
+        """`model list` reads `nodes.yaml` too (through `merged_endpoints`'s
+        `on_unreadable` callback), by a completely separate route from
+        `node list` -- every one of the ten shapes above is checked here
+        as well, not only on the route the earlier repro happened to use."""
+        from typer.testing import CliRunner
+
+        from src import cli
+
+        home = _home(tmp_path, monkeypatch)
+        (home / "nodes.yaml").write_text(nodes_yaml, encoding="utf-8")
+        result = CliRunner().invoke(cli.app, ["model", "list"])
+        assert result.exit_code == 0, result.output
+        assert "s3cret" not in result.output
+        assert "10.0.0.9" not in result.output
+
+    @pytest.mark.parametrize("model_endpoints_yaml", [
+        "endpoints:\n  gpu: >\n    http://alice:s3cret\n    @10.0.0.9\n",
+        "endpoints:\n  gpu: http://alice:s3cret/more@10.0.0.9\n",
+        "endpoints:\n  gpu: \"http://alice:s3cret'more@10.0.0.9\"\n",
+        "endpoints:\n  gpu:\n    kind: ollama\n    url: "
+        "http://alice:s3cret" + "A" * 100 + "@10.0.0.9: x\n",
+    ], ids=[
+        "folded-scalar", "unencoded-slash", "apostrophe-in-password",
+        "yaml-error-truncated-before-at",
+    ])
+    def test_a_malformed_model_endpoints_file_never_leaks_either(
+        self, tmp_path, monkeypatch, model_endpoints_yaml
+    ):
+        """The same four shapes as for `nodes.yaml`, through the YAML
+        parser `legacy_endpoints` uses on this file directly -- an
+        independent parse of independent content, so each needed its own
+        check that the structural fix (``yaml_problem_location``) covers
+        it too."""
+        from typer.testing import CliRunner
+
+        from src import cli
+
+        home = _home(tmp_path, monkeypatch)
+        (home / "model_endpoints.yaml").write_text(
+            model_endpoints_yaml, encoding="utf-8"
+        )
+        result = CliRunner().invoke(cli.app, ["model", "list"])
+        assert result.exit_code == 0, result.output
+        assert "s3cret" not in result.output
+        assert "10.0.0.9" not in result.output
 
 
 class TestNodeDoctrine:
