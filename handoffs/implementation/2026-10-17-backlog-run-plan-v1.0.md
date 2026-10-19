@@ -1,5 +1,9 @@
 # Backlog run plan — 2026-10-17
 
+> **Closed 2026-10-19.** Final status, dispositions and what waits on the owner:
+> `2026-10-19-backlog-run-completion-report-v1.0.md`. The task table below is
+> the plan as it stood during the run.
+
 **Assignment:** the owner's *Fukasawa Claude Backlog Handoff v1.0*, prepared
 2026-10-16 against `main` = `95d8867`. It is kept in the owner's local checkout
 and **not committed**: it names the owner personally, and this repository is

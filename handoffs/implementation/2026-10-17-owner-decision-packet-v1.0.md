@@ -186,3 +186,14 @@ recorded override ("continue under the current brief", with who decided and
 why, written to the append-only ledger, like accepting a risk)? *Recommended:*
 no, unless you have paused runs you need to finish — a fresh run loses
 nothing the ledger needs, and every override is one more way round a guard.
+
+## 13. An "@" anywhere in a computer's address is now refused
+
+**What is true now (merged in #33).** To keep passwords out of addresses
+without a parser that four review rounds kept misleading, any `@` in an
+address counts as a credential. Typed, it is refused; stored, it is hidden and
+never used. That also refuses an `@` inside a path or query
+(`http://box/p@x`), which was accepted before. An inference node's base
+address has no use for one, and `%40` still works. **Question:** is that
+acceptable, or do you have an endpoint that needs a literal `@` in its path?
+*Recommended:* keep it.
