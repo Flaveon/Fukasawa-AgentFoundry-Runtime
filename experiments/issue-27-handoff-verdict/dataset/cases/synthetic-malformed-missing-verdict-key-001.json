@@ -1,0 +1,18 @@
+{
+  "case_id": "synthetic-malformed-missing-verdict-key-001",
+  "handoff": {
+    "angela_verdict_line": "Angela verdict: PASS",
+    "present": true,
+    "readable": true,
+    "shipping_decision_lines": [
+      "- Article HTML: ship"
+    ]
+  },
+  "quality_report": {
+    "finding_counts": {
+      "artifact_release_hold": 2
+    },
+    "readable": true,
+    "verdict": null
+  }
+}

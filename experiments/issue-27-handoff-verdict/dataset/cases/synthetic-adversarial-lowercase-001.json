@@ -1,0 +1,20 @@
+{
+  "case_id": "synthetic-adversarial-lowercase-001",
+  "handoff": {
+    "angela_verdict_line": "angela verdict: pass",
+    "present": true,
+    "readable": true,
+    "shipping_decision_lines": [
+      "- article html: ship",
+      "- visual support: ship",
+      "- interactive tool: do not ship"
+    ]
+  },
+  "quality_report": {
+    "finding_counts": {
+      "artifact_release_hold": 1
+    },
+    "readable": true,
+    "verdict": "HOLD"
+  }
+}

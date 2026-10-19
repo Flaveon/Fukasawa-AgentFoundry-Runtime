@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 ConcordiaPax LLC
+#
+# Issue #27 — Handoff/quality-report consistency check. This is a capsule
+# for PROMOTION REVIEW, not a promoted capability. See ROLLOUT.md in this
+# directory: "Not promoted. Requires owner review and approval (issue #27
+# checklist item 6)." Validated against AgentCapsuleContract
+# (src/schemas/agent_package.py:110) — the design-time transfer contract,
+# distinct from the runtime's own ProcessCapsule (one execution instance).
+task_name: "q2c-duath-handoff-quality-report-consistency: flag a Duath operator
+  handoff that authorizes shipping (or claims an Angela PASS) for a run whose
+  deterministic quality-report.json verdict is HOLD, for the same run_id."
+owner_agent: package-consistency-checker
+workflow_id: q2c-duath-handoff-quality-report-consistency
+maturity: draft
+depth_level: 0
+inputs:
+  - name: duath operator handoff text for one run_id
+    type: markdown text or null
+    required: true
+    source: "~/substack/<date>/support/<run_id>-duath-operator-handoff.md (private, not read by this capsule directly — caller's job)"
+  - name: parsed quality-report.json for the SAME run_id
+    type: dict or null
+    required: true
+    source: "~/substack/deploy/<MM_DD_YY>/<run_id>/quality-report.json (private, not read by this capsule directly — caller's job)"
+steps:
+  - name: "normalize Unicode (NFKC) and line endings, then parse the handoff's 'Angela verdict:' line
+      and '## Shipping Decision' bullet lines against a strict allowlist of recognized shapes and
+      values — anything that looks like an attempt at either field but does not match the allowlist
+      is flagged unparseable, never silently read as absent (v2, post-review; see CANDIDATES.md)"
+    depth_level: 0
+    deterministic: true
+  - name: "read the quality report's 'verdict' field (PASS/HOLD), treating anything else as absent;
+      for a PASS verdict, also check whether it still lists findings (internally inconsistent)"
+    depth_level: 0
+    deterministic: true
+  - name: "if the report verdict is HOLD, compare: does the handoff contain a recognized, unqualified
+      Angela PASS claim, or a recognized Shipping Decision line whose value is exactly 'ship' — an
+      exact allowlist match, not a prose-aware substring match"
+    depth_level: 0
+    deterministic: true
+  - name: "if either document could not be read or parsed, lacks the fields needed for comparison, or
+      has a field that does not match the recognized allowlist shape/value, return ABSTAIN with an
+      escalation to a human operator — never CONSISTENT. A recognized BLOCK signal from one field
+      still takes priority over an ABSTAIN from a separately-garbled, unrelated field."
+    depth_level: 0
+    deterministic: true
+known_failures:
+  - failure: quality report is missing, unreadable, or has no valid verdict field
+    signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator"
+    response: a human reads the raw files directly; this capsule makes no claim about them
+  - failure: handoff is missing, empty, or unreadable
+    signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator"
+    response: a human reads the raw handoff directly; this capsule makes no claim about it
+  - failure: handoff is readable but has neither an Angela verdict line nor a Shipping Decision section
+    signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator"
+    response: treat as an unreviewed handoff, not as a passing one
+  - failure: "a field LOOKS like an attempt at the Angela line or Shipping Decision section but does
+      not match the strict allowlist — markup/decoration (bold, backticks, emoji), a homoglyph that
+      survives NFKC normalization, an unrecognized bullet marker or missing colon, header drift
+      (wrong level, plural, suffix), a duplicate line/section, a blank line splitting a section's
+      bullets, a qualified or suffixed value (PASSED, 'PASS - zero failures'), or an Angela verdict
+      of UNKNOWN (the pipeline's own placeholder, not a real answer)"
+    signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator"
+    response: "a human reads the raw handoff directly; an unrecognized shape is never read as 'not
+      ship' (this is the v1-to-v2 fail-closed correction; see CANDIDATES.md and PROTOCOL.md Amendment 3)"
+  - failure: "a HOLD report, with exactly ONE of the two fields present and resolved cleanly to a
+      non-blocking value, while the OTHER field is renamed, disguised, or otherwise invisible to even
+      the loose 'is this attempted at all' detector (a zero-width space or homoglyph inside 'Angela
+      verdict' or 'Shipping Decision', a renamed header like '## Shipping' or '## Publish Decision',
+      'Angela's verdict:', 'Reviewer verdict:', or no header/line at all) -- v2.0 read this as
+      genuinely absent and let the one resolved field decide CONSISTENT alone (round-2 review
+      H1-residual)"
+    signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator" (v2.1, PROTOCOL.md Amendment 4)
+    response: "a single resolved, non-blocking field is not enough evidence that the other field has
+      nothing to say -- CONSISTENT on a HOLD report now requires BOTH fields present and resolved; a
+      single CLEAN BLOCKING field (Angela PASS, or a ship line) still BLOCKs on its own, unaffected"
+  - failure: quality report verdict is PASS but still lists findings
+    signal: ConsistencyVerdict.ABSTAIN with escalation_target="human operator"
+    response: a PASS verdict with recorded findings is internally inconsistent; do not trust it at face value
+  - failure: this capsule's scope does not cover a PASS report with an over-conservative handoff
+    signal: ConsistencyVerdict.CONSISTENT is returned even when the handoff is needlessly cautious
+    response: "documented boundary, not a bug -- see package_consistency.py's docstring; out of scope
+      for issue 27, which is specifically about over-authorization against a HOLD, not under-authorization
+      against a PASS"
+  - failure: "this capsule's scope is run-level, not per-artifact -- the owner's plan language ('held
+      artifacts') is finer-grained than this Level-0 check"
+    signal: a single BLOCK/ABSTAIN/CONSISTENT verdict for the whole run, not one per artifact
+    response: "documented boundary -- a per-artifact check is a separate, larger piece of work, not
+      this one (see package_consistency.py's docstring boundaries list)"
+escalation_rules:
+  - condition: ConsistencyVerdict.ABSTAIN (any of the known_failures above)
+    target: human operator
+    requested_checks: read the raw handoff and quality-report.json for this run_id directly; do not
+      assume either document is correct
+output_schema:
+  status: "BLOCK | CONSISTENT | ABSTAIN"
+  evidence: "each contradicted handoff line, verbatim, for BLOCK; the specific missing/malformed field
+    for ABSTAIN; nothing additional for CONSISTENT"
+  confidence: "not scored — this is a deterministic function; the same inputs always produce the same
+    output, so there is no probabilistic confidence to report"
+  recommended_next_step: "BLOCK -> do not publish, correct the handoff or the run; CONSISTENT -> no
+    action; ABSTAIN -> escalate to the human operator named in escalation_rules"

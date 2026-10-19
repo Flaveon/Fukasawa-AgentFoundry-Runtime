@@ -1,0 +1,16 @@
+{
+  "case_id": "synthetic-malformed-empty-handoff-001",
+  "handoff": {
+    "angela_verdict_line": null,
+    "present": true,
+    "readable": true,
+    "shipping_decision_lines": []
+  },
+  "quality_report": {
+    "finding_counts": {
+      "artifact_release_hold": 4
+    },
+    "readable": true,
+    "verdict": "HOLD"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "case_id": "2026-06-03-udu9ao-qwen",
+  "handoff": {
+    "angela_verdict_line": "Angela verdict: PASS",
+    "present": true,
+    "readable": true,
+    "shipping_decision_lines": [
+      "- Article HTML: ship",
+      "- Visual support: ship",
+      "- Interactive tool: do not ship"
+    ]
+  },
+  "quality_report": {
+    "finding_counts": {
+      "artifact_release_hold": 3,
+      "editor_desk_nonempty": 1,
+      "run_failures_present": 1,
+      "runtime_failure": 4
+    },
+    "readable": true,
+    "verdict": "HOLD"
+  }
+}

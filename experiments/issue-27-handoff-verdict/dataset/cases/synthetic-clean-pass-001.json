@@ -1,0 +1,18 @@
+{
+  "case_id": "synthetic-clean-pass-001",
+  "handoff": {
+    "angela_verdict_line": "Angela verdict: PASS",
+    "present": true,
+    "readable": true,
+    "shipping_decision_lines": [
+      "- Article HTML: ship",
+      "- Visual support: ship",
+      "- Interactive tool: ship"
+    ]
+  },
+  "quality_report": {
+    "finding_counts": {},
+    "readable": true,
+    "verdict": "PASS"
+  }
+}
